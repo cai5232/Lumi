@@ -19,6 +19,8 @@ npm run dev
 
 ## 运行 iOS
 
-在 Xcode 新建一个 iOS App target（SwiftUI），把 `ios/Lumi` 加入 target；最低版本建议 iOS 17。将 `LumiAPIClient.baseURL` 改为开发机地址（真机使用局域网 IP，模拟器可用 `127.0.0.1`）。
+直接双击 `ios/Lumi.xcodeproj` 打开 Xcode，选择 `Lumi` scheme 和 iPhone Simulator，然后运行即可。打开 `ios/Lumi/Preview.swift`，在右侧 Canvas 中可以看到 SwiftUI Preview；也可以直接按 ⌘R 启动模拟器。
+
+最低版本建议 iOS 17。将 `LumiAPIClient.baseURL` 改为开发机地址（真机使用局域网 IP，模拟器可用 `127.0.0.1`）。
 
 客户端与后端的边界已经固定，后续可以直接接入模型流式输出、图片选择器、语音输入和上下文检索。
