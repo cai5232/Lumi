@@ -1,10 +1,11 @@
 import SwiftUI
 
+@MainActor
 struct ChatDetailView: View {
-    @State private var model: ChatViewModel
+    @StateObject private var model: ChatViewModel
 
-    init(model: ChatViewModel = ChatViewModel()) {
-        _model = State(initialValue: model)
+    init(model: ChatViewModel? = nil) {
+        _model = StateObject(wrappedValue: model ?? ChatViewModel())
     }
 
     var body: some View {
