@@ -22,7 +22,7 @@
 		B10000000000000000000003 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
 		B10000000000000000000004 /* LumiAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LumiAPIClient.swift; sourceTree = "<group>"; };
 		B10000000000000000000005 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
-		B10000000000000000000006 /* ChatDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDetailView.swift; sourceTree = "<group>";
+		B10000000000000000000006 /* ChatDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
