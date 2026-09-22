@@ -12,9 +12,10 @@ final class ChatViewModel {
     private let chatID: String
     private let api: LumiAPIClient
 
-    init(chatID: String = "default", api: LumiAPIClient = LumiAPIClient()) {
+    init(chatID: String = "default", api: LumiAPIClient = LumiAPIClient(), initialMessages: [ChatMessage] = []) {
         self.chatID = chatID
         self.api = api
+        self.messages = initialMessages
     }
 
     func load() async {
