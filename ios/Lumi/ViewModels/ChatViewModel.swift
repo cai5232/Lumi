@@ -1,13 +1,12 @@
 import Foundation
-import Observation
+import Combine
 
 @MainActor
-@Observable
-final class ChatViewModel {
-    var messages: [ChatMessage] = []
-    var draft = ""
-    var isSending = false
-    var errorMessage: String?
+final class ChatViewModel: ObservableObject {
+    @Published var messages: [ChatMessage] = []
+    @Published var draft = ""
+    @Published var isSending = false
+    @Published var errorMessage: String?
 
     private let chatID: String
     private let api: LumiAPIClient
