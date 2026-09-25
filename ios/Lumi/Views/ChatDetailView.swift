@@ -51,7 +51,7 @@ struct ChatDetailView: View {
             GlassComparisonView()
                 .presentationDetents([.medium, .large])
         }
-        .sheet(isPresented: $showingSettings) {
+        .fullScreenCover(isPresented: $showingSettings) {
             SettingsView()
         }
         .sheet(isPresented: $glassPresentation.showingThinkingDetails) {
@@ -91,7 +91,7 @@ struct ChatDetailView: View {
 
     private var topBar: some View {
         HStack {
-            glassCircleButton("line.3.horizontal") { showingSettings = true }
+            glassCircleButton("line.3.horizontal") { glassPresentation.showing = true }
             Spacer()
             glassCircleButton("phone")
             HStack(spacing: 0) {
@@ -101,9 +101,12 @@ struct ChatDetailView: View {
                 Rectangle()
                     .fill(Color.black.opacity(0.12))
                     .frame(width: 1, height: 24)
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 18, weight: .medium))
-                    .frame(width: 48, height: 42)
+                Button { showingSettings = true } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 18, weight: .medium))
+                        .frame(width: 48, height: 42)
+                }
+                .buttonStyle(.plain)
             }
             .foregroundStyle(.black.opacity(0.58))
             .background(.regularMaterial, in: Capsule())
