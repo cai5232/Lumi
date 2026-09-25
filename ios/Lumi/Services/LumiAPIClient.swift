@@ -46,8 +46,11 @@ final class LumiAPIClient {
         return response
     }
 
-    func fetchTTSCatalog() async throws -> TTSCatalog {
-        try await request(path: "/v1/tts/catalog")
+    func fetchTTSCatalog(apiKey: String, minimaxHost: String) async throws -> TTSCatalog {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/tts/catalog"))
+        request.setValue(apiKey, forHTTPHeaderField: "X-MiniMax-API-Key")
+        request.setValue(minimaxHost, forHTTPHeaderField: "X-MiniMax-API-Host")
+        return try await perform(request)
     }
 
     func fetchProactiveSettings() async throws -> ProactiveSettings {
@@ -154,11 +157,13 @@ private enum LumiSystemPrompt {
 struct TTSCatalog: Decodable {
     let models: [String]
     let voices: [TTSVoice]
+    let customVoicesAvailable: Bool?
 }
 
 struct TTSVoice: Decodable, Identifiable {
     let id: String
     let name: String
+    let type: String?
 }
 
 enum LumiKeychain {

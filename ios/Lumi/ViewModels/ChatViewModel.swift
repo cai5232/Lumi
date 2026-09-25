@@ -5,6 +5,7 @@ private struct MessageMediaRecord: Codable {
     var audio: String?
     var image: String?
     var duration: Double?
+    var speechScript: String?
 }
 
 @MainActor
@@ -18,6 +19,7 @@ final class ChatViewModel: ObservableObject {
     private let chatID: String
     private let api: LumiAPIClient
     private let shouldLoadFromServer: Bool
+    private let localConversationURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("lumi-conversation.json")
 
     init(chatID: String = "default", api: LumiAPIClient = LumiAPIClient(), initialMessages: [ChatMessage] = [], shouldLoadFromServer: Bool = true) {
         self.chatID = chatID
@@ -27,17 +29,30 @@ final class ChatViewModel: ObservableObject {
     }
 
     func load() async {
-        guard shouldLoadFromServer else { return }
+        let localMessages = loadLocalConversation()
+        guard shouldLoadFromServer else {
+            if messages.isEmpty { messages = localMessages }
+            return
+        }
         do {
             let loaded = try await api.fetchThread(id: chatID).messages
-            messages = loaded.flatMap { message in
+            let remoteMessages = loaded.flatMap { message in
                 let restored = restoreMedia(for: message)
                 return restored.role == .assistant && restored.audioFileName == nil ? assistantBubbles(from: restored) : [restored]
             }
+            var merged = localMessages
+            let isEmptyServerSeed = remoteMessages.count == 1 && remoteMessages[0].role == .assistant && remoteMessages[0].content == "下午的风很轻，想和你说说话。"
+            if !isEmptyServerSeed {
+                for message in remoteMessages where !merged.contains(where: { $0.id == message.id }) {
+                    merged.append(message)
+                }
+            }
+            messages = merged.isEmpty ? remoteMessages : merged
+            saveLocalConversation()
         }
         catch {
-            // 首次加载失败时保留本地示例/缓存，不用系统英文网络弹窗打断界面。
-            if messages.isEmpty { errorMessage = friendlyError(error) }
+            if !localMessages.isEmpty { messages = localMessages }
+            else if messages.isEmpty { errorMessage = friendlyError(error) }
         }
     }
 
@@ -46,14 +61,21 @@ final class ChatViewModel: ObservableObject {
         guard (!typedContent.isEmpty || imageBase64 != nil), !isSending else { return }
         let content = typedContent.isEmpty && imageBase64 != nil ? "请描述这张图片。" : typedContent
         draft = ""
-        messages.append(
-            ChatMessage(id: UUID(), role: .user, content: content, createdAt: .now, localImageFileName: imageFileName)
-        )
-        if let imageFileName { saveMedia(for: messages[messages.count - 1].id, record: MessageMediaRecord(audio: nil, image: imageFileName, duration: nil)) }
+        let optimisticID = UUID()
+        messages.append(ChatMessage(id: optimisticID, role: .user, content: content, createdAt: .now, localImageFileName: imageFileName))
+        if let imageFileName { saveMedia(for: optimisticID, record: MessageMediaRecord(audio: nil, image: imageFileName, duration: nil, speechScript: nil)) }
+        saveLocalConversation()
         isSending = true
         defer { isSending = false }
         do {
             let response = try await api.sendMessage(content, to: chatID, images: imageBase64.map { [$0] } ?? [], emojiCatalog: emojiCatalog, tts: tts)
+            if let optimisticIndex = messages.firstIndex(where: { $0.id == optimisticID }) {
+                var confirmedUserMessage = response.userMessage
+                confirmedUserMessage.localImageFileName = imageFileName
+                messages[optimisticIndex] = confirmedUserMessage
+                if let imageFileName { saveMedia(for: confirmedUserMessage.id, record: MessageMediaRecord(audio: nil, image: imageFileName, duration: nil, speechScript: nil)) }
+                saveLocalConversation()
+            }
             if response.memorySaved == true {
                 memoryNotice = "-------沈屿记下了这一刻-------"
                 Task {
@@ -68,14 +90,31 @@ final class ChatViewModel: ObservableObject {
                 try? audio.write(to: destination, options: .atomic)
                 assistantMessage.audioFileName = name
                 assistantMessage.speechDuration = response.speechDuration
-                saveMedia(for: assistantMessage.id, record: MessageMediaRecord(audio: name, image: nil, duration: response.speechDuration))
+                assistantMessage.speechScript = response.speechScript
+                saveMedia(for: assistantMessage.id, record: MessageMediaRecord(audio: name, image: nil, duration: response.speechDuration, speechScript: response.speechScript))
             }
             let bubbles = assistantMessage.audioFileName == nil ? assistantBubbles(from: assistantMessage) : [assistantMessage]
             for (index, bubble) in bubbles.enumerated() {
                 if index > 0 { try? await Task.sleep(for: .milliseconds(260)) }
                 messages.append(bubble)
+                saveLocalConversation()
             }
-        } catch { errorMessage = friendlyError(error) }
+        } catch { errorMessage = friendlyError(error); saveLocalConversation() }
+    }
+
+    private func loadLocalConversation() -> [ChatMessage] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: localConversationURL),
+              let saved = try? decoder.decode([ChatMessage].self, from: data) else { return [] }
+        return saved.map(restoreMedia(for:))
+    }
+
+    private func saveLocalConversation() {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(messages) else { return }
+        try? data.write(to: localConversationURL, options: .atomic)
     }
 
     private func mediaRecords() -> [String: MessageMediaRecord] {
@@ -96,6 +135,7 @@ final class ChatViewModel: ObservableObject {
         restored.audioFileName = media.audio
         restored.localImageFileName = media.image
         restored.speechDuration = media.duration
+        restored.speechScript = media.speechScript
         return restored
     }
 
@@ -104,6 +144,9 @@ final class ChatViewModel: ObservableObject {
         let visible = message.content
             .replacingOccurrences(of: #"(?is)<thinking>.*?</thinking>"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)</?thinking>"#, with: "", options: .regularExpression)
+        if visible.range(of: #"(?is)<(?:!doctype\s+html|/?(?:html|head|body|div|p|span|a|ul|ol|li|h[1-6]|table|thead|tbody|tr|td|th|svg|iframe|section|article|pre|code|blockquote|br|hr|style|script)\b[^>]*>"#, options: .regularExpression) != nil {
+            return [ChatMessage(id: message.id, role: .assistant, content: visible, createdAt: message.createdAt, thinking: thinking)]
+        }
         let parts = visible
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

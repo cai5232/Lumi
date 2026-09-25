@@ -18,7 +18,8 @@ struct ChatDetailView: View {
     @State private var selectedImageName: String?
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
     @AppStorage("lumi.ttsModel") private var ttsModel = "speech-2.8-hd"
-    @AppStorage("lumi.ttsVoiceID") private var ttsVoiceID = "male-qn-qingse"
+    @AppStorage("lumi.ttsVoiceID") private var ttsVoiceID = ""
+    @AppStorage("lumi.ttsHost") private var ttsHost = "https://api.minimaxi.com"
 
     init(model: ChatViewModel? = nil) {
         _model = StateObject(wrappedValue: model ?? ChatViewModel())
@@ -205,23 +206,24 @@ struct ChatDetailView: View {
     }
 
     @ViewBuilder private func messageBubble(_ message: ChatMessage, showAvatar: Bool) -> some View {
-        HStack {
-            if message.role == .assistant {
-                if showAvatar {
-                    Button {
-                        glassPresentation.thinkingText = thinkingText(for: message)
-                        glassPresentation.showingThinkingDetails = true
-                    } label: { avatar(for: .assistant) }
-                    .buttonStyle(.plain)
-                } else { Color.clear.frame(width: 42, height: 42) }
+        VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 5) {
+            if let localName = message.localImageFileName,
+               let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent(localName),
+               let image = UIImage(contentsOfFile: url.path) {
+                Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 210, maxHeight: 190).clipShape(RoundedRectangle(cornerRadius: 14))
             }
-            if message.role == .user { Spacer(minLength: 48) }
-            VStack(alignment: .leading, spacing: 7) {
-                if let localName = message.localImageFileName,
-                   let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent(localName),
-                   let image = UIImage(contentsOfFile: url.path) {
-                    Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 210, maxHeight: 190).clipShape(RoundedRectangle(cornerRadius: 14))
+            HStack {
+                if message.role == .assistant {
+                    if showAvatar {
+                        Button {
+                            glassPresentation.thinkingText = thinkingText(for: message)
+                            glassPresentation.showingThinkingDetails = true
+                        } label: { avatar(for: .assistant) }
+                        .buttonStyle(.plain)
+                    } else { Color.clear.frame(width: 42, height: 42) }
                 }
+                if message.role == .user { Spacer(minLength: 48) }
+                VStack(alignment: .leading, spacing: 7) {
                 if isHTML(message.content) {
                     Button { htmlMessage = message } label: {
                         HStack(spacing: 10) {
@@ -243,18 +245,20 @@ struct ChatDetailView: View {
                         .font(.system(size: 14, weight: .regular))
                         .fixedSize(horizontal: false, vertical: true)
                 }
-            }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 10)
-            .frame(width: message.audioFileName == nil ? nil : min(300, max(145, 112 + CGFloat(message.speechDuration ?? 2) * 9)), alignment: .leading)
-            .background(message.role == .user ? LumiPalette.userBubble : .white)
-            .clipShape(RoundedRectangle(cornerRadius: 21))
-            if message.role == .assistant { Spacer(minLength: 48) }
-            if message.role == .user {
-                if showAvatar { avatar(for: .user) }
-                else { Color.clear.frame(width: 42, height: 42) }
+                }
+                .padding(.horizontal, 13)
+                .padding(.vertical, 10)
+                .frame(width: message.audioFileName == nil ? nil : min(300, max(145, 112 + CGFloat(message.speechDuration ?? 2) * 9)), alignment: .leading)
+                .background(message.role == .user ? LumiPalette.userBubble : .white)
+                .clipShape(RoundedRectangle(cornerRadius: 21))
+                if message.role == .assistant { Spacer(minLength: 48) }
+                if message.role == .user {
+                    if showAvatar { avatar(for: .user) }
+                    else { Color.clear.frame(width: 42, height: 42) }
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
     }
 
     @ViewBuilder private func avatar(for role: ChatMessage.Role) -> some View {
@@ -333,7 +337,7 @@ struct ChatDetailView: View {
     private func sendDraft() async {
         let imageBase64 = selectedImageData.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
         let ttsKey = LumiKeychain.read()
-        let tts = ttsEnabled && !ttsKey.isEmpty ? TTSRequestSettings(apiKey: ttsKey, model: ttsModel, voiceID: ttsVoiceID) : nil
+        let tts = ttsEnabled && !ttsKey.isEmpty ? TTSRequestSettings(apiKey: ttsKey, model: ttsModel, voiceID: ttsVoiceID, baseURL: ttsHost, enabled: true) : nil
         let catalogData = UserDefaults.standard.string(forKey: "lumi.emojiCatalogJSON")?.data(using: .utf8) ?? Data("[]".utf8)
         let entries = (try? JSONDecoder().decode([EmojiEntry].self, from: catalogData)) ?? []
         let catalog = Dictionary(grouping: entries, by: \.mood).mapValues { $0.map(\.face) }
@@ -396,7 +400,7 @@ private struct SpeechBubble: View {
                 .accessibilityLabel(expandedTranscript ? "收起转文字" : "展开转文字")
             }
             if expandedTranscript {
-                Text(message.content.replacingOccurrences(of: #"\[(?:左耳|右耳|脑后|面前|贴近|退开)\]"#, with: "", options: .regularExpression))
+                Text((message.speechScript ?? message.content).replacingOccurrences(of: #"\[(?:左耳|右耳|脑后|面前|贴近|退开)\]"#, with: "", options: .regularExpression))
                     .font(.system(size: 13))
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 4)
@@ -414,7 +418,7 @@ private struct SpeechBubble: View {
     private func togglePlayback() {
         if player.isPlaying { player.pause(); return }
         let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(fileName)
-        player.play(url: url, script: message.content)
+        player.play(url: url, script: message.speechScript ?? message.content)
     }
 }
 
@@ -880,55 +884,69 @@ private struct MiniMaxSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
     @AppStorage("lumi.ttsModel") private var model = "speech-2.8-hd"
-    @AppStorage("lumi.ttsVoiceID") private var voiceID = "male-qn-qingse"
+    @AppStorage("lumi.ttsVoiceID") private var voiceID = ""
+    @AppStorage("lumi.ttsHost") private var ttsHost = "https://api.minimaxi.com"
     @State private var apiKey = LumiKeychain.read()
-    @State private var catalog = TTSCatalog(models: ["speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo"], voices: [TTSVoice(id: "male-qn-qingse", name: "青涩男声"), TTSVoice(id: "female-shaonv", name: "少女音"), TTSVoice(id: "female-yujie", name: "御姐音")])
-    @State private var status = "MiniMax 官方默认地址"
+    @State private var catalog = TTSCatalog(models: ["speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo"], voices: [], customVoicesAvailable: false)
+    @State private var status = "输入 Key 后同步你账户里的音色"
     private let api = LumiAPIClient()
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Toggle("AI 回复自动生成语音", isOn: $ttsEnabled).tint(Color(red: 0.72, green: 0.35, blue: 0.49))
+                    Toggle("允许 AI 自主选择是否发语音", isOn: $ttsEnabled).tint(Color(red: 0.72, green: 0.35, blue: 0.49))
                     SecureField("MiniMax API Key", text: $apiKey).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    HStack {
-                        Text("接口地址")
-                        Spacer()
-                        Text("https://api.minimax.cn").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Picker("MiniMax 区域", selection: $ttsHost) {
+                        Text("中国大陆").tag("https://api.minimaxi.com")
+                        Text("国际版").tag("https://api.minimax.io")
                     }
                     Picker("语音模型", selection: $model) {
                         ForEach(catalog.models, id: \.self) { Text($0).tag($0) }
                     }
-                    Picker("Voice ID", selection: $voiceID) {
-                        ForEach(catalog.voices) { voice in Text("\(voice.name) · \(voice.id)").tag(voice.id) }
+                    if catalog.voices.isEmpty {
+                        Text("填写 MiniMax Key 后，点下方按钮拉取此账号购买/克隆的音色。")
+                            .font(.system(size: 13)).foregroundStyle(.secondary)
+                    } else {
+                        Picker("Voice ID", selection: $voiceID) {
+                            ForEach(catalog.voices) { voice in Text("\(voice.name) · \(voice.id)\(voice.type == "voice_cloning" ? "（我的克隆音色）" : "")").tag(voice.id) }
+                        }
                     }
                     TextField("或输入自定义 Voice ID", text: $voiceID).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button { Task { await refreshCatalog() } } label: {
-                        Label("同步 MiniMax 模型目录", systemImage: "arrow.clockwise")
+                        Label("拉取我的音色和模型", systemImage: "arrow.clockwise")
                     }
                     Text(status).font(.system(size: 12)).foregroundStyle(.secondary)
                 } footer: {
-                    Text("API Key 只保存在这台 iPhone 的钥匙串中。当前可选模型和示例音色来自 MiniMax 文档；首次语音生成时会由官方接口验证 Voice ID。")
+                    Text("Key 保存在 iPhone 钥匙串中。同步会读取这个 Key 账户下可用的官方及已购/克隆音色。打开许可后，AI 仍会自己决定是否值得生成语音；没有选语音时不会调用 TTS。")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(LumiPalette.chatBackground)
             .navigationTitle("MiniMax 设置")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) { Button("保存") { LumiKeychain.write(apiKey.trimmingCharacters(in: .whitespacesAndNewlines)); dismiss() } }
             }
+            .tint(Color(red: 0.66, green: 0.35, blue: 0.47))
             .task { await refreshCatalog() }
         }
     }
 
     private func refreshCatalog() async {
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            status = "先填写 MiniMax Key，再同步你账户的音色列表。"
+            return
+        }
+        status = "正在读取此 Key 可用的音色…"
         do {
-            catalog = try await api.fetchTTSCatalog()
+            catalog = try await api.fetchTTSCatalog(apiKey: apiKey, minimaxHost: ttsHost)
             if !catalog.models.contains(model), let first = catalog.models.first { model = first }
             if !catalog.voices.contains(where: { $0.id == voiceID }), let first = catalog.voices.first { voiceID = first.id }
-            status = "已更新可用模型和音色"
-        } catch { status = "暂时无法拉取目录，仍可手动填写 Voice ID。" }
+            let purchased = catalog.voices.filter { $0.type == "voice_cloning" || $0.type == "voice_generation" }.count
+            status = "已同步 \(catalog.voices.count) 个音色，其中你的自定义音色 \(purchased) 个。"
+        } catch { status = "拉取失败：\(error.localizedDescription)" }
     }
 }
 
@@ -952,11 +970,15 @@ private struct EmojiManagementView: View {
                 .onDelete { offsets in entries.remove(atOffsets: offsets); persist() }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(LumiPalette.chatBackground)
         .navigationTitle("颜文字管理")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { Button { showingAdd = true } label: { Image(systemName: "plus") } }
         }
+        .tint(Color(red: 0.66, green: 0.35, blue: 0.47))
+        .preferredColorScheme(.light)
         .onAppear { load() }
         .sheet(isPresented: $showingAdd) {
             AddEmojiSheet { entry in entries.append(entry); persist() }
@@ -994,6 +1016,8 @@ private struct AddEmojiSheet: View {
                 TextField("颜文字", text: $face)
                 TextField("心情标签（如：开心、害羞、难过）", text: $mood)
             }
+            .scrollContentBackground(.hidden)
+            .background(LumiPalette.chatBackground)
             .navigationTitle("添加颜文字")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1007,6 +1031,8 @@ private struct AddEmojiSheet: View {
                     }.disabled(face.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || mood.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .tint(Color(red: 0.66, green: 0.35, blue: 0.47))
+            .preferredColorScheme(.light)
         }
     }
 }
