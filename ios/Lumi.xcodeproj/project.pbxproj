@@ -15,6 +15,7 @@
 		A10000000000000000000006 /* ChatDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* ChatDetailView.swift */; };
 		A10000000000000000000007 /* UserAvatar.jpg in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* UserAvatar.jpg */; };
 		A10000000000000000000008 /* AssistantAvatar.jpg in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* AssistantAvatar.jpg */; };
+		A10000000000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,6 +27,7 @@
 		B10000000000000000000006 /* ChatDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatDetailView.swift; sourceTree = "<group>"; };
 		B10000000000000000000008 /* UserAvatar.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = UserAvatar.jpg; sourceTree = "<group>"; };
 		B10000000000000000000009 /* AssistantAvatar.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = AssistantAvatar.jpg; sourceTree = "<group>"; };
+		B10000000000000000000010 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10000000000000000000007 /* Lumi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lumi.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -95,6 +97,7 @@
 				B10000000000000000000002 /* Preview.swift */,
 				B10000000000000000000008 /* UserAvatar.jpg */,
 				B10000000000000000000009 /* AssistantAvatar.jpg */,
+				B10000000000000000000010 /* Assets.xcassets */,
 				C10000000000000000000003 /* Models */,
 				C10000000000000000000004 /* Services */,
 				C10000000000000000000005 /* ViewModels */,
@@ -113,6 +116,7 @@
 				C10000000000000000000009 /* Sources */,
 				C10000000000000000000001 /* Frameworks */,
 				C10000000000000000000010 /* Resources */,
+				C10000000000000000000011 /* Embed Push API Token */,
 			);
 			buildRules = (
 			);
@@ -164,8 +168,23 @@
 			files = (
 				A10000000000000000000007 /* UserAvatar.jpg in Resources */,
 				A10000000000000000000008 /* AssistantAvatar.jpg in Resources */,
+				A10000000000000000000009 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C10000000000000000000011 /* Embed Push API Token */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Embed Push API Token";
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nif [ -z \"${LUMI_PUSH_API_TOKEN:-}\" ]; then\n  echo \"LUMI_PUSH_API_TOKEN is not set; skipping push authorization token.\"\n  exit 0\nfi\nplist=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n/usr/libexec/PlistBuddy -c \"Set :LUMI_PUSH_API_TOKEN $LUMI_PUSH_API_TOKEN\" \"$plist\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Add :LUMI_PUSH_API_TOKEN string $LUMI_PUSH_API_TOKEN\" \"$plist\"\n";
 		};
 /* End PBXResourcesBuildPhase section */
 
@@ -191,17 +210,19 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = RWRB87B53S;
 				CODE_SIGN_ENTITLEMENTS = Lumi/LumiDebug.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LUMI_PUSH_API_TOKEN = "$(LUMI_PUSH_API_TOKEN)";
 				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.Lumi;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.LumiPush;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
@@ -216,17 +237,19 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = RWRB87B53S;
 				CODE_SIGN_ENTITLEMENTS = Lumi/LumiRelease.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LUMI_PUSH_API_TOKEN = "$(LUMI_PUSH_API_TOKEN)";
 				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.Lumi;
+				PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.LumiPush;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
