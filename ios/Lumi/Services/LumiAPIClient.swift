@@ -49,6 +49,14 @@ final class LumiAPIClient {
         return try await perform(request)
     }
 
+    func registerPushToken(_ token: String, environment: String) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/push/register"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder.api.encode(PushTokenRegistration(token: token, environment: environment, threadId: "default"))
+        let _: PushTokenRegistrationResponse = try await perform(request)
+    }
+
     private func request<T: Decodable>(path: String) async throws -> T {
         try await perform(URLRequest(url: baseURL.appending(path: path)))
     }
@@ -73,6 +81,16 @@ final class LumiAPIClient {
         }
         throw lastError ?? LumiAPIError.invalidResponse
     }
+}
+
+private struct PushTokenRegistration: Encodable {
+    let token: String
+    let environment: String
+    let threadId: String
+}
+
+private struct PushTokenRegistrationResponse: Decodable {
+    let registered: Bool
 }
 
 private enum LumiSystemPrompt {
