@@ -40,14 +40,27 @@ final class ChatViewModel: ObservableObject {
                 let restored = restoreMedia(for: message)
                 return restored.role == .assistant && restored.audioFileName == nil ? assistantBubbles(from: restored) : [restored]
             }
-            var merged = localMessages
             let isEmptyServerSeed = remoteMessages.count == 1 && remoteMessages[0].role == .assistant && remoteMessages[0].content == "下午的风很轻，想和你说说话。"
-            if !isEmptyServerSeed {
-                for message in remoteMessages where !merged.contains(where: { $0.id == message.id }) {
-                    merged.append(message)
+            if !isEmptyServerSeed && !remoteMessages.isEmpty {
+                // Keep locally saved messages if the backend has since been reset. Old versions
+                // split AI replies into random-ID lines; suppress only those copies when the
+                // canonical reply with the same timestamp and text is available from the server.
+                let remoteIDs = Set(remoteMessages.map(\.id))
+                let localOnly = localMessages.filter { local in
+                    guard !remoteIDs.contains(local.id) else { return false }
+                    if local.role == .assistant {
+                        return !remoteMessages.contains { remote in
+                            remote.role == .assistant
+                                && abs(remote.createdAt.timeIntervalSince(local.createdAt)) < 1
+                                && remote.content.contains(local.content)
+                        }
+                    }
+                    return true
                 }
+                messages = (remoteMessages + localOnly).sorted { $0.createdAt < $1.createdAt }
+            } else {
+                messages = localMessages.isEmpty ? remoteMessages : localMessages
             }
-            messages = merged.isEmpty ? remoteMessages : merged
             saveLocalConversation()
         }
         catch {
@@ -69,13 +82,15 @@ final class ChatViewModel: ObservableObject {
         defer { isSending = false }
         do {
             let response = try await api.sendMessage(content, to: chatID, images: imageBase64.map { [$0] } ?? [], emojiCatalog: emojiCatalog, tts: tts)
+            var confirmedUserMessage = response.userMessage
+            confirmedUserMessage.localImageFileName = imageFileName
             if let optimisticIndex = messages.firstIndex(where: { $0.id == optimisticID }) {
-                var confirmedUserMessage = response.userMessage
-                confirmedUserMessage.localImageFileName = imageFileName
                 messages[optimisticIndex] = confirmedUserMessage
-                if let imageFileName { saveMedia(for: confirmedUserMessage.id, record: MessageMediaRecord(audio: nil, image: imageFileName, duration: nil, speechScript: nil)) }
-                saveLocalConversation()
+            } else if !messages.contains(where: { $0.id == confirmedUserMessage.id }) {
+                messages.append(confirmedUserMessage)
             }
+            if let imageFileName { saveMedia(for: confirmedUserMessage.id, record: MessageMediaRecord(audio: nil, image: imageFileName, duration: nil, speechScript: nil)) }
+            saveLocalConversation()
             if response.memorySaved == true {
                 memoryNotice = "-------沈屿记下了这一刻-------"
                 Task {
@@ -147,17 +162,9 @@ final class ChatViewModel: ObservableObject {
         if visible.range(of: #"(?is)<(?:!doctype\s+html|/?(?:html|head|body|div|p|span|a|ul|ol|li|h[1-6]|table|thead|tbody|tr|td|th|svg|iframe|section|article|pre|code|blockquote|br|hr|style|script)\b[^>]*>"#, options: .regularExpression) != nil {
             return [ChatMessage(id: message.id, role: .assistant, content: visible, createdAt: message.createdAt, thinking: thinking)]
         }
-        let parts = visible
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        guard parts.count > 1 else {
-            return [ChatMessage(id: message.id, role: .assistant, content: parts.first ?? "", createdAt: message.createdAt, thinking: thinking)]
-        }
-        return parts.enumerated().map { index, part in
-            ChatMessage(id: UUID(), role: .assistant, content: part, createdAt: message.createdAt, thinking: index == 0 ? thinking : nil)
-        }
+        // Preserve the original server ID and one reply per turn. Splitting a reply into new
+        // random-ID bubbles on every reload made local/remote reconciliation duplicate AI rows.
+        return [ChatMessage(id: message.id, role: .assistant, content: visible, createdAt: message.createdAt, thinking: thinking)]
     }
 
     private func extractThinking(from content: String) -> String? {

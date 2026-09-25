@@ -18,7 +18,8 @@ struct ChatDetailView: View {
     @State private var selectedImageName: String?
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
     @AppStorage("lumi.ttsModel") private var ttsModel = "speech-2.8-hd"
-    @AppStorage("lumi.ttsVoiceID") private var ttsVoiceID = ""
+    @AppStorage("lumi.ttsVoiceID") private var ttsVoiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"
+    @AppStorage("lumi.ttsVoiceIDCustomMigration") private var customVoiceMigrated = false
     @AppStorage("lumi.ttsHost") private var ttsHost = "https://api.minimaxi.com"
 
     init(model: ChatViewModel? = nil) {
@@ -60,6 +61,12 @@ struct ChatDetailView: View {
                 .padding(.bottom, 10)
         }
         .task { await model.load() }
+        .onAppear {
+            if !customVoiceMigrated {
+                ttsVoiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"
+                customVoiceMigrated = true
+            }
+        }
         .sheet(isPresented: $glassPresentation.showing) {
             GlassComparisonView()
                 .presentationDetents([.medium, .large])
@@ -884,12 +891,9 @@ private struct MiniMaxSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
     @AppStorage("lumi.ttsModel") private var model = "speech-2.8-hd"
-    @AppStorage("lumi.ttsVoiceID") private var voiceID = ""
+    @AppStorage("lumi.ttsVoiceID") private var voiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"
     @AppStorage("lumi.ttsHost") private var ttsHost = "https://api.minimaxi.com"
     @State private var apiKey = LumiKeychain.read()
-    @State private var catalog = TTSCatalog(models: ["speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo"], voices: [], customVoicesAvailable: false)
-    @State private var status = "输入 Key 后同步你账户里的音色"
-    private let api = LumiAPIClient()
 
     var body: some View {
         NavigationStack {
@@ -902,23 +906,15 @@ private struct MiniMaxSettingsView: View {
                         Text("国际版").tag("https://api.minimax.io")
                     }
                     Picker("语音模型", selection: $model) {
-                        ForEach(catalog.models, id: \.self) { Text($0).tag($0) }
+                        ForEach(["speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo"], id: \.self) { Text($0).tag($0) }
                     }
-                    if catalog.voices.isEmpty {
-                        Text("填写 MiniMax Key 后，点下方按钮拉取此账号购买/克隆的音色。")
-                            .font(.system(size: 13)).foregroundStyle(.secondary)
-                    } else {
-                        Picker("Voice ID", selection: $voiceID) {
-                            ForEach(catalog.voices) { voice in Text("\(voice.name) · \(voice.id)\(voice.type == "voice_cloning" ? "（我的克隆音色）" : "")").tag(voice.id) }
-                        }
-                    }
-                    TextField("或输入自定义 Voice ID", text: $voiceID).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button { Task { await refreshCatalog() } } label: {
-                        Label("拉取我的音色和模型", systemImage: "arrow.clockwise")
-                    }
-                    Text(status).font(.system(size: 12)).foregroundStyle(.secondary)
+                    TextField("Voice ID", text: $voiceID)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Text("直接填写你购买的音色 ID；当前已填入你给的 moss_audio ID，不会拉取音色列表。")
+                        .font(.system(size: 13)).foregroundStyle(.secondary)
                 } footer: {
-                    Text("Key 保存在 iPhone 钥匙串中。同步会读取这个 Key 账户下可用的官方及已购/克隆音色。打开许可后，AI 仍会自己决定是否值得生成语音；没有选语音时不会调用 TTS。")
+                    Text("Key 保存在 iPhone 钥匙串中。打开许可后，AI 自己决定是否值得生成语音；没选择发语音时不会调用 TTS。")
                 }
             }
             .scrollContentBackground(.hidden)
@@ -930,23 +926,7 @@ private struct MiniMaxSettingsView: View {
                 ToolbarItem(placement: .topBarTrailing) { Button("保存") { LumiKeychain.write(apiKey.trimmingCharacters(in: .whitespacesAndNewlines)); dismiss() } }
             }
             .tint(Color(red: 0.66, green: 0.35, blue: 0.47))
-            .task { await refreshCatalog() }
         }
-    }
-
-    private func refreshCatalog() async {
-        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            status = "先填写 MiniMax Key，再同步你账户的音色列表。"
-            return
-        }
-        status = "正在读取此 Key 可用的音色…"
-        do {
-            catalog = try await api.fetchTTSCatalog(apiKey: apiKey, minimaxHost: ttsHost)
-            if !catalog.models.contains(model), let first = catalog.models.first { model = first }
-            if !catalog.voices.contains(where: { $0.id == voiceID }), let first = catalog.voices.first { voiceID = first.id }
-            let purchased = catalog.voices.filter { $0.type == "voice_cloning" || $0.type == "voice_generation" }.count
-            status = "已同步 \(catalog.voices.count) 个音色，其中你的自定义音色 \(purchased) 个。"
-        } catch { status = "拉取失败：\(error.localizedDescription)" }
     }
 }
 
@@ -1214,7 +1194,7 @@ private struct ThinkingDetailsView: View {
             .padding(.vertical, verticalPadding)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(red: 0.9608, green: 0.9255, blue: 0.9255))
+        .background(LumiPalette.chatBackground)
         .onPreferenceChange(ThinkingTextHeightKey.self) { textHeight in
             let desired = textHeight + 19 + 24 + verticalPadding * 2
             let screenLimit = UIScreen.main.bounds.height * 0.88
