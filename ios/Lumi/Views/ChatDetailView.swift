@@ -259,7 +259,12 @@ struct ChatDetailView: View {
 private struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("lumi.proactiveNudgeEnabled") private var proactiveNudgeEnabled = false
+    @AppStorage("lumi.proactiveNudgeInterval") private var proactiveNudgeInterval = 60
+    @AppStorage("lumi.proactiveNudgeMessage") private var proactiveNudgeMessage = "有一段时间没聊了，结合我们的上下文自然地来找我说句话。"
+    @State private var settingsLoaded = false
+    @State private var syncStatus = "正在连接后端…"
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
+    private let api = LumiAPIClient()
 
     var body: some View {
         NavigationStack {
@@ -275,6 +280,15 @@ private struct SettingsView: View {
                         }
                     }
                     .tint(Color(red: 0.72, green: 0.35, blue: 0.49))
+
+                    Stepper("静默 \(proactiveNudgeInterval) 分钟后触发", value: $proactiveNudgeInterval, in: 10...1440, step: 10)
+
+                    TextField("主动联系内容", text: $proactiveNudgeMessage, axis: .vertical)
+                        .lineLimit(2...5)
+
+                    Text("每次触发会走正常聊天模型并产生一次模型调用；保活默认关闭。\(syncStatus)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
                 } header: {
                     Text("主动联系")
                 }
@@ -295,7 +309,7 @@ private struct SettingsView: View {
                 } header: {
                     Text("通知")
                 } footer: {
-                    Text("允许后，未来保活功能才能在你没有打开 App 时提醒你。")
+                    Text("通知权限不会让 iOS 在后台定时运行。当前可由后端生成并保存主动回复；锁屏推送还需要配置 APNs，暂未接通。")
                 }
             }
             .scrollContentBackground(.hidden)
@@ -308,7 +322,13 @@ private struct SettingsView: View {
                 }
             }
         }
-        .task { await refreshNotificationStatus() }
+        .task {
+            await refreshNotificationStatus()
+            await loadProactiveSettings()
+        }
+        .onChange(of: proactiveNudgeEnabled) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveNudgeInterval) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveNudgeMessage) { _, _ in saveProactiveSettings() }
         .background(Color(red: 0.984, green: 0.949, blue: 0.957))
         .preferredColorScheme(.light)
     }
@@ -333,6 +353,38 @@ private struct SettingsView: View {
             await MainActor.run { notificationStatus = .denied }
         } else {
             await refreshNotificationStatus()
+        }
+    }
+
+    private func loadProactiveSettings() async {
+        do {
+            let settings = try await api.fetchProactiveSettings()
+            proactiveNudgeEnabled = settings.enabled
+            proactiveNudgeInterval = settings.intervalMin
+            proactiveNudgeMessage = settings.message
+            syncStatus = "已同步到后端"
+        } catch {
+            syncStatus = "后端连接失败，设置尚未同步"
+        }
+        settingsLoaded = true
+    }
+
+    private func saveProactiveSettings() {
+        guard settingsLoaded else { return }
+        syncStatus = "正在保存…"
+        Task {
+            do {
+                _ = try await api.updateProactiveSettings(ProactiveSettings(
+                    enabled: proactiveNudgeEnabled,
+                    threadId: "default",
+                    message: proactiveNudgeMessage,
+                    intervalMin: proactiveNudgeInterval,
+                    intervalMax: proactiveNudgeInterval
+                ))
+                syncStatus = "已同步到后端"
+            } catch {
+                syncStatus = "后端连接失败，设置尚未同步"
+            }
         }
     }
 }
