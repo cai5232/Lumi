@@ -9,8 +9,8 @@ struct ChatDetailView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Color(red: 0.961, green: 0.925, blue: 0.925).ignoresSafeArea()
+        ZStack {
+            Color(red: 0.984, green: 0.961, blue: 0.961).ignoresSafeArea()
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -22,21 +22,21 @@ struct ChatDetailView: View {
                         if model.isSending { thinkingBubble }
                     }
                     .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .padding(.bottom, 78)
+                    .padding(.top, 18)
+                    .padding(.bottom, 86)
                 }
                 .scrollIndicators(.hidden)
-                .mask(LinearGradient(colors: [.clear, .black.opacity(0.96), .black], startPoint: .top, endPoint: .center))
+                .ignoresSafeArea(edges: [.top, .bottom])
                 .onChange(of: model.messages.last?.id) { _, id in
                     if let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
                 }
             }
 
-            VStack(spacing: 0) {
-                topBar
-                composer
-            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
+        .overlay(alignment: .top) { topBar }
+        .overlay(alignment: .bottom) { composer }
         .task { await model.load() }
         .alert("Lumi", isPresented: .constant(model.errorMessage != nil)) {
             Button("好") { model.errorMessage = nil }
@@ -45,50 +45,93 @@ struct ChatDetailView: View {
 
     private var topBar: some View {
         HStack {
-            Button(action: {}) { Image(systemName: "folder").font(.title3) }
-                .buttonStyle(.bordered)
-                .clipShape(Circle())
+            glassCircleButton("line.3.horizontal")
             Spacer()
-            Text("沉小岑")
-                .font(.system(size: 15, weight: .medium))
-                .blur(radius: 1.8)
-                .opacity(0.5)
-            Spacer()
-            HStack(spacing: 2) {
-                Button(action: {}) { Image(systemName: "phone") }
-                Button(action: {}) { Image(systemName: "heart") }
-                Button(action: {}) { Image(systemName: "ellipsis") }
+            glassCircleButton("phone")
+            HStack(spacing: 0) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 48, height: 42)
+                Rectangle()
+                    .fill(Color.black.opacity(0.12))
+                    .frame(width: 1, height: 24)
+                Image(systemName: "checkmark.square")
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 48, height: 42)
+                Rectangle()
+                    .fill(Color.black.opacity(0.12))
+                    .frame(width: 1, height: 24)
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 48, height: 42)
             }
-            .buttonStyle(.bordered)
+            .foregroundStyle(.black.opacity(0.58))
+            .background(.ultraThinMaterial)
             .clipShape(Capsule())
+            .overlay(Capsule().fill(Color(red: 0.984, green: 0.961, blue: 0.961).opacity(0.48)))
+            .overlay(Capsule().stroke(Color.white.opacity(0.82), lineWidth: 0.8))
+            .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 5)
         }
-        .foregroundStyle(Color(red: 0.83, green: 0.56, blue: 0.53))
-        .padding(.horizontal, 15)
-        .padding(.top, 8)
-        .padding(.bottom, 12)
-        .background(.ultraThinMaterial)
+        .padding(.horizontal, 16)
+        .safeAreaPadding(.top, 8)
+        .padding(.bottom, 8)
     }
 
     private var composer: some View {
-        HStack(spacing: 7) {
-            Button(action: {}) { Image(systemName: "link") }
-            Button(action: {}) { Image(systemName: "mic") }
-            HStack(spacing: 2) {
-                TextField("说点什么…", text: $model.draft)
-                    .submitLabel(.send)
-                    .onSubmit { Task { await model.send() } }
-                Button(action: {}) { Image(systemName: "face.smiling") }
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("回复沉小岑", text: $model.draft)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.black.opacity(0.72))
+                .submitLabel(.send)
+                .onSubmit { Task { await model.send() } }
+            HStack(spacing: 10) {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 40, height: 36)
+                    .background(Color.white.opacity(0.18), in: Circle())
+                Text("Lumi")
+                    .font(.system(size: 15, weight: .medium))
+                    .padding(.horizontal, 14)
+                    .frame(height: 34)
+                    .background(Color.white.opacity(0.2), in: Capsule())
+                Spacer()
+                Image(systemName: "mic")
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 40, height: 36)
+                    .background(Color.white.opacity(0.18), in: Circle())
+                Button { Task { await model.send() } } label: {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 36)
+                        .background(.black.opacity(0.8), in: Circle())
+                }
             }
-            .padding(.horizontal, 11)
-            .frame(height: 38)
-            .background(.white)
-            .clipShape(Capsule())
-            Button { Task { await model.send() } } label: { Image(systemName: "arrow.up") }
         }
-        .foregroundStyle(.black)
-        .padding(.horizontal, 13)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity)
         .background(.ultraThinMaterial)
+        .overlay(RoundedRectangle(cornerRadius: 30).fill(Color(red: 0.984, green: 0.961, blue: 0.961).opacity(0.5)))
+        .overlay(RoundedRectangle(cornerRadius: 30).stroke(Color.white.opacity(0.82), lineWidth: 0.8))
+        .clipShape(RoundedRectangle(cornerRadius: 30))
+        .padding(.horizontal, 16)
+        .safeAreaPadding(.bottom, 8)
+        .shadow(color: .black.opacity(0.12), radius: 16, x: 0, y: 7)
+    }
+
+    private func glassCircleButton(_ systemName: String) -> some View {
+        Button(action: {}) {
+            Image(systemName: systemName)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.black.opacity(0.58))
+                .frame(width: 44, height: 44)
+                .background(.ultraThinMaterial)
+                .clipShape(Circle())
+                .overlay(Circle().fill(Color(red: 0.984, green: 0.961, blue: 0.961).opacity(0.48)))
+                .overlay(Circle().stroke(Color.white.opacity(0.82), lineWidth: 0.8))
+                .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 5)
+        }
     }
 
     @ViewBuilder private func messageBubble(_ message: ChatMessage) -> some View {
@@ -98,7 +141,7 @@ struct ChatDetailView: View {
                 .foregroundStyle(.black)
                 .padding(.horizontal, 13)
                 .padding(.vertical, 10)
-                .background(message.role == .user ? Color(red: 0.88, green: 0.82, blue: 0.81) : .white)
+                .background(message.role == .user ? Color(red: 0.961, green: 0.925, blue: 0.925) : .white)
                 .clipShape(RoundedRectangle(cornerRadius: 21))
             if message.role == .assistant { Spacer(minLength: 48) }
         }
