@@ -255,7 +255,7 @@ struct ChatDetailView: View {
                 }
                 .padding(.horizontal, 13)
                 .padding(.vertical, message.audioFileName == nil ? 10 : 3)
-                .frame(width: message.audioFileName == nil ? nil : min(300, max(145, 112 + CGFloat(message.speechDuration ?? 2) * 9)), alignment: .leading)
+                .frame(width: message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8)), alignment: .leading)
                 .background(message.role == .user ? LumiPalette.userBubble : .white)
                 .clipShape(RoundedRectangle(cornerRadius: 21))
                 if message.role == .assistant { Spacer(minLength: 48) }
@@ -396,6 +396,8 @@ private struct SpeechBubble: View {
                         Spacer(minLength: 2)
                         Text(durationLabel)
                             .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .fixedSize(horizontal: true, vertical: false)
+                            .layoutPriority(1)
                     }
                     .frame(maxWidth: .infinity, minHeight: 32)
                     .contentShape(Rectangle())

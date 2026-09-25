@@ -38,7 +38,7 @@ final class ChatViewModel: ObservableObject {
             let loaded = try await api.fetchThread(id: chatID).messages
             let remoteMessages = loaded.flatMap { message in
                 let restored = restoreMedia(for: message)
-                return restored.role == .assistant && restored.audioFileName == nil ? assistantBubbles(from: restored) : [restored]
+                return restored.role == .assistant ? assistantBubbles(from: restored) : [restored]
             }
             let isEmptyServerSeed = remoteMessages.count == 1 && remoteMessages[0].role == .assistant && remoteMessages[0].content == "下午的风很轻，想和你说说话。"
             if !isEmptyServerSeed && !remoteMessages.isEmpty {
@@ -108,7 +108,7 @@ final class ChatViewModel: ObservableObject {
                 assistantMessage.speechScript = response.speechScript
                 saveMedia(for: assistantMessage.id, record: MessageMediaRecord(audio: name, image: nil, duration: response.speechDuration, speechScript: response.speechScript))
             }
-            let bubbles = assistantMessage.audioFileName == nil ? assistantBubbles(from: assistantMessage) : [assistantMessage]
+            let bubbles = assistantBubbles(from: assistantMessage)
             for (index, bubble) in bubbles.enumerated() {
                 if index > 0 { try? await Task.sleep(for: .milliseconds(260)) }
                 messages.append(bubble)
@@ -162,9 +162,22 @@ final class ChatViewModel: ObservableObject {
         if visible.range(of: #"(?is)<(?:!doctype\s+html|/?(?:html|head|body|div|p|span|a|ul|ol|li|h[1-6]|table|thead|tbody|tr|td|th|svg|iframe|section|article|pre|code|blockquote|br|hr|style|script)\b[^>]*>"#, options: .regularExpression) != nil {
             return [ChatMessage(id: message.id, role: .assistant, content: visible, createdAt: message.createdAt, thinking: thinking)]
         }
-        // Preserve the original server ID and one reply per turn. Splitting a reply into new
-        // random-ID bubbles on every reload made local/remote reconciliation duplicate AI rows.
-        return [ChatMessage(id: message.id, role: .assistant, content: visible, createdAt: message.createdAt, thinking: thinking)]
+        // Keep the requested pause/line-break rhythm as separate bubbles. The canonical server
+        // message remains intact; local reconciliation matches each display line by text/time.
+        let lines = visible
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var bubbles = lines.enumerated().map { index, line in
+            ChatMessage(id: index == 0 && message.audioFileName == nil ? message.id : UUID(), role: .assistant, content: line, createdAt: message.createdAt, thinking: index == 0 ? thinking : nil)
+        }
+        if let audioFileName = message.audioFileName {
+            bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, audioFileName: audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript))
+        }
+        if bubbles.isEmpty, message.audioFileName != nil {
+            bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, thinking: thinking, audioFileName: message.audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript))
+        }
+        return bubbles.isEmpty ? [ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, thinking: thinking)] : bubbles
     }
 
     private func extractThinking(from content: String) -> String? {
