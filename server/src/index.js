@@ -9,6 +9,9 @@ const threadPath = join(dataDir, "threads.json");
 const contextLimit = Number(process.env.LUMI_CONTEXT_LIMIT || 200000);
 const compactAt = Number(process.env.LUMI_COMPACT_AT || 0.86);
 const tailTokens = Number(process.env.LUMI_COMPACT_TAIL_TOKENS || 20000);
+const memoryAPI = (process.env.LUMI_MEMORY_API_URL || "https://memorycore.zeabur.app").replace(/\/$/, "");
+const memorySearchPath = process.env.LUMI_MEMORY_SEARCH_PATH || "/search";
+const memoryWritePath = process.env.LUMI_MEMORY_WRITE_PATH || "/memories";
 
 const seed = () => ({
   id: "default",
@@ -45,6 +48,77 @@ async function callModel({ messages, temperature = 0.8 }) {
   const content = data?.choices?.[0]?.message?.content;
   if (typeof content !== "string" || !content.trim()) throw new Error("模型没有返回内容");
   return content.trim();
+}
+
+async function memoryRequest(path, payload) {
+  const headers = { "content-type": "application/json" };
+  if (process.env.LUMI_MEMORY_API_KEY) headers.authorization = `Bearer ${process.env.LUMI_MEMORY_API_KEY}`;
+  const response = await fetch(`${memoryAPI}${path.startsWith("/") ? path : `/${path}`}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(4000)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.error?.message || data?.error || `记忆库返回 ${response.status}`);
+  return data;
+}
+
+function fallbackKeywords(input) {
+  return [...new Set(String(input).split(/[^\p{L}\p{N}]+/u).map((part) => part.trim()).filter((part) => part.length > 1))].slice(0, 8);
+}
+
+async function extractMemoryKeywords(input) {
+  try {
+    const raw = await callModel({
+      messages: [
+        { role: "system", content: "从用户这条消息中提取用于检索长期记忆的关键词。只输出 JSON 数组，例如 [\"称呼\",\"偏好\"]，不要解释，不要复述原句。" },
+        { role: "user", content: input }
+      ],
+      temperature: 0
+    });
+    const parsed = JSON.parse(raw.match(/\[[\s\S]*\]/)?.[0] || "[]");
+    if (Array.isArray(parsed)) return parsed.filter((item) => typeof item === "string" && item.trim()).slice(0, 8);
+  } catch {}
+  return fallbackKeywords(input);
+}
+
+function normalizeMemories(data) {
+  const list = Array.isArray(data) ? data : data.memories || data.results || data.data || [];
+  return list.map((item) => {
+    if (typeof item === "string") return item;
+    return item.content || item.text || item.memory || item.value || item.summary || "";
+  }).filter(Boolean).slice(0, 8);
+}
+
+async function searchMemories(input) {
+  const keywords = await extractMemoryKeywords(input);
+  if (!keywords.length) return [];
+  const paths = [...new Set([memorySearchPath, "/search", "/api/search", "/v1/memories/search", "/api/memories/search"])]
+    .filter(Boolean);
+  for (const path of paths) {
+    try {
+      const data = await memoryRequest(path, { query: keywords.join(" "), text: keywords.join(" "), keywords, limit: 8, topK: 8 });
+      return normalizeMemories(data);
+    } catch (error) {
+      if (path === paths.at(-1)) console.warn(`memory search skipped: ${error.message}`);
+    }
+  }
+  return [];
+}
+
+async function writeMemory(content, threadId) {
+  const paths = [...new Set([memoryWritePath, "/memories", "/api/memories", "/v1/memories", "/api/memory"])]
+    .filter(Boolean);
+  for (const path of paths) {
+    try {
+      await memoryRequest(path, { content, memory: content, text: content, source: "lumi", threadId });
+      return true;
+    } catch (error) {
+      if (path === paths.at(-1)) console.warn(`memory write skipped: ${error.message}`);
+    }
+  }
+  return false;
 }
 
 async function compactThread(thread) {
@@ -87,10 +161,19 @@ async function generateReply({ input, systemPrompt, thread }) {
   await compactThread(thread);
   const system = process.env.LUMI_SYSTEM_PROMPT || systemPrompt || "使用中文回复。";
   const summary = thread.contextSummary ? `\n\n<context_summary>\n${thread.contextSummary}\n</context_summary>` : "";
+  const memories = await searchMemories(input);
+  const retrieved = memories.length
+    ? `\n\n<retrieved_memories>\n${memories.map((memory) => `- ${memory}`).join("\n")}\n</retrieved_memories>`
+    : "";
   const history = (thread.messages || []).slice(-20).map((message) => ({ role: message.role, content: message.content }));
-  return callModel({
-    messages: [{ role: "system", content: `${system}${summary}` }, ...history, { role: "user", content: input }]
+  const raw = await callModel({
+    messages: [{ role: "system", content: `${system}${summary}${retrieved}\n\n如果这条对话包含值得长期保留的新事实、偏好或约定，你可以在回复末尾添加 <memory>要记住的内容</memory>；不值得记忆时不要添加。不要向用户解释这个标签。` }, ...history, { role: "user", content: input }]
   });
+  const memoryMatch = raw.match(/<memory>([\s\S]*?)<\/memory>/i);
+  const memoryContent = memoryMatch?.[1]?.trim();
+  const content = raw.replace(/<memory>[\s\S]*?<\/memory>/gi, "").trim();
+  const memorySaved = memoryContent ? await writeMemory(memoryContent, thread.id) : false;
+  return { content, memorySaved };
 }
 
 function send(res, status, body) {
@@ -109,6 +192,12 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true });
+    if (req.method === "POST" && url.pathname === "/v1/memories") {
+      const input = await body(req);
+      if (typeof input.content !== "string" || !input.content.trim()) return send(res, 400, { error: "content_required" });
+      const saved = await writeMemory(input.content.trim(), input.threadId || "manual");
+      return send(res, saved ? 201 : 502, { saved });
+    }
     const match = url.pathname.match(/^\/v1\/chats\/([^/]+)(\/messages)?$/);
     if (!match) return send(res, 404, { error: "not_found" });
     const id = decodeURIComponent(match[1]);
@@ -119,15 +208,16 @@ const server = createServer(async (req, res) => {
       const input = await body(req);
       if (typeof input.content !== "string" || !input.content.trim()) return send(res, 400, { error: "content_required" });
       const userMessage = { id: randomUUID(), role: "user", content: input.content.trim(), createdAt: new Date().toISOString() };
+      const generated = await generateReply({ input: userMessage.content, systemPrompt: input.systemPrompt, thread: threads[id] });
       const assistantMessage = {
         id: randomUUID(),
         role: "assistant",
-        content: await generateReply({ input: userMessage.content, systemPrompt: input.systemPrompt, thread: threads[id] }),
+        content: generated.content,
         createdAt: new Date().toISOString()
       };
       threads[id].messages.push(userMessage, assistantMessage);
       await saveThreads(threads);
-      return send(res, 200, { userMessage, assistantMessage });
+      return send(res, 200, { userMessage, assistantMessage, memorySaved: generated.memorySaved });
     }
     return send(res, 405, { error: "method_not_allowed" });
   } catch (error) { return send(res, 500, { error: error.message }); }

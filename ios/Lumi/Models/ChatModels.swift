@@ -46,4 +46,5 @@ struct SendMessageRequest: Encodable {
 struct SendMessageResponse: Decodable {
     let userMessage: ChatMessage
     let assistantMessage: ChatMessage
+    let memorySaved: Bool?
 }

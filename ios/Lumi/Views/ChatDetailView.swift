@@ -70,6 +70,17 @@ struct ChatDetailView: View {
                 .padding(.horizontal, 18)
             }
         }
+        .overlay {
+            if let notice = model.memoryNotice {
+                Text(notice)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.black.opacity(0.78))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(Color(red: 0.9608, green: 0.9255, blue: 0.9255), in: Capsule())
+                    .transition(.opacity)
+            }
+        }
     }
 
     private var topBar: some View {

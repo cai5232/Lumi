@@ -7,6 +7,7 @@ final class ChatViewModel: ObservableObject {
     @Published var draft = ""
     @Published var isSending = false
     @Published var errorMessage: String?
+    @Published var memoryNotice: String?
 
     private let chatID: String
     private let api: LumiAPIClient
@@ -44,6 +45,13 @@ final class ChatViewModel: ObservableObject {
         defer { isSending = false }
         do {
             let response = try await api.sendMessage(content, to: chatID)
+            if response.memorySaved == true {
+                memoryNotice = "-------沈屿记下了这一刻-------"
+                Task {
+                    try? await Task.sleep(for: .seconds(2.2))
+                    if !Task.isCancelled { memoryNotice = nil }
+                }
+            }
             for (index, bubble) in assistantBubbles(from: response.assistantMessage).enumerated() {
                 if index > 0 { try? await Task.sleep(for: .milliseconds(260)) }
                 messages.append(bubble)
