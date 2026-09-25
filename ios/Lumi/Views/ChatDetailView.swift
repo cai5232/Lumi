@@ -84,7 +84,7 @@ struct ChatDetailView: View {
         }
         .sheet(item: $htmlMessage) { message in
             HTMLMessageSheet(message: message) { fullScreenHTMLMessage = message; htmlMessage = nil }
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(LumiPalette.chatBackground)
         }
@@ -231,16 +231,25 @@ struct ChatDetailView: View {
                 }
                 if message.role == .user { Spacer(minLength: 48) }
                 VStack(alignment: .leading, spacing: 7) {
-                if message.contentType == "html" || isHTML(message.content) {
+                if message.htmlContent != nil || message.contentType == "html" || isHTML(message.content) {
                     Button { htmlMessage = message } label: {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 14) {
                             Image(systemName: "chevron.left.forwardslash.chevron.right")
-                            Text("HTML 卡片 · 点击开始预览")
+                                .font(.system(size: 21, weight: .medium))
+                                .foregroundStyle(.white)
+                                .frame(width: 58, height: 58)
+                                .background(Color(red: 0.20, green: 0.15, blue: 0.12), in: RoundedRectangle(cornerRadius: 15))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(message.htmlTitle ?? "HTML 页面")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundStyle(.black.opacity(0.82))
+                                    .lineLimit(1)
+                                Text("Code · HTML")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(.secondary)
+                            }
                             Spacer(minLength: 0)
-                            Image(systemName: "arrow.up.left.and.arrow.down.right")
                         }
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.black.opacity(0.8))
                         .padding(14)
                     }
                     .buttonStyle(.plain)
@@ -644,17 +653,72 @@ private struct HTMLMessageSheet: View {
     let message: ChatMessage
     let onExpand: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var showingCode = false
+
+    private var htmlSource: String { message.htmlContent ?? message.content }
 
     var body: some View {
-        NavigationStack {
-            HTMLWebContent(source: message.content)
-                .navigationTitle("HTML 内容")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { Button("关闭") { dismiss() } }
-                    ToolbarItem(placement: .topBarTrailing) { Button { onExpand() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") } }
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("HTML 预览").font(.system(size: 21, weight: .semibold))
+                    Text("隔离预览 · 不会修改 Lumi").font(.system(size: 13)).foregroundStyle(.secondary)
                 }
+                Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark").font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.secondary).frame(width: 42, height: 42)
+                        .background(.black.opacity(0.06), in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+            HStack(spacing: 8) {
+                previewTab("预览", selected: !showingCode) { showingCode = false }
+                previewTab("代码", selected: showingCode) { showingCode = true }
+                Spacer()
+                Button { onExpand() } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.black.opacity(0.72))
+                        .frame(width: 38, height: 38)
+                        .background(.white.opacity(0.72), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("全屏预览")
+            }
+            Group {
+                if showingCode {
+                    ScrollView([.vertical, .horizontal]) {
+                        Text(htmlSource)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.black.opacity(0.78))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(14)
+                    }
+                    .background(.white)
+                } else {
+                    HTMLWebContent(source: htmlSource)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(.black.opacity(0.06), lineWidth: 1))
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+        .padding(.bottom, 16)
+        .background(LumiPalette.chatBackground)
+    }
+
+    private func previewTab(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 14, weight: .medium))
+                .foregroundStyle(selected ? .black.opacity(0.76) : .secondary)
+                .padding(.horizontal, 15).padding(.vertical, 9)
+                .background(selected ? Color.white.opacity(0.8) : Color.white.opacity(0.42), in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -662,21 +726,20 @@ private struct HTMLMessageFullScreen: View {
     let message: ChatMessage
     @Environment(\.dismiss) private var dismiss
     @State private var dragOffset: CGFloat = 0
+    private var htmlSource: String { message.htmlContent ?? message.content }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             LumiPalette.chatBackground.ignoresSafeArea()
-            HTMLWebContent(source: message.content)
+            HTMLWebContent(source: htmlSource)
                 .ignoresSafeArea()
                 .offset(x: dragOffset)
                 .gesture(DragGesture(minimumDistance: 16).onChanged { value in
-                    if value.startLocation.x < 72 && value.translation.width > 0 { dragOffset = value.translation.width }
+                    if abs(value.translation.width) > abs(value.translation.height) { dragOffset = value.translation.width }
                 }.onEnded { value in
-                    if value.startLocation.x < 72 && value.translation.width > 110 { dismiss() }
+                    if abs(value.translation.width) > 110 && abs(value.translation.width) > abs(value.translation.height) { dismiss() }
                     else { withAnimation(.spring(response: 0.28)) { dragOffset = 0 } }
                 })
-            Button { dismiss() } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 28)).foregroundStyle(.secondary) }
-                .padding(.top, 18).padding(.trailing, 18)
         }
     }
 }
@@ -697,7 +760,12 @@ private struct HTMLWebContent: UIViewRepresentable {
         let document = source.trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: #"(?is)^```(?:html|xml)?\s*|\s*```$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let html = "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>body{font-family:-apple-system; padding:18px; color:#222;}</style>\(document)"
+        let html: String
+        if document.range(of: #"(?is)^\s*(?:<!doctype\s+html\b|<html\b)"#, options: .regularExpression) != nil {
+            html = document
+        } else {
+            html = "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>body{font-family:-apple-system; padding:18px; color:#222;}</style>\(document)"
+        }
         uiView.loadHTMLString(html, baseURL: nil)
     }
 }

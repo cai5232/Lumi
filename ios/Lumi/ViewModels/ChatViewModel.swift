@@ -159,20 +159,23 @@ final class ChatViewModel: ObservableObject {
         let visible = message.content
             .replacingOccurrences(of: #"(?is)<thinking>.*?</thinking>"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)</?thinking>"#, with: "", options: .regularExpression)
-        if message.contentType == "html" || Self.isHTML(visible) {
-            return [ChatMessage(id: message.id, role: .assistant, content: visible, createdAt: message.createdAt, thinking: thinking, audioFileName: message.audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript, contentType: "html")]
-        }
+        let hasStoredHTML = message.htmlContent != nil
+        let htmlContent = message.htmlContent ?? ((message.contentType == "html" || Self.isHTML(visible)) ? visible : nil)
+        let textContent = hasStoredHTML ? visible : (htmlContent == nil ? visible : "")
         // Keep the requested pause/line-break rhythm as separate bubbles. The canonical server
         // message remains intact; local reconciliation matches each display line by text/time.
-        let lines = visible
+        let lines = textContent
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         var bubbles = lines.enumerated().map { index, line in
             ChatMessage(id: index == 0 && message.audioFileName == nil ? message.id : UUID(), role: .assistant, content: line, createdAt: message.createdAt, thinking: index == 0 ? thinking : nil)
         }
+        if let htmlContent {
+            bubbles.append(ChatMessage(id: UUID(), role: .assistant, content: "", createdAt: message.createdAt.addingTimeInterval(0.001), contentType: "html", htmlContent: htmlContent, htmlTitle: message.htmlTitle ?? "HTML"))
+        }
         if let audioFileName = message.audioFileName {
-            bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, audioFileName: audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript))
+            bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt.addingTimeInterval(0.002), audioFileName: audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript))
         }
         if bubbles.isEmpty, message.audioFileName != nil {
             bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, thinking: thinking, audioFileName: message.audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript))

@@ -7,6 +7,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     let role: Role
     let content: String
     var contentType: String?
+    var htmlContent: String?
+    var htmlTitle: String?
     let createdAt: Date
     var isThinking: Bool = false
     var thinking: String?
@@ -16,13 +18,15 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var localImageFileName: String?
     var imageAttachmentCount: Int?
 
-    enum CodingKeys: String, CodingKey { case id, role, content, contentType, createdAt, isThinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount }
+    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount }
 
-    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil, contentType: String? = nil) {
+    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil) {
         self.id = id
         self.role = role
         self.content = content
         self.contentType = contentType
+        self.htmlContent = htmlContent
+        self.htmlTitle = htmlTitle
         self.createdAt = createdAt
         self.isThinking = isThinking
         self.thinking = thinking
@@ -39,6 +43,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         role = try container.decode(Role.self, forKey: .role)
         content = try container.decode(String.self, forKey: .content)
         contentType = try container.decodeIfPresent(String.self, forKey: .contentType)
+        htmlContent = try container.decodeIfPresent(String.self, forKey: .htmlContent)
+        htmlTitle = try container.decodeIfPresent(String.self, forKey: .htmlTitle)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         isThinking = try container.decodeIfPresent(Bool.self, forKey: .isThinking) ?? false
         thinking = nil
