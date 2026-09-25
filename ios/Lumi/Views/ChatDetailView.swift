@@ -6,6 +6,7 @@ struct ChatDetailView: View {
     @StateObject private var model: ChatViewModel
     @FocusState private var composerFocused: Bool
     @StateObject private var glassPresentation = GlassComparisonPresentation()
+    @State private var showingSettings = false
 
     init(model: ChatViewModel? = nil) {
         _model = StateObject(wrappedValue: model ?? ChatViewModel())
@@ -50,6 +51,9 @@ struct ChatDetailView: View {
             GlassComparisonView()
                 .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+        }
         .sheet(isPresented: $glassPresentation.showingThinkingDetails) {
             ThinkingDetailsView(text: glassPresentation.thinkingText) { height in
                 glassPresentation.thinkingHeight = height
@@ -87,7 +91,7 @@ struct ChatDetailView: View {
 
     private var topBar: some View {
         HStack {
-            glassCircleButton("line.3.horizontal") { glassPresentation.showing = true }
+            glassCircleButton("line.3.horizontal") { showingSettings = true }
             Spacer()
             glassCircleButton("phone")
             HStack(spacing: 0) {
@@ -245,6 +249,37 @@ struct ChatDetailView: View {
             .clipShape(Capsule())
             Spacer()
         }
+    }
+}
+
+private struct SettingsView: View {
+    @AppStorage("lumi.proactiveNudgeEnabled") private var proactiveNudgeEnabled = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Toggle(isOn: $proactiveNudgeEnabled) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("保活")
+                                .font(.system(size: 16, weight: .medium))
+                            Text("长时间没有新消息时，允许沈屿主动发起一次对话")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .tint(Color(red: 0.72, green: 0.35, blue: 0.49))
+                } header: {
+                    Text("主动联系")
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color(red: 0.984, green: 0.949, blue: 0.957))
+            .navigationTitle("设置")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .presentationDetents([.medium])
+        .presentationBackground(Color(red: 0.984, green: 0.949, blue: 0.957))
     }
 }
 
