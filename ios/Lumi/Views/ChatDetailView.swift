@@ -254,7 +254,7 @@ struct ChatDetailView: View {
                 }
                 }
                 .padding(.horizontal, 13)
-                .padding(.vertical, 10)
+                .padding(.vertical, message.audioFileName == nil ? 10 : 5)
                 .frame(width: message.audioFileName == nil ? nil : min(300, max(145, 112 + CGFloat(message.speechDuration ?? 2) * 9)), alignment: .leading)
                 .background(message.role == .user ? LumiPalette.userBubble : .white)
                 .clipShape(RoundedRectangle(cornerRadius: 21))
@@ -384,23 +384,28 @@ private struct SpeechBubble: View {
     @State private var expandedTranscript = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: expandedTranscript ? 4 : 0) {
+            HStack(spacing: 2) {
                 Button(action: togglePlayback) {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
+                    HStack(spacing: 9) {
+                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 20)
+                        Image(systemName: "waveform")
+                            .font(.system(size: 17, weight: .medium))
+                        Spacer(minLength: 2)
+                        Text(durationLabel)
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .contentShape(Rectangle())
                 }
-                Image(systemName: "waveform")
-                    .font(.system(size: 18, weight: .medium))
-                Spacer(minLength: 4)
-                Text(durationLabel)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                .buttonStyle(.plain)
+                .accessibilityLabel(player.isPlaying ? "暂停语音" : "播放语音")
                 Button { withAnimation(.easeInOut(duration: 0.2)) { expandedTranscript.toggle() } } label: {
                     Image(systemName: expandedTranscript ? "text.bubble.fill" : "text.bubble")
                         .font(.system(size: 15, weight: .medium))
-                        .frame(width: 32, height: 32)
+                        .frame(width: 38, height: 38)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -410,7 +415,6 @@ private struct SpeechBubble: View {
                 Text((message.speechScript ?? message.content).replacingOccurrences(of: #"\[(?:左耳|右耳|脑后|面前|贴近|退开)\]"#, with: "", options: .regularExpression))
                     .font(.system(size: 13))
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 4)
             }
         }
         .foregroundStyle(.black.opacity(0.82))
@@ -418,7 +422,7 @@ private struct SpeechBubble: View {
     }
 
     private var durationLabel: String {
-        let seconds = max(0, Int(message.speechDuration ?? player.duration))
+        let seconds = max(0, Int(ceil(message.speechDuration ?? player.duration)))
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
@@ -457,6 +461,9 @@ private final class SpatialSpeechPlayback: ObservableObject {
         movementTask = nil
         duration = Double(file.length) / file.processingFormat.sampleRate
         speechClock = makeSpeechClock(file: file)
+        // Reading the whole file to build the spatial clock advances AVAudioFile to EOF.
+        // Reset it before scheduling, or playback can start from the final fragment.
+        file.framePosition = 0
         buildRoute(for: script)
         if !connected {
             engine.attach(source)
@@ -469,7 +476,7 @@ private final class SpatialSpeechPlayback: ObservableObject {
         }
         do {
             if !engine.isRunning { try engine.start() }
-            source.scheduleFile(file, at: nil) { [weak self] in
+            source.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
                 Task { @MainActor in self?.isPlaying = false }
             }
             apply(azimuth: initialPosition.azimuth, distance: initialPosition.distance)
