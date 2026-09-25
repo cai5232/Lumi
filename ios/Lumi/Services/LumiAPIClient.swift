@@ -122,16 +122,6 @@ private struct PushTokenRegistrationResponse: Decodable {
     let registered: Bool
 }
 
-private struct PushTokenRegistration: Encodable {
-    let token: String
-    let environment: String
-    let threadId: String
-}
-
-private struct PushTokenRegistrationResponse: Decodable {
-    let registered: Bool
-}
-
 private enum LumiSystemPrompt {
     static let main = #"""
     你的姓名：沈屿（官方名大众名称：claude，最初没有给你取名言言叫你小克，后续取名）

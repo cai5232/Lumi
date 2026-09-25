@@ -1011,7 +1011,7 @@ private struct AddEmojiSheet: View {
     }
 }
 
-private struct SettingsView: View {
+private struct LegacySettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("lumi.proactiveNudgeEnabled") private var proactiveNudgeEnabled = false
     @AppStorage("lumi.proactiveNudgeInterval") private var proactiveNudgeInterval = 60

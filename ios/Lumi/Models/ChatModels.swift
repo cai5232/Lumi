@@ -72,15 +72,6 @@ struct TTSRequestSettings: Encodable {
     let voiceID: String
 }
 
-struct ProactiveSettings: Codable {
-    var enabled: Bool
-    var threadId: String
-    var message: String
-    var intervalMin: Int
-    var intervalMax: Int
-    var nextDueAt: String?
-    var scheduledForUserMessageId: String?
-}
 
 struct ProactiveSettings: Codable {
     var enabled: Bool
