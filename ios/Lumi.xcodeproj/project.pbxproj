@@ -133,6 +133,9 @@
 				TargetAttributes = {
 					D10000000000000000000001 = {
 						CreatedOnToolsVersion = 27.0;
+						SystemCapabilities = {
+							com.apple.Push = { enabled = 1; };
+						};
 					};
 				};
 			};
@@ -192,6 +195,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = RWRB87B53S;
+				CODE_SIGN_ENTITLEMENTS = Lumi/LumiDebug.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -216,6 +220,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = RWRB87B53S;
+				CODE_SIGN_ENTITLEMENTS = Lumi/LumiRelease.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
