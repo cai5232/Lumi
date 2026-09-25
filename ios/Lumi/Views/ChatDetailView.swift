@@ -231,11 +231,11 @@ struct ChatDetailView: View {
                 }
                 if message.role == .user { Spacer(minLength: 48) }
                 VStack(alignment: .leading, spacing: 7) {
-                if isHTML(message.content) {
+                if message.contentType == "html" || isHTML(message.content) {
                     Button { htmlMessage = message } label: {
                         HStack(spacing: 10) {
                             Image(systemName: "chevron.left.forwardslash.chevron.right")
-                            Text("HTML 内容 · 点击展开")
+                            Text("HTML 卡片 · 点击开始预览")
                             Spacer(minLength: 0)
                             Image(systemName: "arrow.up.left.and.arrow.down.right")
                         }
@@ -329,7 +329,9 @@ struct ChatDetailView: View {
     }
 
     private func isHTML(_ content: String) -> Bool {
-        content.range(of: #"(?is)<(?:!doctype\s+html|/?(?:html|head|body|div|p|span|a|ul|ol|li|h[1-6]|table|thead|tbody|tr|td|th|svg|iframe|section|article|pre|code|blockquote|br|hr|style|script)\b[^>]*>"#, options: .regularExpression) != nil
+        content.range(of: #"(?is)^```(?:html|xml)\b|(?:<!doctype\s+html\b|<(?:html|svg|main|section|article|div|table|button|form|canvas)\b)"#, options: .regularExpression) != nil
+            || (content.range(of: #"(?i)<(?:html|head|body|title|meta|link|div|span|p|a|ul|ol|li|h[1-6]|table|thead|tbody|tr|td|th|svg|path|iframe|section|article|main|header|footer|nav|button|input|textarea|label|form|select|option|canvas|video|audio|pre|code|blockquote|br|hr|style|script|details|summary)\b[^>]*>"#, options: .regularExpression) != nil
+                && content.range(of: #"(?i)</(?:html|head|body|title|div|span|p|a|ul|ol|li|h[1-6]|table|thead|tbody|tr|td|th|svg|path|iframe|section|article|main|header|footer|nav|button|textarea|label|form|select|option|canvas|video|audio|pre|code|blockquote|style|script|details|summary)\s*>"#, options: .regularExpression) != nil)
     }
 
     private func loadSelectedImage(_ item: PhotosPickerItem?) async {
@@ -414,9 +416,13 @@ private struct SpeechBubble: View {
                 .accessibilityLabel(expandedTranscript ? "收起转文字" : "展开转文字")
             }
             if expandedTranscript {
-                Text((message.speechScript ?? message.content).replacingOccurrences(of: #"\[(?:左耳|右耳|脑后|面前|贴近|退开)\]"#, with: "", options: .regularExpression))
-                    .font(.system(size: 13))
-                    .fixedSize(horizontal: false, vertical: true)
+                Rectangle().fill(.black.opacity(0.08)).frame(height: 1)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("语音转文字").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+                    Text((message.speechScript ?? message.content).replacingOccurrences(of: #"\[(?:左耳|右耳|脑后|面前|贴近|退开)\]"#, with: "", options: .regularExpression))
+                        .font(.system(size: 13))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .foregroundStyle(.black.opacity(0.82))
@@ -688,7 +694,10 @@ private struct HTMLWebContent: UIViewRepresentable {
         return view
     }
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        let html = "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>body{font-family:-apple-system; padding:18px; color:#222;}</style>\(source)"
+        let document = source.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"(?is)^```(?:html|xml)?\s*|\s*```$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let html = "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>body{font-family:-apple-system; padding:18px; color:#222;}</style>\(document)"
         uiView.loadHTMLString(html, baseURL: nil)
     }
 }

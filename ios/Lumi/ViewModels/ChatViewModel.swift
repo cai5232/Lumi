@@ -159,8 +159,8 @@ final class ChatViewModel: ObservableObject {
         let visible = message.content
             .replacingOccurrences(of: #"(?is)<thinking>.*?</thinking>"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)</?thinking>"#, with: "", options: .regularExpression)
-        if visible.range(of: #"(?is)<(?:!doctype\s+html|/?(?:html|head|body|div|p|span|a|ul|ol|li|h[1-6]|table|thead|tbody|tr|td|th|svg|iframe|section|article|pre|code|blockquote|br|hr|style|script)\b[^>]*>"#, options: .regularExpression) != nil {
-            return [ChatMessage(id: message.id, role: .assistant, content: visible, createdAt: message.createdAt, thinking: thinking)]
+        if message.contentType == "html" || Self.isHTML(visible) {
+            return [ChatMessage(id: message.id, role: .assistant, content: visible, createdAt: message.createdAt, thinking: thinking, audioFileName: message.audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript, contentType: "html")]
         }
         // Keep the requested pause/line-break rhythm as separate bubbles. The canonical server
         // message remains intact; local reconciliation matches each display line by text/time.
@@ -178,6 +178,18 @@ final class ChatViewModel: ObservableObject {
             bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, thinking: thinking, audioFileName: message.audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript))
         }
         return bubbles.isEmpty ? [ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, thinking: thinking)] : bubbles
+    }
+
+    private static func isHTML(_ content: String) -> Bool {
+        let source = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"(?is)^```(?:html|xml)?\s*|\s*```$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if source.range(of: #"(?i)^(?:<!doctype\s+html\b|<(?:html|svg)\b)"#, options: .regularExpression) != nil { return true }
+        let tags = #"html|head|body|title|meta|link|div|span|p|a|ul|ol|li|h[1-6]|table|thead|tbody|tr|td|th|svg|path|iframe|section|article|main|header|footer|nav|button|input|textarea|label|form|select|option|canvas|video|audio|pre|code|blockquote|br|hr|style|script|details|summary"#
+        let openingTag = #"(?i)<(?:"# + tags + #")\b[^>]*>"#
+        let closingTag = #"(?i)</(?:"# + tags + #")\s*>"#
+        return source.range(of: openingTag, options: .regularExpression) != nil
+            && source.range(of: closingTag, options: .regularExpression) != nil
     }
 
     private func extractThinking(from content: String) -> String? {

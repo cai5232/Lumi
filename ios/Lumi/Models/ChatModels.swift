@@ -6,6 +6,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     let id: UUID
     let role: Role
     let content: String
+    var contentType: String?
     let createdAt: Date
     var isThinking: Bool = false
     var thinking: String?
@@ -15,12 +16,13 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var localImageFileName: String?
     var imageAttachmentCount: Int?
 
-    enum CodingKeys: String, CodingKey { case id, role, content, createdAt, isThinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount }
+    enum CodingKeys: String, CodingKey { case id, role, content, contentType, createdAt, isThinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount }
 
-    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil) {
+    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil, contentType: String? = nil) {
         self.id = id
         self.role = role
         self.content = content
+        self.contentType = contentType
         self.createdAt = createdAt
         self.isThinking = isThinking
         self.thinking = thinking
@@ -36,6 +38,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         id = try container.decode(UUID.self, forKey: .id)
         role = try container.decode(Role.self, forKey: .role)
         content = try container.decode(String.self, forKey: .content)
+        contentType = try container.decodeIfPresent(String.self, forKey: .contentType)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         isThinking = try container.decodeIfPresent(Bool.self, forKey: .isThinking) ?? false
         thinking = nil
