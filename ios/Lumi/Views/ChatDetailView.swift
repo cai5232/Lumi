@@ -263,6 +263,7 @@ private struct SettingsView: View {
     @AppStorage("lumi.proactiveNudgeMessage") private var proactiveNudgeMessage = "有一段时间没聊了，结合我们的上下文自然地来找我说句话。"
     @State private var settingsLoaded = false
     @State private var syncStatus = "正在连接后端…"
+    @State private var settingsSaveTask: Task<Void, Never>?
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
     private let api = LumiAPIClient()
 
@@ -371,8 +372,11 @@ private struct SettingsView: View {
 
     private func saveProactiveSettings() {
         guard settingsLoaded else { return }
+        settingsSaveTask?.cancel()
         syncStatus = "正在保存…"
-        Task {
+        settingsSaveTask = Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
             do {
                 _ = try await api.updateProactiveSettings(ProactiveSettings(
                     enabled: proactiveNudgeEnabled,
@@ -385,6 +389,7 @@ private struct SettingsView: View {
             } catch {
                 syncStatus = "后端连接失败，设置尚未同步"
             }
+            settingsSaveTask = nil
         }
     }
 }
