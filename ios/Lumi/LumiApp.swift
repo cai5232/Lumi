@@ -4,6 +4,8 @@ import UserNotifications
 
 @main
 struct LumiApp: App {
+    @UIApplicationDelegateAdaptor(LumiAppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             ChatDetailView(model: ChatViewModel(
