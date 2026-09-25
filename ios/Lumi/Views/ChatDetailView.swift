@@ -213,6 +213,7 @@ struct ChatDetailView: View {
     }
 
     @ViewBuilder private func messageBubble(_ message: ChatMessage, showAvatar: Bool) -> some View {
+        let isHTMLCard = message.htmlContent != nil || message.contentType == "html" || isHTML(message.content)
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 5) {
             if let localName = message.localImageFileName,
                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent(localName),
@@ -231,26 +232,26 @@ struct ChatDetailView: View {
                 }
                 if message.role == .user { Spacer(minLength: 48) }
                 VStack(alignment: .leading, spacing: 7) {
-                if message.htmlContent != nil || message.contentType == "html" || isHTML(message.content) {
+                if isHTMLCard {
                     Button { htmlMessage = message } label: {
-                        HStack(spacing: 14) {
+                        HStack(spacing: 11) {
                             Image(systemName: "chevron.left.forwardslash.chevron.right")
-                                .font(.system(size: 21, weight: .medium))
+                                .font(.system(size: 17, weight: .medium))
                                 .foregroundStyle(.white)
-                                .frame(width: 58, height: 58)
-                                .background(Color(red: 0.20, green: 0.15, blue: 0.12), in: RoundedRectangle(cornerRadius: 15))
-                            VStack(alignment: .leading, spacing: 3) {
+                                .frame(width: 42, height: 42)
+                                .background(Color(red: 0.92, green: 0.59, blue: 0.68), in: RoundedRectangle(cornerRadius: 13))
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(message.htmlTitle ?? "HTML 页面")
-                                    .font(.system(size: 16, weight: .medium))
+                                    .font(.system(size: 14, weight: .medium))
                                     .foregroundStyle(.black.opacity(0.82))
                                     .lineLimit(1)
                                 Text("Code · HTML")
-                                    .font(.system(size: 14))
+                                    .font(.system(size: 12))
                                     .foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 0)
                         }
-                        .padding(14)
+                        .padding(9)
                     }
                     .buttonStyle(.plain)
                 } else if let audioFileName = message.audioFileName {
@@ -262,8 +263,8 @@ struct ChatDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 }
-                .padding(.horizontal, 13)
-                .padding(.vertical, message.audioFileName == nil ? 10 : 3)
+                .padding(.horizontal, isHTMLCard ? 8 : 13)
+                .padding(.vertical, isHTMLCard ? 5 : (message.audioFileName == nil ? 10 : 3))
                 .frame(width: message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8)), alignment: .leading)
                 .background(message.role == .user ? LumiPalette.userBubble : .white)
                 .clipShape(RoundedRectangle(cornerRadius: 21))
@@ -652,7 +653,6 @@ private final class SpatialSpeechPlayback: ObservableObject {
 private struct HTMLMessageSheet: View {
     let message: ChatMessage
     let onExpand: () -> Void
-    @Environment(\.dismiss) private var dismiss
     @State private var showingCode = false
 
     private var htmlSource: String { message.htmlContent ?? message.content }
@@ -665,26 +665,20 @@ private struct HTMLMessageSheet: View {
                     Text("隔离预览 · 不会修改 Lumi").font(.system(size: 13)).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark").font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.secondary).frame(width: 42, height: 42)
-                        .background(.black.opacity(0.06), in: Circle())
-                }
-                .buttonStyle(.plain)
-            }
-            HStack(spacing: 8) {
-                previewTab("预览", selected: !showingCode) { showingCode = false }
-                previewTab("代码", selected: showingCode) { showingCode = true }
-                Spacer()
                 Button { onExpand() } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(.black.opacity(0.72))
-                        .frame(width: 38, height: 38)
-                        .background(.white.opacity(0.72), in: Circle())
+                        .frame(width: 40, height: 40)
+                        .background(.white.opacity(0.78), in: Circle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("全屏预览")
+            }
+            HStack(spacing: 8) {
+                previewTab("预览", selected: !showingCode) { showingCode = false }
+                previewTab("代码", selected: showingCode) { showingCode = true }
+                Spacer(minLength: 0)
             }
             Group {
                 if showingCode {

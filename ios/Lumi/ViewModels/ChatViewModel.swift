@@ -36,10 +36,10 @@ final class ChatViewModel: ObservableObject {
         }
         do {
             let loaded = try await api.fetchThread(id: chatID).messages
-            let remoteMessages = loaded.flatMap { message in
+            let remoteMessages = Self.deduplicateHTMLCards(loaded.flatMap { message in
                 let restored = restoreMedia(for: message)
                 return restored.role == .assistant ? assistantBubbles(from: restored) : [restored]
-            }
+            })
             let isEmptyServerSeed = remoteMessages.count == 1 && remoteMessages[0].role == .assistant && remoteMessages[0].content == "下午的风很轻，想和你说说话。"
             if !isEmptyServerSeed && !remoteMessages.isEmpty {
                 // Keep locally saved messages if the backend has since been reset. Old versions
@@ -49,6 +49,9 @@ final class ChatViewModel: ObservableObject {
                 let localOnly = localMessages.filter { local in
                     guard !remoteIDs.contains(local.id) else { return false }
                     if local.role == .assistant {
+                        if Self.htmlCardPayload(local) != nil {
+                            return !remoteMessages.contains { remote in Self.sameHTMLCard(local, remote) }
+                        }
                         return !remoteMessages.contains { remote in
                             remote.role == .assistant
                                 && abs(remote.createdAt.timeIntervalSince(local.createdAt)) < 1
@@ -57,14 +60,14 @@ final class ChatViewModel: ObservableObject {
                     }
                     return true
                 }
-                messages = (remoteMessages + localOnly).sorted { $0.createdAt < $1.createdAt }
+                messages = Self.deduplicateHTMLCards((remoteMessages + localOnly).sorted { $0.createdAt < $1.createdAt })
             } else {
-                messages = localMessages.isEmpty ? remoteMessages : localMessages
+                messages = Self.deduplicateHTMLCards(localMessages.isEmpty ? remoteMessages : localMessages)
             }
             saveLocalConversation()
         }
         catch {
-            if !localMessages.isEmpty { messages = localMessages }
+            if !localMessages.isEmpty { messages = Self.deduplicateHTMLCards(localMessages) }
             else if messages.isEmpty { errorMessage = friendlyError(error) }
         }
     }
@@ -172,7 +175,7 @@ final class ChatViewModel: ObservableObject {
             ChatMessage(id: index == 0 && message.audioFileName == nil ? message.id : UUID(), role: .assistant, content: line, createdAt: message.createdAt, thinking: index == 0 ? thinking : nil)
         }
         if let htmlContent {
-            bubbles.append(ChatMessage(id: UUID(), role: .assistant, content: "", createdAt: message.createdAt.addingTimeInterval(0.001), contentType: "html", htmlContent: htmlContent, htmlTitle: message.htmlTitle ?? "HTML"))
+            bubbles.append(ChatMessage(id: Self.cardID(for: message.id), role: .assistant, content: "", createdAt: message.createdAt.addingTimeInterval(0.001), contentType: "html", htmlContent: htmlContent, htmlTitle: message.htmlTitle ?? "HTML 页面"))
         }
         if let audioFileName = message.audioFileName {
             bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt.addingTimeInterval(0.002), audioFileName: audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript))
@@ -193,6 +196,44 @@ final class ChatViewModel: ObservableObject {
         let closingTag = #"(?i)</(?:"# + tags + #")\s*>"#
         return source.range(of: openingTag, options: .regularExpression) != nil
             && source.range(of: closingTag, options: .regularExpression) != nil
+    }
+
+    private static func cardID(for messageID: UUID) -> UUID {
+        var bytes = messageID.uuid
+        withUnsafeMutableBytes(of: &bytes) { buffer in
+            buffer[0] ^= 0xA5
+            buffer[15] ^= 0x5A
+        }
+        return UUID(uuid: bytes)
+    }
+
+    private static func htmlCardPayload(_ message: ChatMessage) -> String? {
+        if let html = message.htmlContent { return html.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard message.contentType == "html" || isHTML(message.content) else { return nil }
+        if let range = message.content.range(of: #"(?is)```(?:html|xml)?\s*(.*?)```"#, options: .regularExpression) {
+            let fenced = String(message.content[range])
+                .replacingOccurrences(of: #"(?is)^```(?:html|xml)?\s*|```$"#, with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if isHTML(fenced) { return fenced }
+        }
+        return message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func sameHTMLCard(_ lhs: ChatMessage, _ rhs: ChatMessage) -> Bool {
+        guard lhs.role == .assistant, rhs.role == .assistant,
+              abs(lhs.createdAt.timeIntervalSince(rhs.createdAt)) < 2,
+              let left = htmlCardPayload(lhs), let right = htmlCardPayload(rhs) else { return false }
+        return left == right || left.contains(right) || right.contains(left)
+    }
+
+    private static func deduplicateHTMLCards(_ messages: [ChatMessage]) -> [ChatMessage] {
+        var keptCards: [ChatMessage] = []
+        return messages.filter { candidate in
+            guard htmlCardPayload(candidate) != nil else { return true }
+            guard !keptCards.contains(where: { sameHTMLCard(candidate, $0) }) else { return false }
+            keptCards.append(candidate)
+            return true
+        }
     }
 
     private func extractThinking(from content: String) -> String? {
