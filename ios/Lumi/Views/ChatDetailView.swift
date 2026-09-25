@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UserNotifications
 
 @MainActor
 struct ChatDetailView: View {
@@ -256,7 +257,9 @@ struct ChatDetailView: View {
 }
 
 private struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
     @AppStorage("lumi.proactiveNudgeEnabled") private var proactiveNudgeEnabled = false
+    @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
 
     var body: some View {
         NavigationStack {
@@ -275,14 +278,62 @@ private struct SettingsView: View {
                 } header: {
                     Text("主动联系")
                 }
+
+                Section {
+                    Button {
+                        Task { await requestNotifications() }
+                    } label: {
+                        HStack {
+                            Label("消息通知", systemImage: "bell.badge")
+                            Spacer()
+                            Text(notificationStatusLabel)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                } header: {
+                    Text("通知")
+                } footer: {
+                    Text("允许后，未来保活功能才能在你没有打开 App 时提醒你。")
+                }
             }
             .scrollContentBackground(.hidden)
             .background(Color(red: 0.984, green: 0.949, blue: 0.957))
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("返回") { dismiss() }
+                }
+            }
         }
-        .presentationDetents([.medium])
-        .presentationBackground(Color(red: 0.984, green: 0.949, blue: 0.957))
+        .task { await refreshNotificationStatus() }
+        .background(Color(red: 0.984, green: 0.949, blue: 0.957))
+        .preferredColorScheme(.light)
+    }
+
+    private var notificationStatusLabel: String {
+        switch notificationStatus {
+        case .authorized, .provisional, .ephemeral: return "已允许"
+        case .denied: return "去系统设置开启"
+        case .notDetermined: return "请求权限"
+        @unknown default: return "请求权限"
+        }
+    }
+
+    private func refreshNotificationStatus() async {
+        notificationStatus = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
+
+    private func requestNotifications() async {
+        let center = UNUserNotificationCenter.current()
+        let granted = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+        if granted == false {
+            await MainActor.run { notificationStatus = .denied }
+        } else {
+            await refreshNotificationStatus()
+        }
     }
 }
 
