@@ -37,6 +37,18 @@ final class LumiAPIClient {
         return response
     }
 
+    func fetchProactiveSettings() async throws -> ProactiveSettings {
+        try await request(path: "/v1/settings/proactive")
+    }
+
+    func updateProactiveSettings(_ settings: ProactiveSettings) async throws -> ProactiveSettings {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/settings/proactive"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder.api.encode(settings)
+        return try await perform(request)
+    }
+
     private func request<T: Decodable>(path: String) async throws -> T {
         try await perform(URLRequest(url: baseURL.appending(path: path)))
     }
