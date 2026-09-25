@@ -403,8 +403,8 @@ private struct SpeechBubble: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(player.isPlaying ? "暂停语音" : "播放语音")
                 Button { withAnimation(.easeInOut(duration: 0.2)) { expandedTranscript.toggle() } } label: {
-                    Image(systemName: expandedTranscript ? "text.bubble.fill" : "text.bubble")
-                        .font(.system(size: 15, weight: .medium))
+                    Image(systemName: expandedTranscript ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 13, weight: .semibold))
                         .frame(width: 32, height: 32)
                         .contentShape(Rectangle())
                 }
