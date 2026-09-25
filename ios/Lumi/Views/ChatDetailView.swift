@@ -254,7 +254,7 @@ struct ChatDetailView: View {
                 }
                 }
                 .padding(.horizontal, 13)
-                .padding(.vertical, message.audioFileName == nil ? 10 : 5)
+                .padding(.vertical, message.audioFileName == nil ? 10 : 3)
                 .frame(width: message.audioFileName == nil ? nil : min(300, max(145, 112 + CGFloat(message.speechDuration ?? 2) * 9)), alignment: .leading)
                 .background(message.role == .user ? LumiPalette.userBubble : .white)
                 .clipShape(RoundedRectangle(cornerRadius: 21))
@@ -397,7 +397,7 @@ private struct SpeechBubble: View {
                         Text(durationLabel)
                             .font(.system(size: 12, weight: .medium, design: .rounded))
                     }
-                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .frame(maxWidth: .infinity, minHeight: 32)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -405,7 +405,7 @@ private struct SpeechBubble: View {
                 Button { withAnimation(.easeInOut(duration: 0.2)) { expandedTranscript.toggle() } } label: {
                     Image(systemName: expandedTranscript ? "text.bubble.fill" : "text.bubble")
                         .font(.system(size: 15, weight: .medium))
-                        .frame(width: 38, height: 38)
+                        .frame(width: 32, height: 32)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
