@@ -51,8 +51,10 @@ struct ChatDetailView: View {
                 .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $glassPresentation.showingThinkingDetails) {
-            ThinkingDetailsView(text: glassPresentation.thinkingText)
-                .presentationDetents([.height(220)])
+            ThinkingDetailsView(text: glassPresentation.thinkingText) { height in
+                glassPresentation.thinkingHeight = height
+            }
+                .presentationDetents([.height(glassPresentation.thinkingHeight)])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(Color(red: 0.9608, green: 0.9255, blue: 0.9255))
         }
@@ -251,12 +253,18 @@ private final class GlassComparisonPresentation: ObservableObject {
     @Published var showing = false
     @Published var showingThinkingDetails = false
     @Published var thinkingText = "正在整理你的话。"
+    @Published var thinkingHeight: CGFloat = 260
 }
 
 private struct ThinkingDetailsView: View {
     let text: String
+    let onHeightChange: (CGFloat) -> Void
+    private let horizontalPadding: CGFloat = 24
+    private let verticalPadding: CGFloat = 26
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 28) {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 24) {
             Text("Thought process")
                 .font(.system(size: 19, weight: .bold))
                 .foregroundStyle(.black)
@@ -265,11 +273,30 @@ private struct ThinkingDetailsView: View {
                 .font(.system(size: 14, weight: .regular))
                 .lineSpacing(6)
                 .foregroundStyle(.black)
+                .fixedSize(horizontal: false, vertical: true)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: ThinkingTextHeightKey.self, value: proxy.size.height)
+                    }
+                }
+            }
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
         }
-        .padding(24)
-        .offset(y: -25)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(red: 0.9608, green: 0.9255, blue: 0.9255))
+        .onPreferenceChange(ThinkingTextHeightKey.self) { textHeight in
+            let desired = textHeight + 19 + 24 + verticalPadding * 2
+            let screenLimit = UIScreen.main.bounds.height * 0.88
+            onHeightChange(min(max(desired, 220), screenLimit))
+        }
+    }
+}
+
+private struct ThinkingTextHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
