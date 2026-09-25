@@ -13,8 +13,8 @@ enum LumiAPIError: LocalizedError {
 }
 
 final class LumiAPIClient {
-    // 真机调试时替换成开发机的局域网 IP。
-    var baseURL = URL(string: "http://127.0.0.1:8787")!
+    // Zeabur 公网 API；真机和模拟器都可以直接访问。
+    var baseURL = URL(string: "https://lumi-api.zeabur.app")!
     private let session: URLSession
 
     init(session: URLSession = .shared) { self.session = session }
