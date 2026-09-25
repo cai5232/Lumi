@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UIKit
 import UserNotifications
 
 @MainActor
@@ -310,7 +311,7 @@ private struct SettingsView: View {
                 } header: {
                     Text("通知")
                 } footer: {
-                    Text("通知权限不会让 iOS 在后台定时运行。当前可由后端生成并保存主动回复；锁屏推送还需要配置 APNs，暂未接通。")
+                    Text("允许通知后会注册这台设备；锁屏推送还需要在后端安全配置 Apple APNs 密钥。")
                 }
             }
             .scrollContentBackground(.hidden)
@@ -354,6 +355,9 @@ private struct SettingsView: View {
             await MainActor.run { notificationStatus = .denied }
         } else {
             await refreshNotificationStatus()
+            if notificationStatus == .authorized || notificationStatus == .provisional || notificationStatus == .ephemeral {
+                await MainActor.run { UIApplication.shared.registerForRemoteNotifications() }
+            }
         }
     }
 
