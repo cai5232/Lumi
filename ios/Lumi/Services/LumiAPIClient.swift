@@ -36,6 +36,7 @@ final class LumiAPIClient {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/messages"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
         request.httpBody = try JSONEncoder.api.encode(
             SendMessageRequest(content: content, systemPrompt: LumiSystemPrompt.main, images: images, emojiCatalog: emojiCatalog, tts: tts)
         )
@@ -80,7 +81,10 @@ final class LumiAPIClient {
 
     private func perform<T: Decodable>(_ request: URLRequest) async throws -> T {
         var lastError: Error?
-        for attempt in 0..<3 {
+        // A paid model call may succeed even when its response is lost or
+        // cannot be decoded. Never replay a write request automatically.
+        let attempts = request.httpMethod == "GET" || request.httpMethod == nil ? 3 : 1
+        for attempt in 0..<attempts {
             do {
                 let (data, response) = try await session.data(for: request)
                 guard let http = response as? HTTPURLResponse else { throw LumiAPIError.invalidResponse }
@@ -92,7 +96,7 @@ final class LumiAPIClient {
                 return try JSONDecoder.api.decode(T.self, from: data)
             } catch {
                 lastError = error
-                if attempt < 2 && !isNonRetryable(error) {
+                if attempt < attempts - 1 && !isNonRetryable(error) {
                     try? await Task.sleep(for: .milliseconds(350 * (attempt + 1)))
                 } else if isNonRetryable(error) {
                     break
@@ -103,6 +107,7 @@ final class LumiAPIClient {
     }
 
     private func isNonRetryable(_ error: Error) -> Bool {
+        if error is DecodingError { return true }
         guard case LumiAPIError.server(let message) = error else { return false }
         return message.contains("HTTP 4")
     }
@@ -182,7 +187,15 @@ private extension JSONEncoder {
 private extension JSONDecoder {
     static var api: JSONDecoder {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { value in
+            let date = try value.singleValueContainer().decode(String.self)
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let parsed = formatter.date(from: date) { return parsed }
+            formatter.formatOptions = [.withInternetDateTime]
+            if let parsed = formatter.date(from: date) { return parsed }
+            throw DecodingError.dataCorrupted(.init(codingPath: value.codingPath, debugDescription: "Invalid ISO8601 date: \(date)"))
+        }
         return decoder
     }
 }
