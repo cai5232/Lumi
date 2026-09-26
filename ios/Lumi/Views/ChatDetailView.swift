@@ -223,11 +223,13 @@ struct ChatDetailView: View {
             HStack {
                 if message.role == .assistant {
                     if showAvatar {
-                        Button {
-                            glassPresentation.thinkingText = thinkingText(for: message)
-                            glassPresentation.showingThinkingDetails = true
-                        } label: { avatar(for: .assistant) }
-                        .buttonStyle(.plain)
+                        if let thinking = thinkingText(for: message) {
+                            Button {
+                                glassPresentation.thinkingText = thinking
+                                glassPresentation.showingThinkingDetails = true
+                            } label: { avatar(for: .assistant) }
+                            .buttonStyle(.plain)
+                        } else { avatar(for: .assistant) }
                     } else { Color.clear.frame(width: 42, height: 42) }
                 }
                 if message.role == .user { Spacer(minLength: 48) }
@@ -255,7 +257,12 @@ struct ChatDetailView: View {
                     }
                     .buttonStyle(.plain)
                 } else if let audioFileName = message.audioFileName {
-                    SpeechBubble(message: message, fileName: audioFileName)
+                    let hasVisibleReply = model.messages.contains { item in
+                        item.role == .assistant && item.id != message.id &&
+                        !item.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                        abs(item.createdAt.timeIntervalSince(message.createdAt)) < 0.01
+                    }
+                    SpeechBubble(message: message, fileName: audioFileName, showsTranscript: !hasVisibleReply)
                 } else {
                     markdownText(visibleContent(message.content))
                         .foregroundStyle(.black)
@@ -306,23 +313,16 @@ struct ChatDetailView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func thinkingText(for message: ChatMessage) -> String {
-        if let thinking = message.thinking, !thinking.isEmpty { return thinking }
-        guard let range = message.content.range(of: #"(?is)<thinking>(.*?)</thinking>"#, options: .regularExpression) else { return "正在整理这条回复。" }
-        return String(message.content[range])
-            .replacingOccurrences(of: #"(?is)^<thinking>|</thinking>$"#, with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    private func thinkingText(for message: ChatMessage) -> String? {
+        let thinking = message.thinking?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let thinking, !thinking.isEmpty,
+              !thinking.localizedCaseInsensitiveContains("speech_enabled") else { return nil }
+        return thinking
     }
 
     private var thinkingBubble: some View {
         HStack {
-            Button {
-                glassPresentation.thinkingText = "正在整理你的话。"
-                glassPresentation.showingThinkingDetails = true
-            } label: {
-                avatar(for: .assistant)
-            }
-            .buttonStyle(.plain)
+            avatar(for: .assistant)
             ThinkingDots()
             .foregroundStyle(.black)
             .padding(.horizontal, 12)
@@ -392,6 +392,7 @@ private struct ThinkingDots: View {
 private struct SpeechBubble: View {
     let message: ChatMessage
     let fileName: String
+    let showsTranscript: Bool
     @StateObject private var player = SpatialSpeechPlayback()
     @State private var expandedTranscript = false
 
@@ -416,16 +417,18 @@ private struct SpeechBubble: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(player.isPlaying ? "暂停语音" : "播放语音")
-                Button { withAnimation(.easeInOut(duration: 0.2)) { expandedTranscript.toggle() } } label: {
-                    Image(systemName: expandedTranscript ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
+                if showsTranscript {
+                    Button { withAnimation(.easeInOut(duration: 0.2)) { expandedTranscript.toggle() } } label: {
+                        Image(systemName: expandedTranscript ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(expandedTranscript ? "收起转文字" : "展开转文字")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(expandedTranscript ? "收起转文字" : "展开转文字")
             }
-            if expandedTranscript {
+            if showsTranscript && expandedTranscript {
                 Rectangle().fill(.black.opacity(0.08)).frame(height: 1)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("语音转文字").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
