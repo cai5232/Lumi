@@ -41,7 +41,8 @@ struct ChatDetailView: View {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
-                            messageBubble(message, showAvatar: index == 0 || model.messages[index - 1].role != message.role)
+                            let isCallBubble = message.contentType == "call_record" || message.contentType == "call_status"
+                            messageBubble(message, showAvatar: isCallBubble || index == 0 || model.messages[index - 1].role != message.role)
                                 .id(message.id)
                         }
                         if model.isSending { thinkingBubble }
@@ -336,36 +337,43 @@ struct ChatDetailView: View {
                 VStack(alignment: .leading, spacing: 7) {
                 if isCallRecord {
                     Button { selectedCallRecord = message } label: {
-                        HStack(spacing: 9) {
-                            Image(systemName: "phone.fill")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(.black.opacity(0.56))
-                            Text("语音通话")
-                                .font(.system(size: 14, weight: .semibold))
+                        HStack(spacing: 8) {
+                            if !isUserSide {
+                                Image(systemName: "phone.fill")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(.black.opacity(0.56))
+                            }
+                            Text("通话时长 \(callDurationLabel(message.callDuration))")
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
                                 .lineLimit(1)
-                            Spacer(minLength: 8)
-                            Text(callDurationLabel(message.callDuration))
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.tertiary)
+                            if isUserSide {
+                                Image(systemName: "phone.fill")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(.black.opacity(0.56))
+                            }
                         }
-                        .frame(maxWidth: 200)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 8)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
                     }
                     .buttonStyle(.plain)
                 } else if isCallStatus {
                     HStack(spacing: 9) {
-                        Image(systemName: message.callStatus == "missed" ? "phone.badge.xmark" : "phone.down.fill")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.black.opacity(0.56))
+                        if !isUserSide {
+                            Image(systemName: message.callStatus == "missed" ? "phone.badge.xmark" : "phone.down.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.black.opacity(0.56))
+                        }
                         Text(message.callStatus == "missed" ? "对方未接听" : "对方已拒绝")
                             .font(.system(size: 14, weight: .semibold))
                             .lineLimit(1)
+                        if isUserSide {
+                            Image(systemName: message.callStatus == "missed" ? "phone.badge.xmark" : "phone.down.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.black.opacity(0.56))
+                        }
                     }
-                    .frame(maxWidth: 200, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 10)
                 } else if isHTMLCard {
