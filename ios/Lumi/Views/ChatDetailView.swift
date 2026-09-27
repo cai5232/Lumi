@@ -20,6 +20,7 @@ struct ChatDetailView: View {
     @State private var showingCallDemo = false
     @State private var incomingCallID: String?
     @State private var incomingCall: IncomingCallInfo?
+    @State private var selectedCallRecord: ChatMessage?
     @State private var showingSubscriptionUsage = false
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
     @AppStorage("lumi.ttsModel") private var ttsModel = "speech-2.8-hd"
@@ -175,21 +176,32 @@ struct ChatDetailView: View {
                 }
             )
         }
-        .sheet(item: $incomingCall) { call in
-            IncomingCallSheet(
-                call: call,
-                onAccept: {
-                    incomingCall = nil
-                    incomingCallID = call.callId
-                    showingCallDemo = true
-                },
-                onDecline: {
-                    Task { await declineIncomingCall(call) }
+        .fullScreenCover(item: $selectedCallRecord) { record in
+            CallRecordView(record: record)
+        }
+        .overlay {
+            if let call = incomingCall {
+                ZStack {
+                    Color.black.opacity(0.20).ignoresSafeArea()
+                    IncomingCallSheet(
+                        call: call,
+                        onAccept: {
+                            incomingCall = nil
+                            incomingCallID = call.callId
+                            showingCallDemo = true
+                        },
+                        onDecline: { note in
+                            Task { await declineIncomingCall(call, note: note) }
+                        }
+                    )
+                    .frame(maxWidth: 356, maxHeight: 510)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous).stroke(.white.opacity(0.66), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.20), radius: 28, y: 12)
+                    .padding(.horizontal, 24)
                 }
-            )
-            .presentationDetents([.height(470)])
-            .presentationDragIndicator(.visible)
-            .presentationBackground(LumiPalette.chatBackground)
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            }
         }
         .overlay(alignment: .top) {
             if let error = model.errorMessage {
@@ -269,9 +281,9 @@ struct ChatDetailView: View {
         }
     }
 
-    private func declineIncomingCall(_ call: IncomingCallInfo) async {
+    private func declineIncomingCall(_ call: IncomingCallInfo, note: String? = nil) async {
         do {
-            let response = try await LumiAPIClient().answerIncomingCall(call.callId, action: "decline", to: "default")
+            let response = try await LumiAPIClient().answerIncomingCall(call.callId, action: "decline", to: "default", note: note)
             if let message = response.assistantMessage { model.receiveCallOutcome(message) }
             incomingCall = nil
         } catch {
@@ -295,14 +307,16 @@ struct ChatDetailView: View {
     @ViewBuilder private func messageBubble(_ message: ChatMessage, showAvatar: Bool) -> some View {
         let isHTMLCard = message.htmlContent != nil || message.contentType == "html" || isHTML(message.content)
         let isCallRecord = message.contentType == "call_record"
-        VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 5) {
+        let isCallStatus = message.contentType == "call_status"
+        let isUserSide = message.callInitiator == "user" || (message.callInitiator == nil && message.role == .user)
+        VStack(alignment: isUserSide ? .trailing : .leading, spacing: 5) {
             if let localName = message.localImageFileName,
                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent(localName),
                let image = UIImage(contentsOfFile: url.path) {
                 Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 210, maxHeight: 190).clipShape(RoundedRectangle(cornerRadius: 14))
             }
             HStack(alignment: .top) {
-                if message.role == .assistant {
+                if !isUserSide {
                     if showAvatar {
                         if let thinking = thinkingText(for: message) {
                             Button {
@@ -313,26 +327,48 @@ struct ChatDetailView: View {
                         } else { assistantAvatar(for: message) }
                     } else { Color.clear.frame(width: 42, height: 42) }
                 }
-                if message.role == .user { Spacer(minLength: 48) }
+                if isUserSide { Spacer(minLength: 48) }
                 VStack(alignment: .leading, spacing: 7) {
                 if isCallRecord {
-                    VStack(alignment: .leading, spacing: 8) {
+                    Button { selectedCallRecord = message } label: {
                         HStack(spacing: 9) {
                             Image(systemName: "phone.fill")
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundStyle(Color(red: 0.66, green: 0.35, blue: 0.47))
-                            Text("通话记录")
+                            Text("语音通话")
                                 .font(.system(size: 14, weight: .semibold))
-                            Spacer()
+                            Spacer(minLength: 8)
                             Text(callDurationLabel(message.callDuration))
                                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                                 .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.tertiary)
                         }
-                        Text(message.content)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.black.opacity(0.62))
-                            .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 238)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 12)
                     }
+                    .buttonStyle(.plain)
+                } else if isCallStatus {
+                    HStack(spacing: 9) {
+                        Image(systemName: message.callStatus == "missed" ? "phone.badge.xmark" : "phone.down.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color(red: 0.66, green: 0.35, blue: 0.47))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(message.callStatus == "missed" ? "对方未接听" : "对方已拒绝")
+                                .font(.system(size: 14, weight: .semibold))
+                            if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text(message.content)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.black.opacity(0.58))
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: 238, alignment: .leading)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 11)
                 } else if isHTMLCard {
                     Button { htmlMessage = message } label: {
                         HStack(spacing: 11) {
@@ -381,16 +417,16 @@ struct ChatDetailView: View {
                 .padding(.horizontal, isHTMLCard ? 8 : 13)
                 .padding(.vertical, isHTMLCard ? 5 : (message.audioFileName == nil ? 10 : 3))
                 .frame(width: message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8)), alignment: .leading)
-                .background(message.role == .user ? LumiPalette.userBubble : .white)
+                .background(isUserSide ? LumiPalette.userBubble : .white)
                 .clipShape(RoundedRectangle(cornerRadius: 21))
-                if message.role == .assistant { Spacer(minLength: 48) }
-                if message.role == .user {
+                if !isUserSide { Spacer(minLength: 48) }
+                if isUserSide {
                     if showAvatar { avatar(for: .user) }
                     else { Color.clear.frame(width: 42, height: 42) }
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
+        .frame(maxWidth: .infinity, alignment: isUserSide ? .trailing : .leading)
     }
 
     @ViewBuilder private func avatar(for role: ChatMessage.Role) -> some View {
@@ -1852,10 +1888,113 @@ private final class CallSpeechRecognition: NSObject, ObservableObject {
     }
 }
 
+private struct CallAudioClip: Codable, Identifiable {
+    let id: String
+    let fileName: String
+    let script: String
+    let duration: Double?
+}
+
+private enum CallAudioStore {
+    private static let key = "lumi.callAudioClips"
+
+    static func save(callID: String, fileName: String, script: String, duration: Double?) {
+        var all = load()
+        var clips = all[callID] ?? []
+        let clip = CallAudioClip(id: UUID().uuidString, fileName: fileName, script: script, duration: duration)
+        if !clips.contains(where: { $0.fileName == fileName }) { clips.append(clip) }
+        all[callID] = clips
+        if let data = try? JSONEncoder().encode(all) { UserDefaults.standard.set(data, forKey: key) }
+    }
+
+    static func clips(for callID: String?) -> [CallAudioClip] {
+        guard let callID else { return [] }
+        return load()[callID] ?? []
+    }
+
+    private static func load() -> [String: [CallAudioClip]] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let value = try? JSONDecoder().decode([String: [CallAudioClip]].self, from: data) else { return [:] }
+        return value
+    }
+}
+
+private struct CallRecordView: View {
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var player = SpatialSpeechPlayback()
+    let record: ChatMessage
+
+    private var lines: [(speaker: String, text: String)] {
+        record.content.components(separatedBy: .newlines).compactMap { line in
+            let parts = line.split(separator: "：", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { return nil }
+            return (parts[0], parts[1])
+        }
+    }
+
+    private func durationLabel(_ duration: Double?) -> String {
+        let seconds = max(0, Int(duration ?? 0))
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    var body: some View {
+        ZStack {
+            LinearGradient(colors: [LumiPalette.chatBackground, Color(red: 0.96, green: 0.88, blue: 0.91)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()
+            VStack(spacing: 0) {
+                HStack {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 42, height: 42)
+                            .background(.white.opacity(0.7), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                    VStack(spacing: 3) {
+                        Text("通话记录").font(.system(size: 16, weight: .semibold))
+                        Text(durationLabel(record.callDuration)).font(.system(size: 13, design: .monospaced)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Color.clear.frame(width: 42, height: 42)
+                }
+                .padding(.horizontal, 22)
+                .padding(.top, 14)
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                            let isUser = line.speaker == "我"
+                            Text(line.text)
+                                .font(.system(size: 15))
+                                .foregroundStyle(.black.opacity(0.76))
+                                .padding(.horizontal, 15)
+                                .padding(.vertical, 11)
+                                .background(isUser ? LumiPalette.userBubble : .white.opacity(0.72), in: RoundedRectangle(cornerRadius: 18))
+                                .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+                                .onTapGesture {
+                                    guard !isUser else { return }
+                                    let clip = CallAudioStore.clips(for: record.callID).first { $0.script.contains(line.text) } ?? CallAudioStore.clips(for: record.callID).first
+                                    guard let clip else { return }
+                                    let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(clip.fileName)
+                                    player.play(url: url, script: clip.script)
+                                }
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 28)
+                    .padding(.bottom, 30)
+                }
+            }
+        }
+        .preferredColorScheme(.light)
+    }
+}
+
 private struct IncomingCallSheet: View {
+    @State private var showingDeclineReasons = false
+    @State private var declineNote = ""
     let call: IncomingCallInfo
     let onAccept: () -> Void
-    let onDecline: () -> Void
+    let onDecline: (String?) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1878,27 +2017,55 @@ private struct IncomingCallSheet: View {
                 .padding(.top, 8)
                 .padding(.horizontal, 32)
             Spacer()
-            HStack(spacing: 40) {
-                Button(action: onDecline) {
-                    VStack(spacing: 8) {
-                        Image(systemName: "phone.down.fill")
-                            .font(.system(size: 22, weight: .semibold))
-                            .frame(width: 64, height: 64)
-                            .background(Color(red: 0.92, green: 0.25, blue: 0.31), in: Circle())
-                        Text("拒绝")
+            if showingDeclineReasons {
+                VStack(spacing: 10) {
+                    HStack(spacing: 8) {
+                        ForEach(["在忙", "在外面", "想打字聊"], id: \.self) { reason in
+                            Button(reason) { declineNote = reason }
+                                .font(.system(size: 12, weight: .medium))
+                                .padding(.horizontal, 10).padding(.vertical, 8)
+                                .background(declineNote == reason ? Color(red: 0.90, green: 0.66, blue: 0.72) : Color.white.opacity(0.35), in: Capsule())
+                        }
+                    }
+                    HStack(spacing: 8) {
+                        TextField("告诉他为什么没接…", text: $declineNote)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 11)
+                            .background(Color.white.opacity(0.58), in: Capsule())
+                        Button("发送") { onDecline(declineNote.isEmpty ? nil : declineNote) }
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 13).padding(.vertical, 11)
+                            .background(Color(red: 0.82, green: 0.47, blue: 0.58), in: Capsule())
+                    }
+                    Button("直接挂断") { onDecline(nil) }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.black.opacity(0.55))
+                }
+            } else {
+                HStack(spacing: 40) {
+                    Button { showingDeclineReasons = true } label: {
+                        VStack(spacing: 8) {
+                            Image(systemName: "phone.down.fill")
+                                .font(.system(size: 22, weight: .semibold))
+                                .frame(width: 64, height: 64)
+                                .background(Color.black.opacity(0.15), in: Circle())
+                            Text("挂断")
+                        }
+                    }
+                    Button(action: onAccept) {
+                        VStack(spacing: 8) {
+                            Image(systemName: "phone.fill")
+                                .font(.system(size: 22, weight: .semibold))
+                                .frame(width: 64, height: 64)
+                                .background(Color(red: 0.92, green: 0.55, blue: 0.57), in: Circle())
+                            Text("接听")
+                        }
                     }
                 }
-                Button(action: onAccept) {
-                    VStack(spacing: 8) {
-                        Image(systemName: "phone.fill")
-                            .font(.system(size: 22, weight: .semibold))
-                            .frame(width: 64, height: 64)
-                            .background(Color(red: 0.24, green: 0.67, blue: 0.44), in: Circle())
-                        Text("接听")
-                    }
-                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
             .foregroundStyle(.black.opacity(0.78))
             .padding(.bottom, 24)
         }
@@ -1956,7 +2123,13 @@ private struct CallDemoView: View {
         .preferredColorScheme(.light)
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .animation(.easeInOut(duration: 0.28), value: phase == .connected)
-        .task { await requestCall() }
+        .task {
+            if incomingCallID != nil {
+                phase = .connected
+                generatingReply = true
+            }
+            await requestCall()
+        }
         .onChange(of: muted) { _, isMuted in
             if isMuted { speechRecognition.stop() }
             else { startListeningIfNeeded() }
@@ -2044,6 +2217,7 @@ private struct CallDemoView: View {
             Spacer(minLength: 20)
             callAvatar(size: 112)
                 .overlay(Circle().stroke(.white.opacity(0.84), lineWidth: 1))
+                .offset(y: -14)
             if let requestError {
                 Text(requestError)
                     .font(.system(size: 13, weight: .medium))
@@ -2079,6 +2253,16 @@ private struct CallDemoView: View {
                 .padding(.horizontal, 28).padding(.top, 18)
             }
             .frame(maxHeight: 220)
+            .overlay(alignment: .top) {
+                LinearGradient(colors: [Color(red: 0.98, green: 0.91, blue: 0.93), .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 34)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .bottom) {
+                LinearGradient(colors: [.clear, Color(red: 0.94, green: 0.86, blue: 0.89)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 34)
+                    .allowsHitTesting(false)
+            }
 
             Spacer()
             VStack(spacing: 16) {
@@ -2194,10 +2378,12 @@ private struct CallDemoView: View {
             let openingBubbles = response.firstMessage.map { splitAssistantTurn($0) } ?? []
             turns = openingBubbles
             phase = .connected
+            generatingReply = false
             if let encoded = response.speechAudioBase64, let data = Data(base64Encoded: encoded) {
                 let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                     .appendingPathComponent("call-opening-\(response.callId).mp3")
                 try? data.write(to: url, options: .atomic)
+                CallAudioStore.save(callID: response.callId, fileName: url.lastPathComponent, script: response.speechScript ?? response.firstMessage?.content ?? "", duration: response.speechDuration)
                 for bubble in openingBubbles { callAudioFiles[bubble.id] = url }
                 player.play(url: url, script: response.speechScript ?? response.firstMessage?.content ?? "")
             } else if let speechError = response.speechError {
@@ -2205,6 +2391,7 @@ private struct CallDemoView: View {
             }
             startListeningIfNeeded()
         } catch {
+            generatingReply = false
             requestError = error.localizedDescription
         }
     }
@@ -2237,6 +2424,7 @@ private struct CallDemoView: View {
             if let encoded = response.speechAudioBase64, let data = Data(base64Encoded: encoded) {
                 let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("call-turn-\(response.assistantTurn.id.uuidString).mp3")
                 try? data.write(to: url, options: .atomic)
+                CallAudioStore.save(callID: callID, fileName: url.lastPathComponent, script: response.speechScript ?? response.assistantTurn.content, duration: response.speechDuration)
                 for bubble in assistantBubbles { callAudioFiles[bubble.id] = url }
                 player.play(url: url, script: response.speechScript ?? response.assistantTurn.content)
             } else if let speechError = response.speechError {

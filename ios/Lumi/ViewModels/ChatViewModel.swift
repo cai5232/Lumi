@@ -46,7 +46,7 @@ final class ChatViewModel: ObservableObject {
             let loaded = try await api.fetchThread(id: chatID).messages
             let remoteMessages = Self.deduplicateHTMLCards(loaded.flatMap { message in
                 let restored = message
-                return restored.role == .assistant && restored.contentType != "call_record" ? assistantBubbles(from: restored) : [restored]
+                return restored.role == .assistant && restored.contentType != "call_record" && restored.contentType != "call_status" ? assistantBubbles(from: restored) : [restored]
             })
             let isEmptyServerSeed = remoteMessages.count == 1 && remoteMessages[0].role == .assistant && remoteMessages[0].content == "下午的风很轻，想和你说说话。"
             if !isEmptyServerSeed && !remoteMessages.isEmpty {
@@ -177,6 +177,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func assistantBubbles(from message: ChatMessage) -> [ChatMessage] {
+        if message.contentType == "call_record" || message.contentType == "call_status" { return [message] }
         let thinking = extractThinking(from: message.content)
         let visible = message.content
             .replacingOccurrences(of: #"(?is)<thinking>.*?</thinking>"#, with: "", options: .regularExpression)

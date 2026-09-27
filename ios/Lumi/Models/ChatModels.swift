@@ -19,10 +19,12 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var imageAttachmentCount: Int?
     var callID: String?
     var callDuration: Double?
+    var callInitiator: String?
+    var callStatus: String?
 
-    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount, callID, callDuration }
+    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount, callID, callDuration, callInitiator, callStatus }
 
-    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil, callID: String? = nil, callDuration: Double? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil) {
+    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil, callID: String? = nil, callDuration: Double? = nil, callInitiator: String? = nil, callStatus: String? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil) {
         self.id = id
         self.role = role
         self.content = content
@@ -39,6 +41,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         self.imageAttachmentCount = imageAttachmentCount
         self.callID = callID
         self.callDuration = callDuration
+        self.callInitiator = callInitiator
+        self.callStatus = callStatus
     }
 
     init(from decoder: Decoder) throws {
@@ -59,6 +63,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         imageAttachmentCount = try container.decodeIfPresent(Int.self, forKey: .imageAttachmentCount)
         callID = try container.decodeIfPresent(String.self, forKey: .callID)
         callDuration = try container.decodeIfPresent(Double.self, forKey: .callDuration)
+        callInitiator = try container.decodeIfPresent(String.self, forKey: .callInitiator)
+        callStatus = try container.decodeIfPresent(String.self, forKey: .callStatus)
     }
 }
 
@@ -155,6 +161,7 @@ struct CallAnswerRequest: Encodable {
     let action: String
     let systemPrompt: String
     let tts: TTSRequestSettings?
+    let note: String?
 }
 
 

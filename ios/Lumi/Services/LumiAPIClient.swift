@@ -85,12 +85,12 @@ final class LumiAPIClient {
         return response.call
     }
 
-    func answerIncomingCall(_ callID: String, action: String, to id: String, tts: TTSRequestSettings? = nil) async throws -> CallStartResponse {
+    func answerIncomingCall(_ callID: String, action: String, to id: String, tts: TTSRequestSettings? = nil, note: String? = nil) async throws -> CallStartResponse {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/calls/\(callID)/answer"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
-        request.httpBody = try JSONEncoder.api.encode(CallAnswerRequest(action: action, systemPrompt: LumiSystemPrompt.main, tts: tts))
+        request.httpBody = try JSONEncoder.api.encode(CallAnswerRequest(action: action, systemPrompt: LumiSystemPrompt.main, tts: tts, note: note))
         return try await perform(request)
     }
 
