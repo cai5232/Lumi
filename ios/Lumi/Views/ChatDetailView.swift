@@ -2112,7 +2112,7 @@ private struct CallDemoView: View {
             Circle().fill(.white.opacity(0.76)).frame(width: 440, height: 440).blur(radius: 38).offset(x: 150, y: -300)
             Circle().fill(Color(red: 0.79, green: 0.54, blue: 0.65).opacity(0.13)).frame(width: 360, height: 360).blur(radius: 48).offset(x: -145, y: 320)
 
-            if phase == .requesting {
+            if phase == .requesting && incomingCallID == nil {
                 requestingCall
                     .transition(.opacity.combined(with: .scale(scale: 0.97)))
             } else {
