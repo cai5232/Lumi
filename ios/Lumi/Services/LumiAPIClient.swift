@@ -32,6 +32,12 @@ final class LumiAPIClient {
         try await request(path: "/v1/chats/\(id)")
     }
 
+    func fetchSubscriptionUsage() async throws -> SubscriptionUsage {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/subscription/usage"))
+        addPushAuthorization(to: &request)
+        return try await perform(request)
+    }
+
     func sendMessage(_ content: String, to id: String, images: [String] = [], emojiCatalog: [String: [String]] = [:], tts: TTSRequestSettings? = nil) async throws -> SendMessageResponse {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/messages"))
         request.httpMethod = "POST"
