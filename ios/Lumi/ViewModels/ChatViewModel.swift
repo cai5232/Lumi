@@ -182,7 +182,30 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func assistantBubbles(from message: ChatMessage) -> [ChatMessage] {
-        if message.contentType == "call_record" || message.contentType == "call_status" { return [message] }
+        if message.contentType == "call_record" { return [message] }
+        if message.contentType == "call_status" {
+            let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return [message] }
+            // Older server records stored the AI's follow-up text inside the status card.
+            // Split those records on load so they match the new compact status + chat bubble layout.
+            let status = ChatMessage(
+                id: message.id,
+                role: message.role,
+                content: "",
+                createdAt: message.createdAt,
+                callID: message.callID,
+                callInitiator: message.callInitiator,
+                callStatus: message.callStatus,
+                contentType: "call_status"
+            )
+            let reply = ChatMessage(
+                id: UUID(),
+                role: .assistant,
+                content: text,
+                createdAt: message.createdAt.addingTimeInterval(0.001)
+            )
+            return [status, reply]
+        }
         let thinking = extractThinking(from: message.content)
         let visible = message.content
             .replacingOccurrences(of: #"(?is)<thinking>.*?</thinking>"#, with: "", options: .regularExpression)
