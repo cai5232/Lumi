@@ -665,7 +665,7 @@ private final class SpatialSpeechPlayback: ObservableObject {
         guard FileManager.default.fileExists(atPath: url.path), let file = try? AVAudioFile(forReading: url) else { return }
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothA2DP, .duckOthers])
+            try session.setCategory(.playback, mode: .spokenAudio, options: [.allowBluetoothA2DP, .duckOthers])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             // The player can still attempt playback on the current route.
