@@ -41,8 +41,7 @@ struct ChatDetailView: View {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
-                            let isCallBubble = message.contentType == "call_record" || message.contentType == "call_status"
-                            messageBubble(message, showAvatar: isCallBubble || index == 0 || model.messages[index - 1].role != message.role)
+                            messageBubble(message, showAvatar: shouldShowAvatar(at: index))
                                 .id(message.id)
                         }
                         if model.isSending { thinkingBubble }
@@ -308,6 +307,17 @@ struct ChatDetailView: View {
                 .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.12), radius: 8, x: 0, y: 4)
         }
         .buttonStyle(.plain)
+    }
+
+    /// A single server request can be split into several chat bubbles that share
+    /// the same timestamp. Show the avatar only on the first bubble of that
+    /// request; a standalone call record still gets its own avatar.
+    private func shouldShowAvatar(at index: Int) -> Bool {
+        guard index > 0 else { return true }
+        let current = model.messages[index]
+        let previous = model.messages[index - 1]
+        guard current.role == previous.role else { return true }
+        return abs(current.createdAt.timeIntervalSince(previous.createdAt)) >= 0.01
     }
 
     @ViewBuilder private func messageBubble(_ message: ChatMessage, showAvatar: Bool) -> some View {
