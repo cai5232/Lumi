@@ -97,3 +97,25 @@ struct ProactiveSettings: Codable {
     var nextDueAt: String?
     var scheduledForUserMessageId: String?
 }
+
+struct SubscriptionUsage: Decodable {
+    let plan: SubscriptionPlan
+    let quota5Hour: SubscriptionQuota
+    let quota7Day: SubscriptionQuota
+    let fetchedAt: Date
+}
+
+struct SubscriptionPlan: Decodable {
+    let tier: String
+    let expiresAt: Date?
+}
+
+struct SubscriptionQuota: Decodable {
+    let usagePercentage: Double
+    let resetsAt: Date?
+    let maxFlows: Double
+    let usedFlows: Double
+    let remainingFlows: Double
+    let usedValueUSD: Double
+    let maxValueUSD: Double
+}
