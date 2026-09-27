@@ -46,7 +46,7 @@ final class ChatViewModel: ObservableObject {
             let loaded = try await api.fetchThread(id: chatID).messages
             let remoteMessages = Self.deduplicateHTMLCards(loaded.flatMap { message in
                 let restored = message
-                return restored.role == .assistant ? assistantBubbles(from: restored) : [restored]
+                return restored.role == .assistant && restored.contentType != "call_record" ? assistantBubbles(from: restored) : [restored]
             })
             let isEmptyServerSeed = remoteMessages.count == 1 && remoteMessages[0].role == .assistant && remoteMessages[0].content == "下午的风很轻，想和你说说话。"
             if !isEmptyServerSeed && !remoteMessages.isEmpty {

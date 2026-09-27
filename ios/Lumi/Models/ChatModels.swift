@@ -17,10 +17,12 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var speechScript: String?
     var localImageFileName: String?
     var imageAttachmentCount: Int?
+    var callID: String?
+    var callDuration: Double?
 
-    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount }
+    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount, callID, callDuration }
 
-    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil) {
+    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil, callID: String? = nil, callDuration: Double? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil) {
         self.id = id
         self.role = role
         self.content = content
@@ -35,6 +37,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         self.speechScript = speechScript
         self.localImageFileName = localImageFileName
         self.imageAttachmentCount = imageAttachmentCount
+        self.callID = callID
+        self.callDuration = callDuration
     }
 
     init(from decoder: Decoder) throws {
@@ -53,6 +57,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         speechScript = try container.decodeIfPresent(String.self, forKey: .speechScript)
         localImageFileName = try container.decodeIfPresent(String.self, forKey: .localImageFileName)
         imageAttachmentCount = try container.decodeIfPresent(Int.self, forKey: .imageAttachmentCount)
+        callID = try container.decodeIfPresent(String.self, forKey: .callID)
+        callDuration = try container.decodeIfPresent(Double.self, forKey: .callDuration)
     }
 }
 
@@ -100,6 +106,7 @@ struct CallStartResponse: Decodable {
     let speechAudioBase64: String?
     let speechDuration: Double?
     let speechScript: String?
+    let speechError: String?
 }
 
 struct CallTurn: Codable, Identifiable {
@@ -116,6 +123,13 @@ struct CallTurnResponse: Decodable {
     let speechAudioBase64: String?
     let speechDuration: Double?
     let speechScript: String?
+    let speechError: String?
+}
+
+struct CallEndResponse: Decodable {
+    let callId: String
+    let duration: Double
+    let recordMessage: ChatMessage
 }
 
 struct CallTurnRequest: Encodable {

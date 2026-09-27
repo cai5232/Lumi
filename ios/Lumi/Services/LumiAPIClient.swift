@@ -71,6 +71,14 @@ final class LumiAPIClient {
         return try await perform(request)
     }
 
+    func endCall(_ callID: String, to id: String) async throws -> CallEndResponse {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/calls/\(callID)/end"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
+        return try await perform(request)
+    }
+
     func fetchProactiveSettings() async throws -> ProactiveSettings {
         var request = URLRequest(url: baseURL.appending(path: "/v1/settings/proactive"))
         addPushAuthorization(to: &request)

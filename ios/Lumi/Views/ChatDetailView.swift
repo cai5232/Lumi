@@ -160,7 +160,10 @@ struct ChatDetailView: View {
             HTMLMessageFullScreen(message: message)
         }
         .fullScreenCover(isPresented: $showingCallDemo) {
-            CallDemoView { message in model.receiveCallOutcome(message) }
+            CallDemoView(
+                onRejected: { message in model.receiveCallOutcome(message) },
+                onEnded: { Task { await model.load() } }
+            )
         }
         .overlay(alignment: .top) {
             if let error = model.errorMessage {
@@ -245,6 +248,7 @@ struct ChatDetailView: View {
 
     @ViewBuilder private func messageBubble(_ message: ChatMessage, showAvatar: Bool) -> some View {
         let isHTMLCard = message.htmlContent != nil || message.contentType == "html" || isHTML(message.content)
+        let isCallRecord = message.contentType == "call_record"
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 5) {
             if let localName = message.localImageFileName,
                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent(localName),
@@ -265,7 +269,25 @@ struct ChatDetailView: View {
                 }
                 if message.role == .user { Spacer(minLength: 48) }
                 VStack(alignment: .leading, spacing: 7) {
-                if isHTMLCard {
+                if isCallRecord {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 9) {
+                            Image(systemName: "phone.fill")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(Color(red: 0.66, green: 0.35, blue: 0.47))
+                            Text("通话记录")
+                                .font(.system(size: 14, weight: .semibold))
+                            Spacer()
+                            Text(callDurationLabel(message.callDuration))
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(message.content)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.black.opacity(0.62))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else if isHTMLCard {
                     Button { htmlMessage = message } label: {
                         HStack(spacing: 11) {
                             Image(systemName: "chevron.left.forwardslash.chevron.right")
@@ -375,6 +397,11 @@ struct ChatDetailView: View {
             .replacingOccurrences(of: #"(?i)</?thinking>"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\[(?:左耳|右耳|脑后|面前|贴近|退开)\]"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func callDurationLabel(_ duration: Double?) -> String {
+        let seconds = max(0, Int(duration ?? 0))
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
 
     private func looksLikeCode(_ content: String) -> Bool {
@@ -1797,9 +1824,11 @@ private struct CallDemoView: View {
     @State private var sendingTurn = false
     @State private var generatingReply = false
     @State private var callAudioFiles: [UUID: URL] = [:]
+    @State private var didFinishCall = false
     @StateObject private var player = SpatialSpeechPlayback()
     @StateObject private var speechRecognition = CallSpeechRecognition()
     let onRejected: (ChatMessage) -> Void
+    let onEnded: () -> Void
 
     var body: some View {
         ZStack {
@@ -1832,13 +1861,16 @@ private struct CallDemoView: View {
         .onChange(of: player.isPlaying) { _, isPlaying in
             if !isPlaying { startListeningIfNeeded() }
         }
-        .onDisappear { speechRecognition.stop() }
+        .onDisappear {
+            speechRecognition.stop()
+            Task { await finishCallIfNeeded() }
+        }
     }
 
     private var requestingCall: some View {
         VStack(spacing: 0) {
             HStack {
-                Button { dismiss() } label: {
+                Button { Task { await leaveCall() } } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 16, weight: .semibold))
                         .frame(width: 42, height: 42)
@@ -1883,7 +1915,7 @@ private struct CallDemoView: View {
     private var activeCall: some View {
         VStack(spacing: 0) {
             HStack {
-                Button { dismiss() } label: {
+                Button { Task { await leaveCall() } } label: {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 18, weight: .semibold))
                         .frame(width: 42, height: 42)
@@ -1909,6 +1941,14 @@ private struct CallDemoView: View {
             Spacer(minLength: 20)
             callAvatar(size: 112)
                 .overlay(Circle().stroke(.white.opacity(0.84), lineWidth: 1))
+            if let requestError {
+                Text(requestError)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color(red: 0.70, green: 0.20, blue: 0.26))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
+            }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 9) {
                     ForEach(turns) { turn in
@@ -1962,7 +2002,7 @@ private struct CallDemoView: View {
                 }
                 HStack(spacing: 10) {
                     callControl(title: muted ? "已静音" : "静音", icon: muted ? "mic.slash.fill" : "mic.fill", selected: muted) { muted.toggle() }
-                    callAction(title: "挂断", icon: "phone.down.fill", color: Color(red: 0.92, green: 0.25, blue: 0.31)) { dismiss() }
+                    callAction(title: "挂断", icon: "phone.down.fill", color: Color(red: 0.92, green: 0.25, blue: 0.31)) { Task { await leaveCall() } }
                     callControl(title: speakerOn ? "扬声器" : "听筒", icon: speakerOn ? "speaker.wave.2.fill" : "speaker.fill", selected: speakerOn) { speakerOn.toggle() }
                 }
             }
@@ -2030,6 +2070,7 @@ private struct CallDemoView: View {
 
     private func requestCall() async {
         let key = LumiKeychain.read()
+        if key.isEmpty { requestError = "请先在设置中填写 MiniMax API Key，否则电话不会生成语音" }
         let tts = !key.isEmpty
             ? TTSRequestSettings(apiKey: key, model: ttsModel, voiceID: ttsVoiceID, baseURL: ttsHost, enabled: true)
             : nil
@@ -2051,6 +2092,8 @@ private struct CallDemoView: View {
                 try? data.write(to: url, options: .atomic)
                 for bubble in openingBubbles { callAudioFiles[bubble.id] = url }
                 player.play(url: url, script: response.speechScript ?? response.firstMessage?.content ?? "")
+            } else if let speechError = response.speechError {
+                requestError = "AI 已接通，但 MiniMax 没有返回语音：\(speechError)"
             }
             startListeningIfNeeded()
         } catch {
@@ -2072,6 +2115,7 @@ private struct CallDemoView: View {
             generatingReply = false
         }
         let key = LumiKeychain.read()
+        if key.isEmpty { requestError = "请先在设置中填写 MiniMax API Key，否则电话不会生成语音" }
         let tts = !key.isEmpty ? TTSRequestSettings(apiKey: key, model: ttsModel, voiceID: ttsVoiceID, baseURL: ttsHost, enabled: true) : nil
         do {
             let response = try await LumiAPIClient().sendCallTurn(text, callID: callID, to: "default", tts: tts)
@@ -2087,6 +2131,8 @@ private struct CallDemoView: View {
                 try? data.write(to: url, options: .atomic)
                 for bubble in assistantBubbles { callAudioFiles[bubble.id] = url }
                 player.play(url: url, script: response.speechScript ?? response.assistantTurn.content)
+            } else if let speechError = response.speechError {
+                requestError = "这次回复没有语音：\(speechError)"
             }
         } catch { requestError = error.localizedDescription }
     }
@@ -2101,6 +2147,22 @@ private struct CallDemoView: View {
     private func replayTurn(_ turn: CallTurn) {
         guard let url = callAudioFiles[turn.id] else { return }
         player.play(url: url, script: turn.speechScript ?? turn.content)
+    }
+
+    private func leaveCall() async {
+        await finishCallIfNeeded()
+        dismiss()
+    }
+
+    private func finishCallIfNeeded() async {
+        guard !didFinishCall, let callID else { return }
+        didFinishCall = true
+        do {
+            _ = try await LumiAPIClient().endCall(callID, to: "default")
+            onEnded()
+        } catch {
+            requestError = error.localizedDescription
+        }
     }
 
     private func splitAssistantTurn(_ turn: CallTurn) -> [CallTurn] {
