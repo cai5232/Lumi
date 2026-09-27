@@ -144,6 +144,12 @@ final class ChatViewModel: ObservableObject {
         saveLocalConversation()
     }
 
+    func receiveCallRecord(_ record: ChatMessage) {
+        guard !messages.contains(where: { $0.id == record.id }) else { return }
+        messages.append(record)
+        saveLocalConversation()
+    }
+
     private func loadLocalConversation() -> [ChatMessage] {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

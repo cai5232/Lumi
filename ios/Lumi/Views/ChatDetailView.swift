@@ -20,6 +20,7 @@ struct ChatDetailView: View {
     @State private var showingCallDemo = false
     @State private var incomingCallID: String?
     @State private var incomingCall: IncomingCallInfo?
+    @State private var respondingToIncomingCallID: String?
     @State private var selectedCallRecord: ChatMessage?
     @State private var showingSubscriptionUsage = false
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
@@ -169,10 +170,10 @@ struct ChatDetailView: View {
         .fullScreenCover(isPresented: $showingCallDemo) {
             CallDemoView(
                 incomingCallID: incomingCallID,
-            onRejected: { message, statusMessage in model.receiveCallOutcome(message, statusMessage: statusMessage) },
-                onEnded: {
+                onRejected: { message, statusMessage in model.receiveCallOutcome(message, statusMessage: statusMessage) },
+                onEnded: { record in
                     incomingCallID = nil
-                    Task { await model.load() }
+                    if let record { model.receiveCallRecord(record) }
                 }
             )
         }
@@ -193,6 +194,7 @@ struct ChatDetailView: View {
                         onDecline: { note in
                             // Close immediately; the AI follow-up is a normal chat bubble and may arrive later.
                             incomingCall = nil
+                            respondingToIncomingCallID = call.callId
                             Task { await declineIncomingCall(call, note: note) }
                         }
                     )
@@ -276,7 +278,7 @@ struct ChatDetailView: View {
     private func pollIncomingCall() async {
         let api = LumiAPIClient()
         while !Task.isCancelled {
-            if !showingCallDemo && incomingCall == nil {
+            if !showingCallDemo && incomingCall == nil && respondingToIncomingCallID == nil {
                 incomingCall = try? await api.fetchIncomingCall(from: "default")
             }
             try? await Task.sleep(for: .seconds(5))
@@ -284,6 +286,8 @@ struct ChatDetailView: View {
     }
 
     private func declineIncomingCall(_ call: IncomingCallInfo, note: String? = nil) async {
+        respondingToIncomingCallID = call.callId
+        defer { if respondingToIncomingCallID == call.callId { respondingToIncomingCallID = nil } }
         do {
             let response = try await LumiAPIClient().answerIncomingCall(call.callId, action: "decline", to: "default", note: note)
             if let message = response.assistantMessage { model.receiveCallOutcome(message, statusMessage: response.callStatusMessage) }
@@ -335,7 +339,7 @@ struct ChatDetailView: View {
                         HStack(spacing: 9) {
                             Image(systemName: "phone.fill")
                                 .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(Color(red: 0.66, green: 0.35, blue: 0.47))
+                                .foregroundStyle(.black.opacity(0.56))
                             Text("语音通话")
                                 .font(.system(size: 14, weight: .semibold))
                             Spacer(minLength: 8)
@@ -348,14 +352,14 @@ struct ChatDetailView: View {
                         }
                         .frame(maxWidth: 238)
                         .padding(.horizontal, 13)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 8)
                     }
                     .buttonStyle(.plain)
                 } else if isCallStatus {
                     HStack(spacing: 9) {
                         Image(systemName: message.callStatus == "missed" ? "phone.badge.xmark" : "phone.down.fill")
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color(red: 0.66, green: 0.35, blue: 0.47))
+                            .foregroundStyle(.black.opacity(0.56))
                         Text(message.callStatus == "missed" ? "对方未接听" : "对方已拒绝")
                             .font(.system(size: 14, weight: .semibold))
                     }
@@ -407,8 +411,8 @@ struct ChatDetailView: View {
                     }
                 }
                 }
-                .padding(.horizontal, isHTMLCard ? 8 : 13)
-                .padding(.vertical, isHTMLCard ? 5 : (message.audioFileName == nil ? 10 : 3))
+                .padding(.horizontal, isHTMLCard ? 8 : (isCallStatus ? 10 : 13))
+                .padding(.vertical, isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3)))
                 .frame(width: message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8)), alignment: .leading)
                 .background(isUserSide ? LumiPalette.userBubble : .white)
                 .clipShape(RoundedRectangle(cornerRadius: 21))
@@ -2100,7 +2104,7 @@ private struct CallDemoView: View {
     @StateObject private var speechRecognition = CallSpeechRecognition()
     let incomingCallID: String?
     let onRejected: (ChatMessage, ChatMessage?) -> Void
-    let onEnded: () -> Void
+    let onEnded: (ChatMessage?) -> Void
 
     var body: some View {
         ZStack {
@@ -2234,19 +2238,8 @@ private struct CallDemoView: View {
                         Text(turn.content)
                             .font(.system(size: 15))
                             .foregroundStyle(.black.opacity(0.72))
-                            .padding(.horizontal, 17).padding(.vertical, 14)
-                            .background(
-                                LinearGradient(
-                                    colors: turn.role == "user"
-                                        ? [LumiPalette.userBubble.opacity(0.92), Color.white.opacity(0.58)]
-                                        : [Color.white.opacity(0.88), Color(red: 0.96, green: 0.86, blue: 0.91).opacity(0.64)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                in: RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            )
-                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.42), lineWidth: 1))
+                            .padding(.horizontal, 14).padding(.vertical, 11)
+                            .background(turn.role == "user" ? LumiPalette.userBubble : .white.opacity(0.72), in: RoundedRectangle(cornerRadius: 18))
                             .frame(maxWidth: .infinity, alignment: turn.role == "user" ? .trailing : .leading)
                             .onTapGesture {
                                 if turn.role == "assistant" { replayTurn(turn) }
@@ -2265,7 +2258,7 @@ private struct CallDemoView: View {
                 }
                 .padding(.horizontal, 28).padding(.top, 18)
             }
-            .frame(maxHeight: 330)
+            .frame(maxHeight: 220)
             .overlay(alignment: .top) {
                 LinearGradient(colors: [Color(red: 0.98, green: 0.91, blue: 0.93), .clear], startPoint: .top, endPoint: .bottom)
                     .frame(height: 34)
@@ -2355,7 +2348,7 @@ private struct CallDemoView: View {
                 Image(systemName: icon)
                     .font(.system(size: 18, weight: .semibold))
                     .frame(width: 58, height: 58)
-                    .background(selected ? Color(red: 0.82, green: 0.62, blue: 0.69).opacity(0.70) : .white.opacity(0.64), in: Circle())
+                    .background(selected ? Color.black.opacity(0.10) : .white.opacity(0.64), in: Circle())
                 Text(title).font(.system(size: 13, weight: .medium))
             }
             .frame(width: 104)
@@ -2467,8 +2460,8 @@ private struct CallDemoView: View {
         guard !didFinishCall, let callID else { return }
         didFinishCall = true
         do {
-            _ = try await LumiAPIClient().endCall(callID, to: "default")
-            onEnded()
+            let response = try await LumiAPIClient().endCall(callID, to: "default")
+            onEnded(response.recordMessage)
         } catch {
             requestError = error.localizedDescription
         }
