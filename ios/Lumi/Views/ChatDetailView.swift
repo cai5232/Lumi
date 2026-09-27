@@ -663,6 +663,13 @@ private final class SpatialSpeechPlayback: ObservableObject {
 
     func play(url: URL, script: String) {
         guard FileManager.default.fileExists(atPath: url.path), let file = try? AVAudioFile(forReading: url) else { return }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .duckOthers])
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            // The player can still attempt playback on the current route.
+        }
         source.stop()
         movementTask?.cancel()
         movementTask = nil
@@ -1917,8 +1924,8 @@ private struct CallDemoView: View {
                     }
                     if generatingReply {
                         HStack(spacing: 8) {
-                            ProgressView().tint(Color(red: 0.47, green: 0.24, blue: 0.37))
-                            Text("沈屿正在准备语音…")
+                            CallTypingDots()
+                            Text("沈屿正在准备语音")
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(.black.opacity(0.48))
                         }
@@ -2035,13 +2042,14 @@ private struct CallDemoView: View {
             }
             callStartedAt = .now
             callID = response.callId
-            if let first = response.firstMessage { turns = [first] }
+            let openingBubbles = response.firstMessage.map { splitAssistantTurn($0) } ?? []
+            turns = openingBubbles
             phase = .connected
             if let encoded = response.speechAudioBase64, let data = Data(base64Encoded: encoded) {
                 let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                     .appendingPathComponent("call-opening-\(response.callId).mp3")
                 try? data.write(to: url, options: .atomic)
-                if let first = response.firstMessage { callAudioFiles[first.id] = url }
+                for bubble in openingBubbles { callAudioFiles[bubble.id] = url }
                 player.play(url: url, script: response.speechScript ?? response.firstMessage?.content ?? "")
             }
             startListeningIfNeeded()
@@ -2057,6 +2065,8 @@ private struct CallDemoView: View {
         speechRecognition.stop()
         sendingTurn = true
         generatingReply = true
+        let provisionalTurn = CallTurn(id: UUID(), role: "user", content: text, createdAt: .now, speechScript: nil)
+        turns.append(provisionalTurn)
         defer {
             sendingTurn = false
             generatingReply = false
@@ -2065,12 +2075,17 @@ private struct CallDemoView: View {
         let tts = !key.isEmpty ? TTSRequestSettings(apiKey: key, model: ttsModel, voiceID: ttsVoiceID, baseURL: ttsHost, enabled: true) : nil
         do {
             let response = try await LumiAPIClient().sendCallTurn(text, callID: callID, to: "default", tts: tts)
-            turns.append(response.userTurn)
-            turns.append(response.assistantTurn)
+            if let index = turns.firstIndex(where: { $0.id == provisionalTurn.id }) {
+                turns[index] = response.userTurn
+            } else {
+                turns.append(response.userTurn)
+            }
+            let assistantBubbles = splitAssistantTurn(response.assistantTurn)
+            turns.append(contentsOf: assistantBubbles)
             if let encoded = response.speechAudioBase64, let data = Data(base64Encoded: encoded) {
                 let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("call-turn-\(response.assistantTurn.id.uuidString).mp3")
                 try? data.write(to: url, options: .atomic)
-                callAudioFiles[response.assistantTurn.id] = url
+                for bubble in assistantBubbles { callAudioFiles[bubble.id] = url }
                 player.play(url: url, script: response.speechScript ?? response.assistantTurn.content)
             }
         } catch { requestError = error.localizedDescription }
@@ -2086,5 +2101,35 @@ private struct CallDemoView: View {
     private func replayTurn(_ turn: CallTurn) {
         guard let url = callAudioFiles[turn.id] else { return }
         player.play(url: url, script: turn.speechScript ?? turn.content)
+    }
+
+    private func splitAssistantTurn(_ turn: CallTurn) -> [CallTurn] {
+        let pieces = turn.content
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard pieces.count > 1 else { return [turn] }
+        return pieces.map { piece in
+            CallTurn(id: UUID(), role: turn.role, content: piece, createdAt: turn.createdAt, speechScript: piece)
+        }
+    }
+}
+
+private struct CallTypingDots: View {
+    @State private var animating = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .fill(Color(red: 0.47, green: 0.24, blue: 0.37))
+                    .frame(width: 6, height: 6)
+                    .scaleEffect(animating ? 1 : 0.45)
+                    .opacity(animating ? 0.9 : 0.35)
+                    .animation(.easeInOut(duration: 0.52).repeatForever().delay(Double(index) * 0.14), value: animating)
+            }
+        }
+        .frame(width: 28, height: 20)
+        .onAppear { animating = true }
     }
 }
