@@ -2066,11 +2066,11 @@ private struct IncomingCallSheet: View {
                 }
                 .buttonStyle(.plain)
             }
-            .foregroundStyle(Color.black.opacity(0.78))
-            .padding(.bottom, 24)
         }
         .padding(.top, 22)
         .padding(.horizontal, 22)
+        .padding(.bottom, 24)
+        .foregroundStyle(Color.black.opacity(0.78))
         .preferredColorScheme(.light)
     }
 }
