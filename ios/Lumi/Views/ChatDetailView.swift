@@ -342,6 +342,7 @@ struct ChatDetailView: View {
                                 .foregroundStyle(.black.opacity(0.56))
                             Text("语音通话")
                                 .font(.system(size: 14, weight: .semibold))
+                                .lineLimit(1)
                             Spacer(minLength: 8)
                             Text(callDurationLabel(message.callDuration))
                                 .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -350,7 +351,7 @@ struct ChatDetailView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.tertiary)
                         }
-                        .frame(maxWidth: 238)
+                        .frame(maxWidth: 210)
                         .padding(.horizontal, 13)
                         .padding(.vertical, 8)
                     }
@@ -362,8 +363,9 @@ struct ChatDetailView: View {
                             .foregroundStyle(.black.opacity(0.56))
                         Text(message.callStatus == "missed" ? "对方未接听" : "对方已拒绝")
                             .font(.system(size: 14, weight: .semibold))
+                            .lineLimit(1)
                     }
-                    .frame(maxWidth: 238, alignment: .leading)
+                    .frame(maxWidth: 210, alignment: .leading)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 10)
                 } else if isHTMLCard {
@@ -2108,15 +2110,7 @@ private struct CallDemoView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [LumiPalette.chatBackground, Color(red: 0.98, green: 0.91, blue: 0.93), Color(red: 0.94, green: 0.86, blue: 0.89)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-
-            Circle().fill(.white.opacity(0.76)).frame(width: 440, height: 440).blur(radius: 38).offset(x: 150, y: -300)
-            Circle().fill(Color(red: 0.79, green: 0.54, blue: 0.65).opacity(0.13)).frame(width: 360, height: 360).blur(radius: 48).offset(x: -145, y: 320)
+            LumiPalette.chatBackground.ignoresSafeArea()
 
             if phase == .requesting && incomingCallID == nil {
                 requestingCall
@@ -2259,16 +2253,6 @@ private struct CallDemoView: View {
                 .padding(.horizontal, 28).padding(.top, 18)
             }
             .frame(maxHeight: 220)
-            .overlay(alignment: .top) {
-                LinearGradient(colors: [Color(red: 0.98, green: 0.91, blue: 0.93), .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 34)
-                    .allowsHitTesting(false)
-            }
-            .overlay(alignment: .bottom) {
-                LinearGradient(colors: [.clear, Color(red: 0.94, green: 0.86, blue: 0.89)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 34)
-                    .allowsHitTesting(false)
-            }
 
             Spacer()
             VStack(spacing: 16) {
@@ -2501,7 +2485,7 @@ private struct CallTypingDots: View {
         HStack(spacing: 4) {
             ForEach(0..<3, id: \.self) { index in
                 Circle()
-                    .fill(Color(red: 0.47, green: 0.24, blue: 0.37))
+                    .fill(Color.black.opacity(0.52))
                     .frame(width: 6, height: 6)
                     .scaleEffect(animating ? 1 : 0.45)
                     .opacity(animating ? 0.9 : 0.35)

@@ -243,7 +243,10 @@ final class ChatViewModel: ObservableObject {
         if bubbles.isEmpty, message.audioFileName != nil {
             bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, thinking: thinking, audioFileName: message.audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript))
         }
-        return bubbles.isEmpty ? [ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, thinking: thinking)] : bubbles
+        // A reply that only contained the private dial marker (for example
+        // `⟪拨号:…⟫`) must not leave an empty white chat bubble behind. The call
+        // invite/status itself is rendered separately by the call message.
+        return bubbles
     }
 
     private static func looksLikeCode(_ content: String) -> Bool {
