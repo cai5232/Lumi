@@ -1830,7 +1830,7 @@ private final class CallSpeechRecognition: NSObject, ObservableObject {
         transcript = ""
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .duckOthers])
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
             let input = audioEngine.inputNode
             let format = input.inputFormat(forBus: 0)
