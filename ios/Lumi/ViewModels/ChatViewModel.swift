@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import UIKit
 
 private struct MessageMediaRecord: Codable {
     var audio: String?
@@ -28,8 +29,15 @@ final class ChatViewModel: ObservableObject {
         self.messages = initialMessages
     }
 
-    func load() async {
+    func load(waitForRemote: Bool = true) async {
         let localMessages = loadLocalConversation()
+        if messages.isEmpty, !localMessages.isEmpty {
+            messages = Self.deduplicateHTMLCards(localMessages)
+        }
+
+        // When local history exists, the UI can open immediately while a later call refreshes the server copy.
+        if !waitForRemote, !messages.isEmpty { return }
+
         guard shouldLoadFromServer else {
             if messages.isEmpty { messages = localMessages }
             return
@@ -37,7 +45,7 @@ final class ChatViewModel: ObservableObject {
         do {
             let loaded = try await api.fetchThread(id: chatID).messages
             let remoteMessages = Self.deduplicateHTMLCards(loaded.flatMap { message in
-                let restored = restoreMedia(for: message)
+                let restored = message
                 return restored.role == .assistant ? assistantBubbles(from: restored) : [restored]
             })
             let isEmptyServerSeed = remoteMessages.count == 1 && remoteMessages[0].role == .assistant && remoteMessages[0].content == "下午的风很轻，想和你说说话。"
@@ -82,7 +90,13 @@ final class ChatViewModel: ObservableObject {
         if let imageFileName { saveMedia(for: optimisticID, record: MessageMediaRecord(audio: nil, image: imageFileName, duration: nil, speechScript: nil)) }
         saveLocalConversation()
         isSending = true
-        defer { isSending = false }
+        let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Lumi response generation")
+        defer {
+            isSending = false
+            if backgroundTask != .invalid {
+                UIApplication.shared.endBackgroundTask(backgroundTask)
+            }
+        }
         do {
             let response = try await api.sendMessage(content, to: chatID, images: imageBase64.map { [$0] } ?? [], emojiCatalog: emojiCatalog, tts: tts)
             var confirmedUserMessage = response.userMessage
@@ -120,12 +134,17 @@ final class ChatViewModel: ObservableObject {
         } catch { errorMessage = friendlyError(error); saveLocalConversation() }
     }
 
+    func receiveCallOutcome(_ message: ChatMessage) {
+        for bubble in assistantBubbles(from: message) { messages.append(bubble) }
+        saveLocalConversation()
+    }
+
     private func loadLocalConversation() -> [ChatMessage] {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: localConversationURL),
               let saved = try? decoder.decode([ChatMessage].self, from: data) else { return [] }
-        return saved.map(restoreMedia(for:))
+        return saved
     }
 
     private func saveLocalConversation() {
@@ -165,14 +184,20 @@ final class ChatViewModel: ObservableObject {
         let hasStoredHTML = message.htmlContent != nil
         let htmlContent = message.htmlContent ?? ((message.contentType == "html" || Self.isHTML(visible)) ? visible : nil)
         let textContent = hasStoredHTML ? visible : (htmlContent == nil ? visible : "")
-        // Keep the requested pause/line-break rhythm as separate bubbles. The canonical server
-        // message remains intact; local reconciliation matches each display line by text/time.
+        // Keep ordinary line-break rhythm as separate bubbles, but never split a code response
+        // into one bubble per line. Code needs to retain its indentation and line structure.
         let lines = textContent
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        var bubbles = lines.enumerated().map { index, line in
-            ChatMessage(id: index == 0 && message.audioFileName == nil ? message.id : UUID(), role: .assistant, content: line, createdAt: message.createdAt, thinking: index == 0 ? thinking : nil)
+        let groupedCode = Self.looksLikeCode(textContent)
+        var bubbles: [ChatMessage]
+        if groupedCode {
+            bubbles = [ChatMessage(id: message.id, role: .assistant, content: textContent, createdAt: message.createdAt, thinking: thinking)]
+        } else {
+            bubbles = lines.enumerated().map { index, line in
+                ChatMessage(id: index == 0 && message.audioFileName == nil ? message.id : UUID(), role: .assistant, content: line, createdAt: message.createdAt, thinking: index == 0 ? thinking : nil)
+            }
         }
         if let htmlContent {
             bubbles.append(ChatMessage(id: Self.cardID(for: message.id), role: .assistant, content: "", createdAt: message.createdAt.addingTimeInterval(0.001), contentType: "html", htmlContent: htmlContent, htmlTitle: message.htmlTitle ?? "HTML 页面"))
@@ -184,6 +209,23 @@ final class ChatViewModel: ObservableObject {
             bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, thinking: thinking, audioFileName: message.audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript))
         }
         return bubbles.isEmpty ? [ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, thinking: thinking)] : bubbles
+    }
+
+    private static func looksLikeCode(_ content: String) -> Bool {
+        let source = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if source.range(of: #"(?s)```[^\n]*\n.*?```"#, options: .regularExpression) != nil { return true }
+        guard source.contains("\n") else { return false }
+        let markers = [
+            #"\b(import|func|struct|class|enum|let|var|guard|private|public|return)\b"#,
+            #"\.(onReceive|scrollTo|frame|padding|background|ignoresSafeArea)\s*\("#,
+            #"\b(ScrollViewReader|DispatchQueue|NotificationCenter|UIResponder)\b"#,
+            #"\{\s*(?:_|[A-Za-z][A-Za-z0-9_]*)?\s*in\b"#,
+            #"[{};]"#
+        ]
+        let hits = markers.reduce(0) { count, pattern in
+            count + (source.range(of: pattern, options: .regularExpression) == nil ? 0 : 1)
+        }
+        return hits >= 2
     }
 
     private static func isHTML(_ content: String) -> Bool {

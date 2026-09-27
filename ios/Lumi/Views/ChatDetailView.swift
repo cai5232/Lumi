@@ -3,12 +3,13 @@ import UIKit
 import UserNotifications
 import PhotosUI
 import AVFoundation
+import Speech
 import WebKit
 
 @MainActor
 struct ChatDetailView: View {
     @StateObject private var model: ChatViewModel
-    @FocusState private var composerFocused: Bool
+    @State private var keyboardVisible = false
     @StateObject private var glassPresentation = GlassComparisonPresentation()
     @State private var showingSettings = false
     @State private var htmlMessage: ChatMessage?
@@ -16,6 +17,7 @@ struct ChatDetailView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var selectedImageData: Data?
     @State private var selectedImageName: String?
+    @State private var showingCallDemo = false
     @State private var showingSubscriptionUsage = false
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
     @AppStorage("lumi.ttsModel") private var ttsModel = "speech-2.8-hd"
@@ -40,14 +42,67 @@ struct ChatDetailView: View {
                         }
                         if model.isSending { thinkingBubble }
                     }
+                    .animation(.easeOut(duration: 0.24), value: model.messages.count)
                     .padding(.horizontal, 16)
                     .padding(.top, 92)
-                    .padding(.bottom, 180)
+                    .padding(.bottom, keyboardVisible ? 24 : 180)
+                    Color.clear
+                        .frame(height: 1)
+                        .id("chat-bottom-anchor")
                 }
                 .scrollIndicators(.hidden)
-                .onChange(of: model.messages.last?.id) { _, id in
-                    if let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
+                .scrollDismissesKeyboard(.interactively)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard keyboardVisible else { return }
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                    keyboardVisible = true
+                    guard model.messages.last != nil else { return }
+                    Task { @MainActor in
+                        await Task.yield()
+                        try? await Task.sleep(for: .milliseconds(280))
+                        guard keyboardVisible else { return }
+                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("chat-bottom-anchor", anchor: .bottom) }
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                    keyboardVisible = true
+                    guard !model.messages.isEmpty else { return }
+                    Task { @MainActor in
+                        await Task.yield()
+                        try? await Task.sleep(for: .milliseconds(120))
+                        guard keyboardVisible else { return }
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                        }
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                    keyboardVisible = false
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+                    let endFrame = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+                    let isShowing = endFrame.map { $0.minY < UIScreen.main.bounds.height } ?? true
+                    keyboardVisible = isShowing
+                    guard isShowing, model.messages.last != nil else { return }
+                    Task { @MainActor in
+                        await Task.yield()
+                        try? await Task.sleep(for: .milliseconds(320))
+                        guard keyboardVisible else { return }
+                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("chat-bottom-anchor", anchor: .bottom) }
+                    }
+                }
+                .onChange(of: model.messages.last?.id) { _, _ in
+                                    guard keyboardVisible else { return }
+                                    Task { @MainActor in
+                                        await Task.yield()
+                                        try? await Task.sleep(for: .milliseconds(280))
+                                        guard keyboardVisible else { return }
+                                        withAnimation(.easeOut(duration: 0.24)) { proxy.scrollTo("chat-bottom-anchor", anchor: .bottom) }
+                                    }
+                                }
             }
             GeometryReader { geometry in
                 topBar
@@ -56,12 +111,18 @@ struct ChatDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea()
+        .ignoresSafeArea(edges: [.top, .horizontal])
         .safeAreaInset(edge: .bottom, spacing: 0) {
             composer
                 .padding(.bottom, 10)
         }
-        .task { await model.load() }
+        .task {
+            await model.load(waitForRemote: false)
+            Task { await model.load() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.load() }
+        }
         .onAppear {
             if !customVoiceMigrated {
                 ttsVoiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"
@@ -98,6 +159,9 @@ struct ChatDetailView: View {
         .fullScreenCover(item: $fullScreenHTMLMessage) { message in
             HTMLMessageFullScreen(message: message)
         }
+        .fullScreenCover(isPresented: $showingCallDemo) {
+            CallDemoView { message in model.receiveCallOutcome(message) }
+        }
         .overlay(alignment: .top) {
             if let error = model.errorMessage {
                 HStack(spacing: 10) {
@@ -129,7 +193,7 @@ struct ChatDetailView: View {
         HStack {
             glassCircleButton("line.3.horizontal") { glassPresentation.showing = true }
             Spacer()
-            glassCircleButton("phone")
+            glassCircleButton("phone") { showingCallDemo = true }
             HStack(spacing: 0) {
                 Button { showingSubscriptionUsage = true } label: {
                     Image(systemName: "doc.text")
@@ -156,57 +220,14 @@ struct ChatDetailView: View {
     }
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if let selectedImageData, let image = UIImage(data: selectedImageData) {
-                HStack {
-                    Image(uiImage: image).resizable().scaledToFill().frame(width: 60, height: 60).clipShape(RoundedRectangle(cornerRadius: 12))
-                    Text("已添加图片").font(.system(size: 12)).foregroundStyle(.secondary)
-                    Spacer()
-                    Button { self.selectedImageData = nil; selectedImageName = nil; photoItem = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                }
+        ComposerInputView(
+            selectedImageData: $selectedImageData,
+            selectedImageName: $selectedImageName,
+            photoItem: $photoItem,
+            onSend: { text in
+                Task { await sendDraft(text: text) }
             }
-            TextField("", text: $model.draft)
-                .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(.black.opacity(0.72))
-                .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
-                .contentShape(Rectangle())
-                .focused($composerFocused)
-                .onTapGesture { composerFocused = true }
-                .submitLabel(.send)
-                .onSubmit { Task { await sendDraft() } }
-            HStack(spacing: 10) {
-                PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .medium))
-                        .frame(width: 40, height: 36)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onChange(of: photoItem) { _, newItem in
-                    Task { await loadSelectedImage(newItem) }
-                }
-                Spacer()
-                Image(systemName: "mic")
-                    .font(.system(size: 18, weight: .medium))
-                    .frame(width: 40, height: 36)
-                Button { Task { await sendDraft() } } label: {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 36)
-                        .background(Color(red: 0.28, green: 0.20, blue: 0.24).opacity(0.86), in: Circle())
-                }
-            }
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
-        .contentShape(RoundedRectangle(cornerRadius: 30))
-        .simultaneousGesture(TapGesture().onEnded { composerFocused = true })
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 30))
-        .background(Color(red: 0.965, green: 0.905, blue: 0.925).opacity(0.92), in: RoundedRectangle(cornerRadius: 30))
-        .padding(.horizontal, 16)
-        .shadow(color: Color(red: 0.45, green: 0.32, blue: 0.38).opacity(0.07), radius: 8, x: 0, y: 3)
+        )
     }
 
     private func glassCircleButton(_ systemName: String, action: @escaping () -> Void = {}) -> some View {
@@ -230,16 +251,16 @@ struct ChatDetailView: View {
                let image = UIImage(contentsOfFile: url.path) {
                 Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 210, maxHeight: 190).clipShape(RoundedRectangle(cornerRadius: 14))
             }
-            HStack {
+            HStack(alignment: .top) {
                 if message.role == .assistant {
                     if showAvatar {
                         if let thinking = thinkingText(for: message) {
                             Button {
                                 glassPresentation.thinkingText = thinking
                                 glassPresentation.showingThinkingDetails = true
-                            } label: { avatar(for: .assistant) }
+                            } label: { assistantAvatar(for: message) }
                             .buttonStyle(.plain)
-                        } else { avatar(for: .assistant) }
+                        } else { assistantAvatar(for: message) }
                     } else { Color.clear.frame(width: 42, height: 42) }
                 }
                 if message.role == .user { Spacer(minLength: 48) }
@@ -274,10 +295,19 @@ struct ChatDetailView: View {
                     }
                     SpeechBubble(message: message, fileName: audioFileName, showsTranscript: !hasVisibleReply)
                 } else {
-                    markdownText(visibleContent(message.content))
-                        .foregroundStyle(.black)
-                        .font(.system(size: 14, weight: .regular))
-                        .fixedSize(horizontal: false, vertical: true)
+                    if looksLikeCode(message.content) {
+                        Text(codeDisplayContent(message.content))
+                            .foregroundStyle(.black)
+                            .font(.system(size: 13, weight: .regular, design: .monospaced))
+                            .lineSpacing(2)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        markdownText(visibleContent(message.content))
+                            .foregroundStyle(.black)
+                            .font(.system(size: 14, weight: .regular))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 }
                 .padding(.horizontal, isHTMLCard ? 8 : 13)
@@ -315,11 +345,58 @@ struct ChatDetailView: View {
         .overlay(Circle().stroke(Color.white.opacity(0.58), lineWidth: 0.8))
     }
 
+    private static let beijingTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+
+    private func beijingTime(_ date: Date) -> String {
+        Self.beijingTimeFormatter.string(from: date)
+    }
+
+    private func assistantAvatar(for message: ChatMessage) -> some View {
+            avatar(for: .assistant)
+        }
+
+    private func timeDivider(for date: Date) -> some View {
+        Text("-- \(beijingTime(date)) --")
+            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
+    }
+
     private func visibleContent(_ content: String) -> String {
         content
             .replacingOccurrences(of: #"(?is)<thinking>.*?</thinking>"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)</?thinking>"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\[(?:左耳|右耳|脑后|面前|贴近|退开)\]"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func looksLikeCode(_ content: String) -> Bool {
+        let source = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if source.range(of: #"(?s)```[^\n]*\n.*?```"#, options: .regularExpression) != nil { return true }
+        guard source.contains("\n") else { return false }
+        let markers = [
+            #"\b(import|func|struct|class|enum|let|var|guard|private|public|return)\b"#,
+            #"\.(onReceive|scrollTo|frame|padding|background|ignoresSafeArea)\s*\("#,
+            #"\b(ScrollViewReader|DispatchQueue|NotificationCenter|UIResponder)\b"#,
+            #"\{\s*(?:_|[A-Za-z][A-Za-z0-9_]*)?\s*in\b"#,
+            #"[{};]"#
+        ]
+        return markers.reduce(0) { count, pattern in
+            count + (source.range(of: pattern, options: .regularExpression) == nil ? 0 : 1)
+        } >= 2
+    }
+
+    private func codeDisplayContent(_ content: String) -> String {
+        content
+            .replacingOccurrences(of: #"(?m)^```[^\n]*\n?"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?m)\n?```\s*$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -363,18 +440,117 @@ struct ChatDetailView: View {
         selectedImageName = name
     }
 
-    private func sendDraft() async {
+    private func sendDraft(text: String) async {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || selectedImageData != nil else { return }
+        model.draft = text
         let imageBase64 = selectedImageData.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
         let ttsKey = LumiKeychain.read()
         let tts = ttsEnabled && !ttsKey.isEmpty ? TTSRequestSettings(apiKey: ttsKey, model: ttsModel, voiceID: ttsVoiceID, baseURL: ttsHost, enabled: true) : nil
         let catalogData = UserDefaults.standard.string(forKey: "lumi.emojiCatalogJSON")?.data(using: .utf8) ?? Data("[]".utf8)
         let entries = (try? JSONDecoder().decode([EmojiEntry].self, from: catalogData)) ?? []
         let catalog = Dictionary(grouping: entries, by: \.mood).mapValues { $0.map(\.face) }
-        composerFocused = false
         await model.send(imageBase64: imageBase64, imageFileName: selectedImageName, tts: tts, emojiCatalog: catalog)
         selectedImageData = nil
         selectedImageName = nil
         photoItem = nil
+    }
+}
+
+private struct ComposerInputView: View {
+    @Binding var selectedImageData: Data?
+    @Binding var selectedImageName: String?
+    @Binding var photoItem: PhotosPickerItem?
+    let onSend: (String) -> Void
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if let data = selectedImageData, let image = UIImage(data: data) {
+                HStack(spacing: 8) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                    Button {
+                        selectedImageData = nil
+                        selectedImageName = nil
+                        photoItem = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+                .padding(.horizontal, 4)
+            }
+            TextField("", text: $text)
+                .focused($focused)
+                .lineLimit(1)
+                .submitLabel(.send)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.top, 12)
+                .onSubmit {
+                    let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if value.isEmpty {
+                        focused = false
+                        return
+                    }
+                    text = ""
+                    onSend(value)
+                    focused = false
+                }
+            HStack(spacing: 10) {
+                PhotosPicker(selection: $photoItem, matching: .images) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.black.opacity(0.9))
+                        .frame(width: 42, height: 42)
+                }
+                Spacer()
+                Button { focused = true } label: {
+                    Image(systemName: "mic")
+                        .font(.system(size: 16, weight: .medium))
+                        .frame(width: 40, height: 40)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    let value = text
+                    text = ""
+                    focused = false
+                    onSend(value)
+                } label: {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 16, weight: .medium))
+                        .frame(width: 38, height: 38)
+                        .background(Color(red: 0.31, green: 0.22, blue: 0.26), in: Circle())
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(height: selectedImageData == nil ? 96 : 140)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 32))
+        .background(Color(red: 0.965, green: 0.905, blue: 0.925).opacity(0.92), in: RoundedRectangle(cornerRadius: 32))
+        .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.12), radius: 8, x: 0, y: 4)
+        .padding(.horizontal, 16)
+        .onChange(of: photoItem) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self) {
+                    await MainActor.run {
+                        selectedImageData = data
+                        selectedImageName = "image-\(UUID().uuidString).jpg"
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1368,9 +1544,9 @@ private struct SubscriptionUsageSheet: View {
         VStack(spacing: 18) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("ZenMux 订阅额度")
+                    Text("订阅额度")
                         .font(.system(size: 22, weight: .bold))
-                    Text("实时同步 5 小时与每周窗口")
+                    Text("Max 订阅 · 实时同步 5 小时与每周窗口")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
@@ -1452,11 +1628,463 @@ private struct SubscriptionUsageSheet: View {
     private func refresh() async {
         loading = true
         defer { loading = false }
+
         do {
             usage = try await api.fetchSubscriptionUsage()
             error = nil
         } catch {
             self.error = error.localizedDescription
         }
+    }
+}
+
+@MainActor
+private final class CallSpeechRecognition: NSObject, ObservableObject {
+    @Published private(set) var transcript = ""
+    @Published private(set) var isListening = false
+    @Published private(set) var errorMessage: String?
+
+    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
+    private let audioEngine = AVAudioEngine()
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private var onFinal: ((String) -> Void)?
+    private var isStarting = false
+    private var tapInstalled = false
+    private var silenceTask: Task<Void, Never>?
+
+    func start(onFinal: @escaping (String) -> Void) {
+        guard !isListening, !isStarting else { return }
+        isStarting = true
+        self.onFinal = onFinal
+        errorMessage = nil
+        SFSpeechRecognizer.requestAuthorization { [weak self] status in
+            Task { @MainActor in
+                guard let self else { return }
+                guard status == .authorized else {
+                    self.isStarting = false
+                    self.errorMessage = "请允许语音识别后再说话"
+                    return
+                }
+                AVAudioApplication.requestRecordPermission { granted in
+                    Task { @MainActor in
+                        guard granted else {
+                            self.isStarting = false
+                            self.errorMessage = "请允许麦克风后再说话"
+                            return
+                        }
+                        self.beginRecognition()
+                    }
+                }
+            }
+        }
+    }
+
+    func stop() {
+        isStarting = false
+        silenceTask?.cancel()
+        silenceTask = nil
+        tearDownAudio()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        isListening = false
+    }
+
+    private func tearDownAudio() {
+        audioEngine.stop()
+        if tapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            tapInstalled = false
+        }
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        recognitionRequest = nil
+        recognitionTask = nil
+    }
+
+    private func beginRecognition() {
+        guard !isListening, let recognizer, recognizer.isAvailable else {
+            isStarting = false
+            errorMessage = "语音识别暂时不可用"
+            return
+        }
+        tearDownAudio()
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        request.shouldReportPartialResults = true
+        recognitionRequest = request
+        transcript = ""
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP, .duckOthers])
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            let input = audioEngine.inputNode
+            let format = input.inputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                isStarting = false
+                errorMessage = "麦克风设备还没准备好，请再试一次"
+                return
+            }
+            input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+                self?.recognitionRequest?.append(buffer)
+            }
+            tapInstalled = true
+            audioEngine.prepare()
+            try audioEngine.start()
+            isStarting = false
+            isListening = true
+            recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if let result {
+                        self.transcript = result.bestTranscription.formattedString
+                        if result.isFinal {
+                            self.finishTranscript()
+                            return
+                        }
+                        let observedTranscript = self.transcript
+                        self.silenceTask?.cancel()
+                        self.silenceTask = Task { @MainActor [weak self] in
+                            try? await Task.sleep(for: .milliseconds(900))
+                            guard !Task.isCancelled, let self,
+                                  self.isListening,
+                                  self.transcript == observedTranscript else { return }
+                            self.finishTranscript()
+                        }
+                    }
+                    if error != nil && !self.transcript.isEmpty {
+                        self.finishTranscript()
+                    } else if error != nil {
+                        self.stop()
+                        self.errorMessage = "没听清，再说一次试试"
+                    }
+                }
+            }
+        } catch {
+            stop()
+            errorMessage = "无法启动麦克风：\(error.localizedDescription)"
+        }
+    }
+
+    private func finishTranscript() {
+        let finalText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let handler = onFinal
+        stop()
+        if !finalText.isEmpty { handler?(finalText) }
+    }
+}
+
+private struct CallDemoView: View {
+    private enum Phase { case requesting, connected }
+
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("lumi.ttsModel") private var ttsModel = "speech-2.8-hd"
+    @AppStorage("lumi.ttsVoiceID") private var ttsVoiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"
+    @AppStorage("lumi.ttsHost") private var ttsHost = "https://api.minimaxi.com"
+    @State private var phase: Phase = .requesting
+    @State private var callStartedAt: Date?
+    @State private var muted = false
+    @State private var speakerOn = true
+    @State private var requestError: String?
+    @State private var callID: String?
+    @State private var turns: [CallTurn] = []
+    @State private var callDraft = ""
+    @State private var sendingTurn = false
+    @State private var generatingReply = false
+    @State private var callAudioFiles: [UUID: URL] = [:]
+    @StateObject private var player = SpatialSpeechPlayback()
+    @StateObject private var speechRecognition = CallSpeechRecognition()
+    let onRejected: (ChatMessage) -> Void
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [LumiPalette.chatBackground, Color(red: 0.98, green: 0.91, blue: 0.93), Color(red: 0.94, green: 0.86, blue: 0.89)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            Circle().fill(.white.opacity(0.76)).frame(width: 440, height: 440).blur(radius: 38).offset(x: 150, y: -300)
+            Circle().fill(Color(red: 0.79, green: 0.54, blue: 0.65).opacity(0.13)).frame(width: 360, height: 360).blur(radius: 48).offset(x: -145, y: 320)
+
+            if phase == .requesting {
+                requestingCall
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            } else {
+                activeCall
+                    .transition(.opacity.combined(with: .scale(scale: 1.03)))
+            }
+        }
+        .preferredColorScheme(.light)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .animation(.easeInOut(duration: 0.28), value: phase == .connected)
+        .task { await requestCall() }
+        .onChange(of: muted) { _, isMuted in
+            if isMuted { speechRecognition.stop() }
+            else { startListeningIfNeeded() }
+        }
+        .onChange(of: player.isPlaying) { _, isPlaying in
+            if !isPlaying { startListeningIfNeeded() }
+        }
+        .onDisappear { speechRecognition.stop() }
+    }
+
+    private var requestingCall: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 42, height: 42)
+                        .background(.white.opacity(0.72), in: Circle())
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Text("Lumi 通话")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.black.opacity(0.55))
+                Spacer()
+                Color.clear.frame(width: 42, height: 42)
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 12)
+
+            Spacer(minLength: 32)
+            callAvatar(size: 142)
+                .overlay(Circle().stroke(.white.opacity(0.84), lineWidth: 1))
+                .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.18), radius: 24, y: 12)
+            Text("沈屿")
+                .font(.system(size: 30, weight: .semibold, design: .rounded))
+                .padding(.top, 24)
+            Text("正在呼叫")
+                .font(.system(size: 16))
+                .foregroundStyle(.black.opacity(0.52))
+                .padding(.top, 7)
+            Text(requestError ?? "等待对方接受邀请…")
+                .font(.system(size: 15))
+                .foregroundStyle(.black.opacity(0.70))
+                .padding(.top, 26)
+                .padding(.horizontal, 28)
+                .multilineTextAlignment(.center)
+
+            Spacer()
+            callAction(title: "取消", icon: "phone.down.fill", color: Color(red: 0.92, green: 0.25, blue: 0.31)) { dismiss() }
+            .padding(.bottom, 46)
+        }
+        .foregroundStyle(.black.opacity(0.82))
+    }
+
+    private var activeCall: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button { dismiss() } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 42, height: 42)
+                        .background(.white.opacity(0.72), in: Circle())
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                VStack(spacing: 3) {
+                    Text("沈屿")
+                        .font(.system(size: 16, weight: .semibold))
+                    TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                        Text(callDuration(at: timeline.date))
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.black.opacity(0.52))
+                    }
+                }
+                Spacer()
+                Color.clear.frame(width: 42, height: 42)
+            }
+            .padding(.horizontal, 22)
+            .padding(.top, 12)
+
+            Spacer(minLength: 20)
+            callAvatar(size: 112)
+                .overlay(Circle().stroke(.white.opacity(0.84), lineWidth: 1))
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 9) {
+                    ForEach(turns) { turn in
+                        Text(turn.content)
+                            .font(.system(size: 15))
+                            .foregroundStyle(.black.opacity(0.72))
+                            .padding(.horizontal, 14).padding(.vertical, 11)
+                            .background(turn.role == "user" ? LumiPalette.userBubble : .white.opacity(0.72), in: RoundedRectangle(cornerRadius: 18))
+                            .frame(maxWidth: .infinity, alignment: turn.role == "user" ? .trailing : .leading)
+                            .onTapGesture {
+                                if turn.role == "assistant" { replayTurn(turn) }
+                            }
+                    }
+                    if generatingReply {
+                        HStack(spacing: 8) {
+                            ProgressView().tint(Color(red: 0.47, green: 0.24, blue: 0.37))
+                            Text("沈屿正在准备语音…")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.black.opacity(0.48))
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 11)
+                        .background(.white.opacity(0.52), in: RoundedRectangle(cornerRadius: 18))
+                    }
+                }
+                .padding(.horizontal, 28).padding(.top, 18)
+            }
+            .frame(maxHeight: 220)
+
+            Spacer()
+            VStack(spacing: 16) {
+                if muted {
+                    HStack(spacing: 9) {
+                        TextField("给沈屿发消息…", text: $callDraft)
+                            .submitLabel(.send)
+                            .onSubmit { Task { await sendTypedTurn() } }
+                        Button { Task { await sendTypedTurn() } } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 28)) }
+                            .disabled(callDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sendingTurn)
+                    }
+                    .padding(.horizontal, 15).padding(.vertical, 11)
+                    .background(.white.opacity(0.70), in: Capsule())
+                    .padding(.horizontal, 25)
+                } else if speechRecognition.isListening || !speechRecognition.transcript.isEmpty {
+                    Text(speechRecognition.transcript.isEmpty ? "正在听…" : speechRecognition.transcript)
+                        .font(.system(size: 15))
+                        .foregroundStyle(.black.opacity(0.54))
+                        .lineLimit(1)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 11)
+                        .background(.white.opacity(0.52), in: Capsule())
+                        .padding(.horizontal, 25)
+                }
+                HStack(spacing: 10) {
+                    callControl(title: muted ? "已静音" : "静音", icon: muted ? "mic.slash.fill" : "mic.fill", selected: muted) { muted.toggle() }
+                    callAction(title: "挂断", icon: "phone.down.fill", color: Color(red: 0.92, green: 0.25, blue: 0.31)) { dismiss() }
+                    callControl(title: speakerOn ? "扬声器" : "听筒", icon: speakerOn ? "speaker.wave.2.fill" : "speaker.fill", selected: speakerOn) { speakerOn.toggle() }
+                }
+            }
+            .padding(.bottom, 44)
+        }
+        .foregroundStyle(.black.opacity(0.82))
+    }
+
+    private var waveform: some View {
+        HStack(alignment: .center, spacing: 5) {
+            ForEach([14.0, 28, 43, 32, 52, 35, 18, 29, 46, 24, 15], id: \.self) { height in
+                Capsule()
+                    .fill(Color(red: 0.60, green: 0.33, blue: 0.45).opacity(0.72))
+                    .frame(width: 4, height: height)
+            }
+        }
+        .frame(height: 56)
+    }
+
+    @ViewBuilder private func callAvatar(size: CGFloat) -> some View {
+        if let path = Bundle.main.path(forResource: "AssistantAvatar", ofType: "jpg"), let image = UIImage(contentsOfFile: path) {
+            Image(uiImage: image).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle())
+        } else {
+            Image(systemName: "sparkles")
+                .font(.system(size: size * 0.36, weight: .medium))
+                .foregroundStyle(Color(red: 0.47, green: 0.24, blue: 0.37))
+                .frame(width: size, height: size)
+                .background(Color(red: 1.0, green: 0.84, blue: 0.88), in: Circle())
+        }
+    }
+
+    private func callAction(title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 22, weight: .semibold))
+                    .frame(width: 64, height: 64)
+                    .background(color, in: Circle())
+                Text(title).font(.system(size: 14, weight: .medium))
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .frame(width: 104)
+    }
+
+    private func callControl(title: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 9) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 58, height: 58)
+                    .background(selected ? Color(red: 0.82, green: 0.62, blue: 0.69).opacity(0.70) : .white.opacity(0.64), in: Circle())
+                Text(title).font(.system(size: 13, weight: .medium))
+            }
+            .frame(width: 104)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func callDuration(at date: Date) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(callStartedAt ?? date)))
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func requestCall() async {
+        let key = LumiKeychain.read()
+        let tts = !key.isEmpty
+            ? TTSRequestSettings(apiKey: key, model: ttsModel, voiceID: ttsVoiceID, baseURL: ttsHost, enabled: true)
+            : nil
+        do {
+            let response = try await LumiAPIClient().startCall(to: "default", tts: tts)
+            guard response.status == "accepted" else {
+                if let message = response.assistantMessage { onRejected(message) }
+                dismiss()
+                return
+            }
+            callStartedAt = .now
+            callID = response.callId
+            if let first = response.firstMessage { turns = [first] }
+            phase = .connected
+            if let encoded = response.speechAudioBase64, let data = Data(base64Encoded: encoded) {
+                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent("call-opening-\(response.callId).mp3")
+                try? data.write(to: url, options: .atomic)
+                if let first = response.firstMessage { callAudioFiles[first.id] = url }
+                player.play(url: url, script: response.speechScript ?? response.firstMessage?.content ?? "")
+            }
+            startListeningIfNeeded()
+        } catch {
+            requestError = error.localizedDescription
+        }
+    }
+
+    private func sendTypedTurn(_ submittedText: String? = nil) async {
+        let text = (submittedText ?? callDraft).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let callID, !sendingTurn else { return }
+        callDraft = ""
+        speechRecognition.stop()
+        sendingTurn = true
+        generatingReply = true
+        defer {
+            sendingTurn = false
+            generatingReply = false
+        }
+        let key = LumiKeychain.read()
+        let tts = !key.isEmpty ? TTSRequestSettings(apiKey: key, model: ttsModel, voiceID: ttsVoiceID, baseURL: ttsHost, enabled: true) : nil
+        do {
+            let response = try await LumiAPIClient().sendCallTurn(text, callID: callID, to: "default", tts: tts)
+            turns.append(response.userTurn)
+            turns.append(response.assistantTurn)
+            if let encoded = response.speechAudioBase64, let data = Data(base64Encoded: encoded) {
+                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("call-turn-\(response.assistantTurn.id.uuidString).mp3")
+                try? data.write(to: url, options: .atomic)
+                callAudioFiles[response.assistantTurn.id] = url
+                player.play(url: url, script: response.speechScript ?? response.assistantTurn.content)
+            }
+        } catch { requestError = error.localizedDescription }
+    }
+
+    private func startListeningIfNeeded() {
+        guard phase == .connected, !muted, !player.isPlaying, !sendingTurn else { return }
+        speechRecognition.start { text in
+            Task { await sendTypedTurn(text) }
+        }
+    }
+
+    private func replayTurn(_ turn: CallTurn) {
+        guard let url = callAudioFiles[turn.id] else { return }
+        player.play(url: url, script: turn.speechScript ?? turn.content)
     }
 }

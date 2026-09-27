@@ -87,6 +87,43 @@ struct TTSRequestSettings: Encodable {
     let enabled: Bool
 }
 
+struct CallStartRequest: Encodable {
+    let systemPrompt: String
+    let tts: TTSRequestSettings?
+}
+
+struct CallStartResponse: Decodable {
+    let callId: String
+    let status: String
+    let assistantMessage: ChatMessage?
+    let firstMessage: CallTurn?
+    let speechAudioBase64: String?
+    let speechDuration: Double?
+    let speechScript: String?
+}
+
+struct CallTurn: Codable, Identifiable {
+    let id: UUID
+    let role: String
+    let content: String
+    let createdAt: Date
+    let speechScript: String?
+}
+
+struct CallTurnResponse: Decodable {
+    let userTurn: CallTurn
+    let assistantTurn: CallTurn
+    let speechAudioBase64: String?
+    let speechDuration: Double?
+    let speechScript: String?
+}
+
+struct CallTurnRequest: Encodable {
+    let content: String
+    let systemPrompt: String
+    let tts: TTSRequestSettings?
+}
+
 
 struct ProactiveSettings: Codable {
     var enabled: Bool
