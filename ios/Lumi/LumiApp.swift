@@ -59,4 +59,10 @@ final class LumiAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .sound, .list]
     }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        if response.notification.request.content.userInfo["kind"] as? String == "incoming_call" {
+            NotificationCenter.default.post(name: Notification.Name("LumiIncomingCall"), object: nil)
+        }
+    }
 }

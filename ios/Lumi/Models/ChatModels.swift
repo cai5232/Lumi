@@ -132,8 +132,27 @@ struct CallEndResponse: Decodable {
     let recordMessage: ChatMessage
 }
 
+struct IncomingCallInfo: Decodable, Identifiable {
+    let callId: String
+    let reason: String
+    let createdAt: Date
+    let expiresAt: Date
+
+    var id: String { callId }
+}
+
+struct IncomingCallResponse: Decodable {
+    let call: IncomingCallInfo?
+}
+
 struct CallTurnRequest: Encodable {
     let content: String
+    let systemPrompt: String
+    let tts: TTSRequestSettings?
+}
+
+struct CallAnswerRequest: Encodable {
+    let action: String
     let systemPrompt: String
     let tts: TTSRequestSettings?
 }

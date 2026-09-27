@@ -18,6 +18,8 @@ struct ChatDetailView: View {
     @State private var selectedImageData: Data?
     @State private var selectedImageName: String?
     @State private var showingCallDemo = false
+    @State private var incomingCallID: String?
+    @State private var incomingCall: IncomingCallInfo?
     @State private var showingSubscriptionUsage = false
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
     @AppStorage("lumi.ttsModel") private var ttsModel = "speech-2.8-hd"
@@ -118,10 +120,14 @@ struct ChatDetailView: View {
         }
         .task {
             await model.load(waitForRemote: false)
-            Task { await model.load() }
+            await model.load()
+            await pollIncomingCall()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task { await model.load() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("LumiIncomingCall"))) { _ in
+            Task { incomingCall = try? await LumiAPIClient().fetchIncomingCall(from: "default") }
         }
         .onAppear {
             if !customVoiceMigrated {
@@ -161,9 +167,29 @@ struct ChatDetailView: View {
         }
         .fullScreenCover(isPresented: $showingCallDemo) {
             CallDemoView(
+                incomingCallID: incomingCallID,
                 onRejected: { message in model.receiveCallOutcome(message) },
-                onEnded: { Task { await model.load() } }
+                onEnded: {
+                    incomingCallID = nil
+                    Task { await model.load() }
+                }
             )
+        }
+        .sheet(item: $incomingCall) { call in
+            IncomingCallSheet(
+                call: call,
+                onAccept: {
+                    incomingCall = nil
+                    incomingCallID = call.callId
+                    showingCallDemo = true
+                },
+                onDecline: {
+                    Task { await declineIncomingCall(call) }
+                }
+            )
+            .presentationDetents([.height(470)])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(LumiPalette.chatBackground)
         }
         .overlay(alignment: .top) {
             if let error = model.errorMessage {
@@ -231,6 +257,26 @@ struct ChatDetailView: View {
                 Task { await sendDraft(text: text) }
             }
         )
+    }
+
+    private func pollIncomingCall() async {
+        let api = LumiAPIClient()
+        while !Task.isCancelled {
+            if !showingCallDemo && incomingCall == nil {
+                incomingCall = try? await api.fetchIncomingCall(from: "default")
+            }
+            try? await Task.sleep(for: .seconds(5))
+        }
+    }
+
+    private func declineIncomingCall(_ call: IncomingCallInfo) async {
+        do {
+            let response = try await LumiAPIClient().answerIncomingCall(call.callId, action: "decline", to: "default")
+            if let message = response.assistantMessage { model.receiveCallOutcome(message) }
+            incomingCall = nil
+        } catch {
+            model.errorMessage = error.localizedDescription
+        }
     }
 
     private func glassCircleButton(_ systemName: String, action: @escaping () -> Void = {}) -> some View {
@@ -1806,6 +1852,62 @@ private final class CallSpeechRecognition: NSObject, ObservableObject {
     }
 }
 
+private struct IncomingCallSheet: View {
+    let call: IncomingCallInfo
+    let onAccept: () -> Void
+    let onDecline: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text("来电")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.black.opacity(0.52))
+            Spacer(minLength: 18)
+            Image(systemName: "phone.badge.waveform.fill")
+                .font(.system(size: 42, weight: .medium))
+                .foregroundStyle(Color(red: 0.66, green: 0.35, blue: 0.47))
+                .frame(width: 92, height: 92)
+                .background(Color.white.opacity(0.72), in: Circle())
+            Text("沈屿想和你通话")
+                .font(.system(size: 25, weight: .semibold, design: .rounded))
+                .padding(.top, 18)
+            Text(call.reason)
+                .font(.system(size: 15))
+                .foregroundStyle(.black.opacity(0.56))
+                .multilineTextAlignment(.center)
+                .padding(.top, 8)
+                .padding(.horizontal, 32)
+            Spacer()
+            HStack(spacing: 40) {
+                Button(action: onDecline) {
+                    VStack(spacing: 8) {
+                        Image(systemName: "phone.down.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .frame(width: 64, height: 64)
+                            .background(Color(red: 0.92, green: 0.25, blue: 0.31), in: Circle())
+                        Text("拒绝")
+                    }
+                }
+                Button(action: onAccept) {
+                    VStack(spacing: 8) {
+                        Image(systemName: "phone.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .frame(width: 64, height: 64)
+                            .background(Color(red: 0.24, green: 0.67, blue: 0.44), in: Circle())
+                        Text("接听")
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.black.opacity(0.78))
+            .padding(.bottom, 24)
+        }
+        .padding(.top, 22)
+        .padding(.horizontal, 22)
+        .preferredColorScheme(.light)
+    }
+}
+
 private struct CallDemoView: View {
     private enum Phase { case requesting, connected }
 
@@ -1827,6 +1929,7 @@ private struct CallDemoView: View {
     @State private var didFinishCall = false
     @StateObject private var player = SpatialSpeechPlayback()
     @StateObject private var speechRecognition = CallSpeechRecognition()
+    let incomingCallID: String?
     let onRejected: (ChatMessage) -> Void
     let onEnded: () -> Void
 
@@ -1894,7 +1997,7 @@ private struct CallDemoView: View {
             Text("沈屿")
                 .font(.system(size: 30, weight: .semibold, design: .rounded))
                 .padding(.top, 24)
-            Text("正在呼叫")
+            Text(incomingCallID == nil ? "正在呼叫" : "正在接听")
                 .font(.system(size: 16))
                 .foregroundStyle(.black.opacity(0.52))
                 .padding(.top, 7)
@@ -2075,7 +2178,12 @@ private struct CallDemoView: View {
             ? TTSRequestSettings(apiKey: key, model: ttsModel, voiceID: ttsVoiceID, baseURL: ttsHost, enabled: true)
             : nil
         do {
-            let response = try await LumiAPIClient().startCall(to: "default", tts: tts)
+            let response: CallStartResponse
+            if let incomingCallID {
+                response = try await LumiAPIClient().answerIncomingCall(incomingCallID, action: "accept", to: "default", tts: tts)
+            } else {
+                response = try await LumiAPIClient().startCall(to: "default", tts: tts)
+            }
             guard response.status == "accepted" else {
                 if let message = response.assistantMessage { onRejected(message) }
                 dismiss()
