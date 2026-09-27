@@ -134,8 +134,13 @@ final class ChatViewModel: ObservableObject {
         } catch { errorMessage = friendlyError(error); saveLocalConversation() }
     }
 
-    func receiveCallOutcome(_ message: ChatMessage) {
-        for bubble in assistantBubbles(from: message) { messages.append(bubble) }
+    func receiveCallOutcome(_ message: ChatMessage, statusMessage: ChatMessage? = nil) {
+        if let statusMessage, !messages.contains(where: { $0.id == statusMessage.id }) {
+            messages.append(statusMessage)
+        }
+        for bubble in assistantBubbles(from: message) {
+            if !messages.contains(where: { $0.id == bubble.id }) { messages.append(bubble) }
+        }
         saveLocalConversation()
     }
 

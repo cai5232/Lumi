@@ -169,7 +169,7 @@ struct ChatDetailView: View {
         .fullScreenCover(isPresented: $showingCallDemo) {
             CallDemoView(
                 incomingCallID: incomingCallID,
-                onRejected: { message in model.receiveCallOutcome(message) },
+            onRejected: { message, statusMessage in model.receiveCallOutcome(message, statusMessage: statusMessage) },
                 onEnded: {
                     incomingCallID = nil
                     Task { await model.load() }
@@ -191,11 +191,13 @@ struct ChatDetailView: View {
                             showingCallDemo = true
                         },
                         onDecline: { note in
+                            // Close immediately; the AI follow-up is a normal chat bubble and may arrive later.
+                            incomingCall = nil
                             Task { await declineIncomingCall(call, note: note) }
                         }
                     )
                     .frame(maxWidth: 356, maxHeight: 510)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+                    .background(LumiPalette.chatBackground, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous).stroke(.white.opacity(0.66), lineWidth: 1))
                     .shadow(color: .black.opacity(0.20), radius: 28, y: 12)
                     .padding(.horizontal, 24)
@@ -284,8 +286,7 @@ struct ChatDetailView: View {
     private func declineIncomingCall(_ call: IncomingCallInfo, note: String? = nil) async {
         do {
             let response = try await LumiAPIClient().answerIncomingCall(call.callId, action: "decline", to: "default", note: note)
-            if let message = response.assistantMessage { model.receiveCallOutcome(message) }
-            incomingCall = nil
+            if let message = response.assistantMessage { model.receiveCallOutcome(message, statusMessage: response.callStatusMessage) }
         } catch {
             model.errorMessage = error.localizedDescription
         }
@@ -355,20 +356,12 @@ struct ChatDetailView: View {
                         Image(systemName: message.callStatus == "missed" ? "phone.badge.xmark" : "phone.down.fill")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Color(red: 0.66, green: 0.35, blue: 0.47))
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(message.callStatus == "missed" ? "对方未接听" : "对方已拒绝")
-                                .font(.system(size: 14, weight: .semibold))
-                            if !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                Text(message.content)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.black.opacity(0.58))
-                                    .lineLimit(2)
-                            }
-                        }
+                        Text(message.callStatus == "missed" ? "对方未接听" : "对方已拒绝")
+                            .font(.system(size: 14, weight: .semibold))
                     }
                     .frame(maxWidth: 238, alignment: .leading)
                     .padding(.horizontal, 13)
-                    .padding(.vertical, 11)
+                    .padding(.vertical, 10)
                 } else if isHTMLCard {
                     Button { htmlMessage = message } label: {
                         HStack(spacing: 11) {
@@ -2002,11 +1995,20 @@ private struct IncomingCallSheet: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.black.opacity(0.52))
             Spacer(minLength: 18)
-            Image(systemName: "phone.badge.waveform.fill")
-                .font(.system(size: 42, weight: .medium))
-                .foregroundStyle(Color(red: 0.66, green: 0.35, blue: 0.47))
-                .frame(width: 92, height: 92)
-                .background(Color.white.opacity(0.72), in: Circle())
+            if let path = Bundle.main.path(forResource: "AssistantAvatar", ofType: "jpg"), let image = UIImage(contentsOfFile: path) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 92, height: 92)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.86), lineWidth: 1))
+            } else {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 36, weight: .medium))
+                    .foregroundStyle(Color(red: 0.47, green: 0.24, blue: 0.37))
+                    .frame(width: 92, height: 92)
+                    .background(Color(red: 1.0, green: 0.84, blue: 0.88), in: Circle())
+            }
             Text("沈屿想和你通话")
                 .font(.system(size: 25, weight: .semibold, design: .rounded))
                 .padding(.top, 18)
@@ -2097,7 +2099,7 @@ private struct CallDemoView: View {
     @StateObject private var player = SpatialSpeechPlayback()
     @StateObject private var speechRecognition = CallSpeechRecognition()
     let incomingCallID: String?
-    let onRejected: (ChatMessage) -> Void
+    let onRejected: (ChatMessage, ChatMessage?) -> Void
     let onEnded: () -> Void
 
     var body: some View {
@@ -2232,8 +2234,19 @@ private struct CallDemoView: View {
                         Text(turn.content)
                             .font(.system(size: 15))
                             .foregroundStyle(.black.opacity(0.72))
-                            .padding(.horizontal, 14).padding(.vertical, 11)
-                            .background(turn.role == "user" ? LumiPalette.userBubble : .white.opacity(0.72), in: RoundedRectangle(cornerRadius: 18))
+                            .padding(.horizontal, 17).padding(.vertical, 14)
+                            .background(
+                                LinearGradient(
+                                    colors: turn.role == "user"
+                                        ? [LumiPalette.userBubble.opacity(0.92), Color.white.opacity(0.58)]
+                                        : [Color.white.opacity(0.88), Color(red: 0.96, green: 0.86, blue: 0.91).opacity(0.64)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            )
+                            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.42), lineWidth: 1))
                             .frame(maxWidth: .infinity, alignment: turn.role == "user" ? .trailing : .leading)
                             .onTapGesture {
                                 if turn.role == "assistant" { replayTurn(turn) }
@@ -2252,7 +2265,7 @@ private struct CallDemoView: View {
                 }
                 .padding(.horizontal, 28).padding(.top, 18)
             }
-            .frame(maxHeight: 220)
+            .frame(maxHeight: 330)
             .overlay(alignment: .top) {
                 LinearGradient(colors: [Color(red: 0.98, green: 0.91, blue: 0.93), .clear], startPoint: .top, endPoint: .bottom)
                     .frame(height: 34)
@@ -2369,7 +2382,7 @@ private struct CallDemoView: View {
                 response = try await LumiAPIClient().startCall(to: "default", tts: tts)
             }
             guard response.status == "accepted" else {
-                if let message = response.assistantMessage { onRejected(message) }
+                if let message = response.assistantMessage { onRejected(message, response.callStatusMessage) }
                 dismiss()
                 return
             }

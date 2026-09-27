@@ -108,6 +108,7 @@ struct CallStartResponse: Decodable {
     let callId: String
     let status: String
     let assistantMessage: ChatMessage?
+    let callStatusMessage: ChatMessage?
     let firstMessage: CallTurn?
     let speechAudioBase64: String?
     let speechDuration: Double?
