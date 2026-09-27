@@ -2106,12 +2106,27 @@ private struct CallDemoView: View {
     private func splitAssistantTurn(_ turn: CallTurn) -> [CallTurn] {
         let pieces = turn.content
             .components(separatedBy: .newlines)
+            .flatMap(sentencePieces)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         guard pieces.count > 1 else { return [turn] }
         return pieces.map { piece in
             CallTurn(id: UUID(), role: turn.role, content: piece, createdAt: turn.createdAt, speechScript: piece)
         }
+    }
+
+    private func sentencePieces(_ line: String) -> [String] {
+        var pieces: [String] = []
+        var current = ""
+        for character in line {
+            current.append(character)
+            if "。！？!?；;".contains(character) {
+                pieces.append(current)
+                current = ""
+            }
+        }
+        if !current.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { pieces.append(current) }
+        return pieces
     }
 }
 
