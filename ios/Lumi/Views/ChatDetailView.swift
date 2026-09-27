@@ -16,6 +16,7 @@ struct ChatDetailView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var selectedImageData: Data?
     @State private var selectedImageName: String?
+    @State private var showingSubscriptionUsage = false
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
     @AppStorage("lumi.ttsModel") private var ttsModel = "speech-2.8-hd"
     @AppStorage("lumi.ttsVoiceID") private var ttsVoiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"
@@ -71,6 +72,12 @@ struct ChatDetailView: View {
             GlassComparisonView()
                 .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showingSubscriptionUsage) {
+            SubscriptionUsageSheet()
+                .presentationDetents([.height(430)])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(LumiPalette.chatBackground)
+        }
         .fullScreenCover(isPresented: $showingSettings) {
             SettingsView()
         }
@@ -124,9 +131,12 @@ struct ChatDetailView: View {
             Spacer()
             glassCircleButton("phone")
             HStack(spacing: 0) {
-                Image(systemName: "doc.text")
-                    .font(.system(size: 18, weight: .medium))
-                    .frame(width: 48, height: 42)
+                Button { showingSubscriptionUsage = true } label: {
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 18, weight: .medium))
+                        .frame(width: 48, height: 42)
+                }
+                .buttonStyle(.plain)
                 Rectangle()
                     .fill(Color.black.opacity(0.12))
                     .frame(width: 1, height: 24)
@@ -1342,6 +1352,111 @@ private struct GlassComparisonView: View {
                 }
             }
             .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.85), lineWidth: 0.8))
+        }
+    }
+}
+
+@MainActor
+private struct SubscriptionUsageSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    private let api = LumiAPIClient()
+    @State private var usage: SubscriptionUsage?
+    @State private var loading = true
+    @State private var error: String?
+
+    var body: some View {
+        VStack(spacing: 18) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("ZenMux 订阅额度")
+                        .font(.system(size: 22, weight: .bold))
+                    Text("实时同步 5 小时与每周窗口")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button { Task { await refresh() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                        .background(Color.black.opacity(0.06), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(loading)
+            }
+
+            if loading && usage == nil {
+                Spacer()
+                ProgressView("正在读取额度")
+                Spacer()
+            } else if let usage {
+                quotaCard(title: "5 小时额度", quota: usage.quota5Hour, tint: Color(red: 0.55, green: 0.32, blue: 0.43))
+                quotaCard(title: "每周额度", quota: usage.quota7Day, tint: Color(red: 0.34, green: 0.43, blue: 0.56))
+                Text("当前为 \(usage.plan.tier.capitalized) 订阅 · 更新于 \(usage.fetchedAt.formatted(date: .omitted, time: .shortened))")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            } else {
+                Spacer()
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.secondary)
+                Text(error ?? "暂时无法读取订阅额度")
+                    .font(.system(size: 14))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            Button("关闭") { dismiss() }
+                .font(.system(size: 16, weight: .semibold))
+                .frame(maxWidth: .infinity, minHeight: 46)
+                .foregroundStyle(.white)
+                .background(Color(red: 0.31, green: 0.22, blue: 0.26), in: Capsule())
+        }
+        .padding(22)
+        .task { await refresh() }
+    }
+
+    private func quotaCard(title: String, quota: SubscriptionQuota, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(title).font(.system(size: 16, weight: .semibold))
+                Spacer()
+                Text("剩余 \(flow(quota.remainingFlows)) Flow")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(tint)
+            }
+            ProgressView(value: min(max(quota.usagePercentage, 0), 1))
+                .tint(tint)
+            HStack {
+                Text("已用 \(Int((quota.usagePercentage * 100).rounded()))%")
+                Spacer()
+                Text(resetText(quota.resetsAt))
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .background(Color.white.opacity(0.58), in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private func resetText(_ date: Date?) -> String {
+        guard let date else { return "等待第一次请求" }
+        return "重置：\(date.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private func flow(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    private func refresh() async {
+        loading = true
+        defer { loading = false }
+        do {
+            usage = try await api.fetchSubscriptionUsage()
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }
