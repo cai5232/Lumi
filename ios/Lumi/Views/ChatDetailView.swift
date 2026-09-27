@@ -351,7 +351,7 @@ struct ChatDetailView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.tertiary)
                         }
-                        .frame(maxWidth: 210)
+                        .frame(maxWidth: 200)
                         .padding(.horizontal, 13)
                         .padding(.vertical, 8)
                     }
@@ -365,7 +365,7 @@ struct ChatDetailView: View {
                             .font(.system(size: 14, weight: .semibold))
                             .lineLimit(1)
                     }
-                    .frame(maxWidth: 210, alignment: .leading)
+                    .frame(maxWidth: 200, alignment: .leading)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 10)
                 } else if isHTMLCard {
