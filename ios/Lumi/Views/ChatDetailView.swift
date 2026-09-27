@@ -2066,7 +2066,7 @@ private struct IncomingCallSheet: View {
                 }
                 .buttonStyle(.plain)
             }
-            .foregroundStyle(.black.opacity(0.78))
+            .foregroundStyle(Color.black.opacity(0.78))
             .padding(.bottom, 24)
         }
         .padding(.top, 22)
