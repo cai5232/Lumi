@@ -16,6 +16,8 @@
 		A10000000000000000000007 /* UserAvatar.jpg in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* UserAvatar.jpg */; };
 		A10000000000000000000008 /* AssistantAvatar.jpg in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* AssistantAvatar.jpg */; };
 		A10000000000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* Assets.xcassets */; };
+		A10000000000000000000010 /* TogetherGalleryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* TogetherGalleryStore.swift */; };
+		A10000000000000000000011 /* TogetherView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* TogetherView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +31,8 @@
 		B10000000000000000000008 /* UserAvatar.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = UserAvatar.jpg; sourceTree = "<group>"; };
 		B10000000000000000000009 /* AssistantAvatar.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = AssistantAvatar.jpg; sourceTree = "<group>"; };
 		B10000000000000000000010 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B10000000000000000000011 /* TogetherGalleryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TogetherGalleryStore.swift; sourceTree = "<group>"; };
+		B10000000000000000000012 /* TogetherView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TogetherView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,6 +58,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000003 /* ChatModels.swift */,
+				B10000000000000000000011 /* TogetherGalleryStore.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -78,6 +83,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000006 /* ChatDetailView.swift */,
+				B10000000000000000000012 /* TogetherView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -204,6 +210,8 @@
 				A10000000000000000000004 /* LumiAPIClient.swift in Sources */,
 				A10000000000000000000005 /* ChatViewModel.swift in Sources */,
 				A10000000000000000000006 /* ChatDetailView.swift in Sources */,
+				A10000000000000000000010 /* TogetherGalleryStore.swift in Sources */,
+				A10000000000000000000011 /* TogetherView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
