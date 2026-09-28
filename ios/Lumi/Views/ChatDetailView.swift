@@ -40,9 +40,12 @@ struct ChatDetailView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 10) {
-                        ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
+                        // A sent message is first rendered with a local UUID and then
+                        // confirmed with the server UUID. Keep the row identity stable
+                        // across that replacement so SwiftUI does not briefly remove the
+                        // user's bubble while the assistant reply arrives.
+                        ForEach(Array(model.messages.enumerated()), id: \.offset) { index, message in
                             messageBubble(message, showAvatar: shouldShowAvatar(at: index))
-                                .id(message.id)
                         }
                         if model.isSending { thinkingBubble }
                     }
@@ -669,10 +672,18 @@ private struct ComposerInputView: View {
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task {
-                if let data = try? await item.loadTransferable(type: Data.self) {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let image = UIImage(data: data),
+                   let jpeg = image.jpegData(compressionQuality: 0.82) {
                     await MainActor.run {
-                        selectedImageData = data
-                        selectedImageName = "image-\(UUID().uuidString).jpg"
+                        let name = "image-\(UUID().uuidString).jpg"
+                        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                            .appendingPathComponent(name)
+                        // The chat bubble reads this same file after the optimistic
+                        // message is replaced by the server-confirmed message.
+                        guard (try? jpeg.write(to: url, options: .atomic)) != nil else { return }
+                        selectedImageData = jpeg
+                        selectedImageName = name
                     }
                 }
             }
