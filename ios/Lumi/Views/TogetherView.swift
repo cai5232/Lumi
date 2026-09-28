@@ -420,7 +420,6 @@ private struct RemoteGalleryDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    detailHeader
                     CachedGalleryImage(url: imageURL, placeholderHeight: 240)
                         .frame(maxHeight: 310)
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -432,56 +431,50 @@ private struct RemoteGalleryDetailView: View {
                         detailSection(title: "第一次看见", text: visualDescription, hasBackground: true)
                         detailSection(title: "当时留下的印象", text: firstImpression, hasBackground: false, italic: true)
                     }
-                    Button(action: onUse) {
-                        Label("带去聊天", systemImage: "paperplane")
-                            .frame(maxWidth: .infinity)
-                            .foregroundStyle(TogetherColors.plumBrown)
-                            .padding(.vertical, 11)
-                    }
-                    .buttonStyle(.plain)
-                    .overlay(Capsule().stroke(TogetherColors.plumBrown.opacity(0.58), lineWidth: 1))
-                    Button(role: .destructive) { confirmingDeletion = true } label: {
-                        Label("删除照片", systemImage: "trash")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(TogetherColors.plumBrown.opacity(0.76))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                    }
-                    .buttonStyle(.plain)
                 }
                 .padding(20)
             }
             .background(TogetherColors.background.ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isEditing ? "完成" : "编辑") {
+                        if isEditing { onSave(title, visualDescription, firstImpression) }
+                        withAnimation(.easeInOut(duration: 0.18)) { isEditing.toggle() }
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                HStack(spacing: 10) {
+                    Button(action: onUse) {
+                        Label("带去聊天", systemImage: "paperplane")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.plain)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().stroke(.white.opacity(0.7), lineWidth: 1))
+                    Button(role: .destructive) { confirmingDeletion = true } label: {
+                        Image(systemName: "trash")
+                            .frame(width: 48, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .background(.regularMaterial, in: Circle())
+                    .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 1))
+                }
+                .foregroundStyle(TogetherColors.plumBrown)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 8)
+                .background(TogetherColors.background.opacity(0.88))
+            }
             .alert("删除这张照片？", isPresented: $confirmingDeletion) {
                 Button("删除", role: .destructive) { onDelete(); dismiss() }
                 Button("取消", role: .cancel) { }
             } message: { Text("照片和它的相册文字都会删除。") }
         }
-    }
-
-    private var detailHeader: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Button("关闭") { dismiss() }
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(TogetherColors.plumBrown)
-                .buttonStyle(.plain)
-            Spacer()
-            Text(title)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(TogetherColors.plumBrown)
-                .lineLimit(1)
-            Spacer()
-            Button(isEditing ? "完成" : "编辑") {
-                if isEditing { onSave(title, visualDescription, firstImpression) }
-                withAnimation(.easeInOut(duration: 0.18)) { isEditing.toggle() }
-            }
-            .font(.system(size: 15, weight: .medium))
-            .foregroundStyle(TogetherColors.plumBrown)
-            .buttonStyle(.plain)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.bottom, 4)
     }
 
     private func detailSection(title: String, text: String, hasBackground: Bool, italic: Bool = false) -> some View {
