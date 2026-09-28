@@ -18,6 +18,8 @@ struct TogetherView: View {
     @State private var gallery: [RemoteGalleryItem] = []
     @State private var pickerItem: PhotosPickerItem?
     @State private var selectedItem: RemoteGalleryItem?
+    @State private var pendingImageData: Data?
+    @State private var showingAddDetails = false
     @State private var showingStartDate = false
     @State private var galleryError: String?
     @State private var isLoadingGallery = false
@@ -87,6 +89,13 @@ struct TogetherView: View {
                 }
             )
         }
+        .sheet(isPresented: $showingAddDetails) {
+            if let pendingImageData, let image = UIImage(data: pendingImageData) {
+                GalleryAddDetailsView(image: image) { title, visualDescription, firstImpression in
+                    Task { await uploadPendingImage(title: title, visualDescription: visualDescription, firstImpression: firstImpression) }
+                }
+            }
+        }
         .sheet(isPresented: $showingStartDate) {
             NavigationStack {
                 DatePicker("开始日期", selection: Binding(get: { startDate }, set: { storedStartAt = $0.timeIntervalSince1970 }), displayedComponents: .date)
@@ -153,14 +162,26 @@ struct TogetherView: View {
     }
 
     private var galleryContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack { Text("相册").font(.system(size: 20, weight: .bold)); Spacer(); PhotosPicker(selection: $pickerItem, matching: .images) { Label("添加", systemImage: "plus").font(.system(size: 14, weight: .medium)) }.buttonStyle(.bordered).tint(.black.opacity(0.7)) }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("我们的相册").font(.system(size: 18, weight: .bold))
+                    Text("\(gallery.count) 张照片").font(.system(size: 12)).foregroundStyle(.black.opacity(0.42))
+                }
+                Spacer()
+                PhotosPicker(selection: $pickerItem, matching: .images) {
+                    Label("添加", systemImage: "plus")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .tint(.black.opacity(0.64))
+            }
             if let galleryError { Text(galleryError).font(.system(size: 12)).foregroundStyle(.red.opacity(0.72)) }
             if gallery.isEmpty {
                 VStack(spacing: 9) { Image(systemName: "photo.on.rectangle.angled").font(.system(size: 26)).foregroundStyle(.black.opacity(0.34)); Text(isLoadingGallery ? "正在打开我们的相册…" : "第一张照片，留给我们。\n聊天里发出的图片也会自动收藏在这里。").multilineTextAlignment(.center).font(.system(size: 14)).foregroundStyle(.black.opacity(0.48)) }
                     .frame(maxWidth: .infinity).padding(.vertical, 62).background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             } else {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 9), GridItem(.flexible(), spacing: 9)], spacing: 12) {
                     ForEach(gallery) { item in
                         Button { selectedItem = item } label: { RemoteGalleryTile(item: item, imageURL: api.galleryImageURL(for: item, in: "default")) }.buttonStyle(.plain)
                     }
@@ -192,13 +213,26 @@ struct TogetherView: View {
         guard let item else { return }
         Task {
             guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.84) else { return }
-            do {
-                _ = try await api.uploadGallery(images: ["data:image/jpeg;base64,\(jpeg.base64EncodedString())"], to: "default")
-                await loadGallery()
-            } catch {
-                galleryError = error.localizedDescription
-            }
+            pendingImageData = jpeg
             pickerItem = nil
+            showingAddDetails = true
+        }
+    }
+
+    private func uploadPendingImage(title: String, visualDescription: String, firstImpression: String) async {
+        guard let pendingImageData else { return }
+        do {
+            _ = try await api.uploadGallery(
+                images: ["data:image/jpeg;base64,\(pendingImageData.base64EncodedString())"],
+                title: title,
+                visualDescription: visualDescription,
+                firstImpression: firstImpression,
+                to: "default"
+            )
+            await loadGallery()
+            self.pendingImageData = nil
+        } catch {
+            galleryError = error.localizedDescription
         }
     }
 
@@ -275,12 +309,12 @@ private struct RemoteGalleryTile: View {
                 default: Color.white.opacity(0.42).overlay(ProgressView().tint(.black.opacity(0.35)))
                 }
             }
-            .frame(height: 155)
+            .frame(height: 128)
             .frame(maxWidth: .infinity)
             .clipped()
             Text(item.title)
                 .lineLimit(1)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.black.opacity(0.68))
                 .padding(.horizontal, 9)
                 .padding(.bottom, 9)
@@ -296,14 +330,11 @@ private struct RemoteGalleryDetailView: View {
     let imageURL: URL
     let onSave: (String) -> Void
     let onUse: () -> Void
-    @State private var title: String
-
     init(item: RemoteGalleryItem, imageURL: URL, onSave: @escaping (String) -> Void, onUse: @escaping () -> Void) {
         self.item = item
         self.imageURL = imageURL
         self.onSave = onSave
         self.onUse = onUse
-        _title = State(initialValue: item.title)
     }
 
     var body: some View {
@@ -317,17 +348,10 @@ private struct RemoteGalleryDetailView: View {
                         default: ProgressView().frame(maxWidth: .infinity, minHeight: 240)
                         }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    TextField("给这张照片起个名字", text: $title)
-                        .textFieldStyle(.roundedBorder)
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("画面").font(.system(size: 13, weight: .semibold)).foregroundStyle(.black.opacity(0.48))
-                        Text(item.visualDescription).font(.system(size: 15)).foregroundStyle(.black.opacity(0.75))
-                        Text("这一刻").font(.system(size: 13, weight: .semibold)).foregroundStyle(.black.opacity(0.48)).padding(.top, 4)
-                        Text(item.firstImpression).font(.system(size: 15)).foregroundStyle(.black.opacity(0.75))
-                    }
-                    .padding(14)
-                    .background(.white.opacity(0.65), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .frame(maxHeight: 310)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    detailSection(title: "画面", text: item.visualDescription)
+                    detailSection(title: "这一刻", text: item.firstImpression)
                     Button(action: onUse) {
                         Label("带去聊天", systemImage: "paperplane")
                             .frame(maxWidth: .infinity)
@@ -338,8 +362,73 @@ private struct RemoteGalleryDetailView: View {
                 .padding(20)
             }
             .background(TogetherColors.background.ignoresSafeArea())
-            .navigationTitle("相册")
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { onSave(title); dismiss() } } }
+            .navigationTitle(item.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { onSave(item.title); dismiss() } } }
+        }
+    }
+
+    private func detailSection(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.black.opacity(0.42))
+            Text(text).font(.system(size: 15)).foregroundStyle(.black.opacity(0.78)).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+    }
+}
+
+private struct GalleryAddDetailsView: View {
+    @Environment(\.dismiss) private var dismiss
+    let image: UIImage
+    let onAdd: (String, String, String) -> Void
+    @State private var title = ""
+    @State private var visualDescription = ""
+    @State private var firstImpression = ""
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 15) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 230)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    field(title: "标题", placeholder: "给这一刻起个名字", text: $title, lines: 1)
+                    field(title: "画面", placeholder: "你看见了什么？", text: $visualDescription, lines: 3)
+                    field(title: "这一刻", placeholder: "想留下怎样的感觉？", text: $firstImpression, lines: 3)
+                    Text("这些文字会和照片一起留在我们的相册里。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.black.opacity(0.42))
+                }
+                .padding(20)
+            }
+            .background(TogetherColors.background.ignoresSafeArea())
+            .navigationTitle("添加照片")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("添加") {
+                        onAdd(title, visualDescription, firstImpression)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    private func field(title: String, placeholder: String, text: Binding<String>, lines: Int) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.black.opacity(0.48))
+            TextField(placeholder, text: text, axis: lines == 1 ? .horizontal : .vertical)
+                .lineLimit(lines, reservesSpace: lines > 1)
+                .font(.system(size: 15))
+                .padding(11)
+                .background(.white.opacity(0.76), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
         }
     }
 }

@@ -58,11 +58,11 @@ final class LumiAPIClient {
         return response.items
     }
 
-    func uploadGallery(images: [String], to id: String) async throws -> [RemoteGalleryItem] {
+    func uploadGallery(images: [String], title: String, visualDescription: String, firstImpression: String, to id: String) async throws -> [RemoteGalleryItem] {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/gallery"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder.api.encode(GalleryUploadRequest(images: images))
+        request.httpBody = try JSONEncoder.api.encode(GalleryUploadRequest(images: images, title: title, visualDescription: visualDescription, firstImpression: firstImpression))
         let response: GalleryListResponse = try await perform(request)
         return response.items
     }
@@ -192,7 +192,12 @@ private struct PushTokenRegistration: Encodable {
     let threadId: String
 }
 
-private struct GalleryUploadRequest: Encodable { let images: [String] }
+private struct GalleryUploadRequest: Encodable {
+    let images: [String]
+    let title: String
+    let visualDescription: String
+    let firstImpression: String
+}
 private struct GalleryRenameRequest: Encodable { let title: String }
 
 private struct PushTokenRegistrationResponse: Decodable {
