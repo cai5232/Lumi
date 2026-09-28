@@ -54,7 +54,12 @@ final class LumiAPIClient {
     }
 
     func fetchGallery(for id: String) async throws -> [RemoteGalleryItem] {
-        let response: GalleryListResponse = try await request(path: "/v1/chats/\(id)/gallery")
+        // The gallery can change while the chat stays open. Do not reuse an old
+        // list response after the AI has just saved a new image.
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/gallery"))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        let response: GalleryListResponse = try await perform(request)
         return response.items
     }
 

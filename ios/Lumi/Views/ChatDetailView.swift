@@ -459,7 +459,7 @@ struct ChatDetailView: View {
                 }
                 .padding(.horizontal, isGalleryCollection ? 0 : (isHTMLCard ? 8 : (isCallStatus ? 10 : 13)))
                 .padding(.vertical, isGalleryCollection ? 0 : (isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3))))
-                .frame(width: isGalleryCollection ? 292 : (message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8))), alignment: .leading)
+                .frame(width: isGalleryCollection ? 244 : (message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8))), alignment: .leading)
                 .background(isGalleryCollection ? .clear : (isUserSide ? LumiPalette.userBubble : .white))
                 .clipShape(RoundedRectangle(cornerRadius: isGalleryCollection ? 0 : 21))
                 if !isUserSide { Spacer(minLength: 48) }
@@ -640,40 +640,40 @@ private struct GalleryCollectionCard: View {
                         }
                     }
                 }
-                .frame(width: 76, height: 82)
-                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                .frame(width: 54, height: 58)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                 Image(systemName: "star.fill")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 27, height: 27)
-                    .background(Color(red: 0.77, green: 0.40, blue: 0.27), in: Circle())
-                    .offset(x: 6, y: 6)
+                    .frame(width: 20, height: 20)
+                    .background(Color(red: 0.83, green: 0.55, blue: 0.61), in: Circle())
+                    .offset(x: 4, y: 4)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("沈屿 收藏了")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 9.5, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text("存进了「\(notice.title)」")
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.black.opacity(0.86))
                     .lineLimit(1)
                 Text(notice.firstImpression)
-                    .font(.system(size: 13, weight: .regular))
+                    .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(.black.opacity(0.52))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
             Spacer(minLength: 0)
         }
-        .padding(12)
-        .background(Color.white.opacity(0.96), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .padding(9)
+        .background(Color.white.opacity(0.96), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(Color.black.opacity(0.07), lineWidth: 1)
         }
-        .shadow(color: Color.black.opacity(0.06), radius: 7, y: 3)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, y: 2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("沈屿收藏了，存进了\(notice.title)。\(notice.firstImpression)")
     }

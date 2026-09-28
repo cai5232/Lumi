@@ -278,6 +278,7 @@ private enum TogetherColors {
     static let plumBrown = Color(red: 0.40, green: 0.24, blue: 0.27)
     static let card = Color.white.opacity(0.72)
     static let line = Color.black.opacity(0.14)
+    static let descriptionPanel = Color(red: 0.948, green: 0.882, blue: 0.895)
 }
 
 private struct HeartbeatDivider: View {
@@ -421,7 +422,7 @@ private struct RemoteGalleryDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     CachedGalleryImage(url: imageURL, placeholderHeight: 240)
-                        .frame(maxHeight: 310)
+                        .frame(maxHeight: 430)
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     if isEditing {
                         editorField(title: "标题", text: $title, lines: 1)
@@ -479,9 +480,11 @@ private struct RemoteGalleryDetailView: View {
 
     private func detailSection(title: String, text: String, hasBackground: Bool, italic: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
+            Text(title)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(TogetherColors.plumBrown.opacity(0.50))
             Text(text)
-                .font(.system(size: 11.5, weight: .regular))
+                .font(.system(size: 13.5, weight: .regular))
                 .transformEffect(italic ? CGAffineTransform(a: 1, b: 0, c: -0.24, d: 1, tx: 0, ty: 0) : .identity)
                 .foregroundStyle(TogetherColors.plumBrown.opacity(0.82))
                 .fixedSize(horizontal: false, vertical: true)
@@ -489,7 +492,13 @@ private struct RemoteGalleryDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, hasBackground ? 14 : 0)
-        .background(hasBackground ? Color.white : .clear, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .background(hasBackground ? TogetherColors.descriptionPanel : .clear, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .overlay {
+            if hasBackground {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .stroke(TogetherColors.plumBrown.opacity(0.18), lineWidth: 1)
+            }
+        }
     }
 
     private func editorField(title: String, text: Binding<String>, lines: Int) -> some View {
