@@ -185,9 +185,17 @@ struct TogetherView: View {
                 VStack(spacing: 9) { Image(systemName: "photo.on.rectangle.angled").font(.system(size: 26)).foregroundStyle(.black.opacity(0.34)); Text(isLoadingGallery ? "正在打开我们的相册…" : "第一张照片，留给我们。\n聊天里发出的图片也会自动收藏在这里。").multilineTextAlignment(.center).font(.system(size: 14)).foregroundStyle(.black.opacity(0.48)) }
                     .frame(maxWidth: .infinity).padding(.vertical, 62).background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             } else {
-                HStack(alignment: .top, spacing: 10) {
-                    photoColumn(gallery.enumerated().compactMap { $0.offset.isMultiple(of: 2) ? $0.element : nil })
-                    photoColumn(gallery.enumerated().compactMap { !$0.offset.isMultiple(of: 2) ? $0.element : nil })
+                LazyVGrid(
+                    columns: [GridItem(.flexible(maximum: 190), spacing: 10), GridItem(.flexible(maximum: 190), spacing: 10)],
+                    alignment: .leading,
+                    spacing: 14
+                ) {
+                    ForEach(gallery) { item in
+                        Button { selectedItem = item } label: {
+                            RemoteGalleryTile(item: item, imageURL: api.galleryImageURL(for: item, in: "default"))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -196,17 +204,6 @@ struct TogetherView: View {
 
     private func placeholder(icon: String, text: String) -> some View { VStack(spacing: 11) { Image(systemName: icon).font(.system(size: 25)).foregroundStyle(TogetherColors.heart); Text(text).font(.system(size: 14)).foregroundStyle(.black.opacity(0.48)) }.frame(maxWidth: .infinity).padding(.vertical, 74).background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous)) }
 
-    private func photoColumn(_ items: [RemoteGalleryItem]) -> some View {
-        LazyVStack(alignment: .leading, spacing: 12) {
-            ForEach(items) { item in
-                Button { selectedItem = item } label: {
-                    RemoteGalleryTile(item: item, imageURL: api.galleryImageURL(for: item, in: "default"))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .frame(width: 142, alignment: .leading)
-    }
     private func avatar(named name: String) -> some View {
         Group {
             if let path = Bundle.main.path(forResource: name, ofType: "jpg"),
@@ -325,14 +322,8 @@ private struct RemoteGalleryTile: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            AsyncImage(url: imageURL, transaction: .init(animation: .easeOut(duration: 0.18))) { phase in
-                switch phase {
-                case .success(let image): image.resizable().scaledToFit()
-                case .failure: Color.white.opacity(0.55).overlay(Image(systemName: "photo").foregroundStyle(.black.opacity(0.25)))
-                default: Color.white.opacity(0.42).overlay(ProgressView().tint(.black.opacity(0.35)))
-                }
-            }
-            .frame(width: 142)
+            CachedGalleryImage(url: imageURL)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             Text(item.title)
                 .lineLimit(1)
                 .font(.system(size: 12, weight: .medium))
@@ -340,7 +331,63 @@ private struct RemoteGalleryTile: View {
                 .padding(.horizontal, 9)
                 .padding(.bottom, 9)
         }
-        .frame(width: 142, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+@MainActor
+private final class GalleryImageLoader: ObservableObject {
+    private static let cache = NSCache<NSURL, UIImage>()
+    @Published private(set) var image: UIImage?
+    @Published private(set) var failed = false
+    private let url: URL
+
+    init(url: URL) { self.url = url }
+
+    func load() async {
+        if let cached = Self.cache.object(forKey: url as NSURL) {
+            image = cached
+            return
+        }
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), let loaded = UIImage(data: data) else {
+                failed = true
+                return
+            }
+            Self.cache.setObject(loaded, forKey: url as NSURL)
+            image = loaded
+        } catch { failed = true }
+    }
+}
+
+private struct CachedGalleryImage: View {
+    @StateObject private var loader: GalleryImageLoader
+    let placeholderHeight: CGFloat
+
+    init(url: URL, placeholderHeight: CGFloat = 124) {
+        _loader = StateObject(wrappedValue: GalleryImageLoader(url: url))
+        self.placeholderHeight = placeholderHeight
+    }
+
+    var body: some View {
+        Group {
+            if let image = loader.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+            } else if loader.failed {
+                Color.clear
+                    .frame(maxWidth: .infinity, minHeight: placeholderHeight)
+                    .overlay(Image(systemName: "photo").foregroundStyle(.black.opacity(0.25)))
+            } else {
+                Color.clear
+                    .frame(maxWidth: .infinity, minHeight: placeholderHeight)
+                    .overlay(ProgressView().tint(.black.opacity(0.35)))
+            }
+        }
+        .task { await loader.load() }
     }
 }
 
@@ -372,13 +419,7 @@ private struct RemoteGalleryDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    AsyncImage(url: imageURL) { phase in
-                        switch phase {
-                        case .success(let image): image.resizable().scaledToFit()
-                        case .failure: ContentUnavailableView("图片暂时不可用", systemImage: "photo")
-                        default: ProgressView().frame(maxWidth: .infinity, minHeight: 240)
-                        }
-                    }
+                    CachedGalleryImage(url: imageURL, placeholderHeight: 240)
                     .frame(maxHeight: 310)
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     if isEditing {
@@ -387,7 +428,7 @@ private struct RemoteGalleryDetailView: View {
                         editorField(title: "当时留下的印象", text: $firstImpression, lines: 3)
                     } else {
                         detailSection(title: "第一次看见", text: visualDescription, hasBackground: true)
-                        detailSection(title: "当时留下的印象", text: firstImpression, hasBackground: false)
+                        detailSection(title: "当时留下的印象", text: firstImpression, hasBackground: false, italic: true)
                     }
                     Button(action: onUse) {
                         Label("带去聊天", systemImage: "paperplane")
@@ -424,10 +465,14 @@ private struct RemoteGalleryDetailView: View {
         }
     }
 
-    private func detailSection(title: String, text: String, hasBackground: Bool) -> some View {
+    private func detailSection(title: String, text: String, hasBackground: Bool, italic: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.black.opacity(0.42))
-            Text(text).font(.system(size: 15)).foregroundStyle(.black.opacity(0.78)).fixedSize(horizontal: false, vertical: true)
+            Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(.black.opacity(0.52))
+            Text(text)
+                .font(.system(size: 13.5, weight: .regular))
+                .italic(italic)
+                .foregroundStyle(.black.opacity(0.76))
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(hasBackground ? 14 : 0)
