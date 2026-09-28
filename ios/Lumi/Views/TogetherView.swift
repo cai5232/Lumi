@@ -467,10 +467,10 @@ private struct RemoteGalleryDetailView: View {
 
     private func detailSection(title: String, text: String, hasBackground: Bool, italic: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(.black.opacity(0.52))
+            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.black.opacity(0.52))
             Text(text)
-                .font(.system(size: 13.5, weight: .regular))
-                .italic(italic)
+                .font(.system(size: 11.5, weight: .regular))
+                .rotationEffect(italic ? .degrees(-3) : .zero, anchor: .leading)
                 .foregroundStyle(.black.opacity(0.76))
                 .fixedSize(horizontal: false, vertical: true)
         }
