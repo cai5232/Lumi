@@ -209,6 +209,10 @@ final class ChatViewModel: ObservableObject {
 
     private func assistantBubbles(from message: ChatMessage) -> [ChatMessage] {
         if message.contentType == "call_record" { return [message] }
+        // Gallery collection cards are server-persisted messages. Never run
+        // their JSON payload through the ordinary text-bubble splitter, or a
+        // restart would turn the card into plain text and make it disappear.
+        if message.contentType == "gallery_collected" { return [message] }
         if message.contentType == "call_status" {
             let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return [message] }
