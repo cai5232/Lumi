@@ -23,6 +23,7 @@ struct ChatDetailView: View {
     @State private var respondingToIncomingCallID: String?
     @State private var selectedCallRecord: ChatMessage?
     @State private var showingSubscriptionUsage = false
+    @State private var showingTogether = false
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
     @AppStorage("lumi.ttsModel") private var ttsModel = "speech-2.8-hd"
     @AppStorage("lumi.ttsVoiceID") private var ttsVoiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"
@@ -153,6 +154,9 @@ struct ChatDetailView: View {
         .fullScreenCover(isPresented: $showingSettings) {
             SettingsView()
         }
+        .fullScreenCover(isPresented: $showingTogether) {
+            TogetherView()
+        }
         .sheet(isPresented: $glassPresentation.showingThinkingDetails) {
             ThinkingDetailsView(text: glassPresentation.thinkingText) { height in
                 glassPresentation.thinkingHeight = height
@@ -246,6 +250,14 @@ struct ChatDetailView: View {
                 Button { showingSubscriptionUsage = true } label: {
                     Image(systemName: "doc.text")
                         .font(.system(size: 18, weight: .medium))
+                        .frame(width: 48, height: 42)
+                }
+                .buttonStyle(.plain)
+                Rectangle()
+                    .fill(Color.black.opacity(0.12))
+                    .frame(width: 1, height: 24)
+                Button { showingTogether = true } label: {
+                    TogetherMark()
                         .frame(width: 48, height: 42)
                 }
                 .buttonStyle(.plain)
@@ -583,6 +595,17 @@ struct ChatDetailView: View {
         selectedImageData = nil
         selectedImageName = nil
         photoItem = nil
+    }
+}
+
+private struct TogetherMark: View {
+    var body: some View {
+        ZStack {
+            Circle().stroke(.black.opacity(0.58), lineWidth: 1.35).frame(width: 13, height: 13).offset(x: -5)
+            Circle().stroke(.black.opacity(0.58), lineWidth: 1.35).frame(width: 13, height: 13).offset(x: 5)
+            Image(systemName: "heart.fill").font(.system(size: 7)).foregroundStyle(Color(red: 0.72, green: 0.34, blue: 0.43)).offset(y: 7)
+        }
+        .accessibilityLabel("我们")
     }
 }
 
