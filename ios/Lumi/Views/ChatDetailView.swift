@@ -584,12 +584,27 @@ struct ChatDetailView: View {
     }
 
     private func loadSelectedImage(_ item: PhotosPickerItem?) async {
-        guard let item, let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.82) else { return }
+        guard let item,
+              let data = try? await item.loadTransferable(type: Data.self),
+              let image = UIImage(data: data),
+              let jpeg = compactUploadData(from: image) else { return }
         let name = "image-\(UUID().uuidString).jpg"
         let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(name)
         try? jpeg.write(to: url, options: .atomic)
         selectedImageData = jpeg
         selectedImageName = name
+    }
+
+    private func compactUploadData(from image: UIImage) -> Data? {
+        let sourceWidth = CGFloat(image.cgImage?.width ?? Int(image.size.width * image.scale))
+        let sourceHeight = CGFloat(image.cgImage?.height ?? Int(image.size.height * image.scale))
+        let largestSide = max(sourceWidth, sourceHeight)
+        let scale = min(1, 2048 / max(largestSide, 1))
+        let size = CGSize(width: (sourceWidth * scale).rounded(), height: (sourceHeight * scale).rounded())
+        let rendered = UIGraphicsImageRenderer(size: size).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        return rendered.jpegData(compressionQuality: 0.80)
     }
 
     private func sendDraft(text: String) async {
@@ -668,12 +683,11 @@ private struct GalleryCollectionCard: View {
             Spacer(minLength: 0)
         }
         .padding(9)
-        .background(Color.white.opacity(0.96), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.black.opacity(0.07), lineWidth: 1)
+                .stroke(Color.black.opacity(0.04), lineWidth: 1)
         }
-        .shadow(color: Color.black.opacity(0.05), radius: 5, y: 2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("沈屿收藏了，存进了\(notice.title)。\(notice.firstImpression)")
     }

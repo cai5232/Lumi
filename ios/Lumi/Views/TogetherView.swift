@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import ImageIO
 
 private enum TogetherTab: String, CaseIterable, Identifiable {
     case gallery = "相册"
@@ -343,8 +344,12 @@ private final class GalleryImageLoader: ObservableObject {
     @Published private(set) var image: UIImage?
     @Published private(set) var failed = false
     private let url: URL
+    private let maxPixelSize: Int
 
-    init(url: URL) { self.url = url }
+    init(url: URL, maxPixelSize: Int) {
+        self.url = url
+        self.maxPixelSize = maxPixelSize
+    }
 
     func load() async {
         if let cached = Self.cache.object(forKey: url as NSURL) {
@@ -353,7 +358,9 @@ private final class GalleryImageLoader: ObservableObject {
         }
         do {
             let (data, response) = try await URLSession.shared.data(from: url)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), let loaded = UIImage(data: data) else {
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  let loaded = thumbnail(from: data, maxPixelSize: maxPixelSize) else {
                 failed = true
                 return
             }
@@ -361,14 +368,27 @@ private final class GalleryImageLoader: ObservableObject {
             image = loaded
         } catch { failed = true }
     }
+
+    private func thumbnail(from data: Data, maxPixelSize: Int) -> UIImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: image)
+    }
 }
 
 private struct CachedGalleryImage: View {
     @StateObject private var loader: GalleryImageLoader
     let placeholderHeight: CGFloat
 
-    init(url: URL, placeholderHeight: CGFloat = 124) {
-        _loader = StateObject(wrappedValue: GalleryImageLoader(url: url))
+    init(url: URL, placeholderHeight: CGFloat = 124, maxPixelSize: Int = 900) {
+        _loader = StateObject(wrappedValue: GalleryImageLoader(url: url, maxPixelSize: maxPixelSize))
         self.placeholderHeight = placeholderHeight
     }
 
@@ -421,7 +441,7 @@ private struct RemoteGalleryDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    CachedGalleryImage(url: imageURL, placeholderHeight: 240)
+                    CachedGalleryImage(url: imageURL, placeholderHeight: 240, maxPixelSize: 1800)
                         .frame(maxHeight: 430)
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     if isEditing {
