@@ -30,7 +30,7 @@ final class ChatViewModel: ObservableObject {
     }
 
     func load(waitForRemote: Bool = true) async {
-        let localMessages = loadLocalConversation()
+        let localMessages = loadLocalConversation().map(restoreMedia)
         if messages.isEmpty, !localMessages.isEmpty {
             messages = Self.deduplicateHTMLCards(localMessages)
         }
@@ -43,7 +43,7 @@ final class ChatViewModel: ObservableObject {
             return
         }
         do {
-            let loaded = try await api.fetchThread(id: chatID).messages
+            let loaded = try await api.fetchThread(id: chatID).messages.map(restoreMedia)
             let remoteMessages = Self.deduplicateHTMLCards(loaded.flatMap { message in
                 let restored = message
                 return restored.role == .assistant && restored.contentType != "call_record" && restored.contentType != "call_status" ? assistantBubbles(from: restored) : [restored]

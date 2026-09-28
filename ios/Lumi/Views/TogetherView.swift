@@ -87,10 +87,6 @@ struct TogetherView: View {
                 onDelete: {
                     Task { await delete(item) }
                     selectedItem = nil
-                },
-                onUse: {
-                    onUseInChat(item)
-                    dismiss()
                 }
             )
         }
@@ -422,19 +418,17 @@ private struct RemoteGalleryDetailView: View {
     let imageURL: URL
     let onSave: (String, String, String) -> Void
     let onDelete: () -> Void
-    let onUse: () -> Void
     @State private var title: String
     @State private var visualDescription: String
     @State private var firstImpression: String
     @State private var isEditing = false
     @State private var confirmingDeletion = false
 
-    init(item: RemoteGalleryItem, imageURL: URL, onSave: @escaping (String, String, String) -> Void, onDelete: @escaping () -> Void, onUse: @escaping () -> Void) {
+    init(item: RemoteGalleryItem, imageURL: URL, onSave: @escaping (String, String, String) -> Void, onDelete: @escaping () -> Void) {
         self.item = item
         self.imageURL = imageURL
         self.onSave = onSave
         self.onDelete = onDelete
-        self.onUse = onUse
         _title = State(initialValue: item.title)
         _visualDescription = State(initialValue: item.visualDescription)
         _firstImpression = State(initialValue: item.firstImpression)
@@ -471,27 +465,22 @@ private struct RemoteGalleryDetailView: View {
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                HStack(spacing: 10) {
-                    Button(action: onUse) {
-                        Label("带去聊天", systemImage: "paperplane")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                    }
-                    .buttonStyle(.plain)
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay(Capsule().stroke(.white.opacity(0.7), lineWidth: 1))
+                HStack {
+                    Spacer()
                     Button(role: .destructive) { confirmingDeletion = true } label: {
                         Image(systemName: "trash")
-                            .frame(width: 48, height: 44)
+                            .font(.system(size: 20, weight: .regular))
+                            .frame(width: 58, height: 58)
                     }
                     .buttonStyle(.plain)
                     .background(.regularMaterial, in: Circle())
                     .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 1))
+                    Spacer()
                 }
                 .foregroundStyle(TogetherColors.plumBrown)
                 .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 8)
+                .padding(.top, 10)
+                .padding(.bottom, 10)
                 .background(TogetherColors.background.opacity(0.88))
             }
             .alert("删除这张照片？", isPresented: $confirmingDeletion) {
