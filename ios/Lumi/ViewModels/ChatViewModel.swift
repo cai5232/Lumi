@@ -107,6 +107,7 @@ final class ChatViewModel: ObservableObject {
                 messages.append(confirmedUserMessage)
             }
             if let imageFileName { saveMedia(for: confirmedUserMessage.id, record: MessageMediaRecord(audio: nil, image: imageFileName, duration: nil, speechScript: nil)) }
+            if let imageFileName { TogetherGalleryStore.recordSentImage(fileName: imageFileName, date: confirmedUserMessage.createdAt) }
             saveLocalConversation()
             if response.memorySaved == true {
                 memoryNotice = "-------沈屿记下了这一刻-------"
