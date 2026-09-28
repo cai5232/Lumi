@@ -185,16 +185,28 @@ struct TogetherView: View {
                 VStack(spacing: 9) { Image(systemName: "photo.on.rectangle.angled").font(.system(size: 26)).foregroundStyle(.black.opacity(0.34)); Text(isLoadingGallery ? "正在打开我们的相册…" : "第一张照片，留给我们。\n聊天里发出的图片也会自动收藏在这里。").multilineTextAlignment(.center).font(.system(size: 14)).foregroundStyle(.black.opacity(0.48)) }
                     .frame(maxWidth: .infinity).padding(.vertical, 62).background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             } else {
-                LazyVGrid(columns: [GridItem(.fixed(142), spacing: 10), GridItem(.fixed(142), spacing: 10)], spacing: 12) {
-                    ForEach(gallery) { item in
-                        Button { selectedItem = item } label: { RemoteGalleryTile(item: item, imageURL: api.galleryImageURL(for: item, in: "default")) }.buttonStyle(.plain)
-                    }
+                HStack(alignment: .top, spacing: 10) {
+                    photoColumn(gallery.enumerated().compactMap { $0.offset.isMultiple(of: 2) ? $0.element : nil })
+                    photoColumn(gallery.enumerated().compactMap { !$0.offset.isMultiple(of: 2) ? $0.element : nil })
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
     private func placeholder(icon: String, text: String) -> some View { VStack(spacing: 11) { Image(systemName: icon).font(.system(size: 25)).foregroundStyle(TogetherColors.heart); Text(text).font(.system(size: 14)).foregroundStyle(.black.opacity(0.48)) }.frame(maxWidth: .infinity).padding(.vertical, 74).background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous)) }
+
+    private func photoColumn(_ items: [RemoteGalleryItem]) -> some View {
+        LazyVStack(alignment: .leading, spacing: 12) {
+            ForEach(items) { item in
+                Button { selectedItem = item } label: {
+                    RemoteGalleryTile(item: item, imageURL: api.galleryImageURL(for: item, in: "default"))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(width: 142, alignment: .leading)
+    }
     private func avatar(named name: String) -> some View {
         Group {
             if let path = Bundle.main.path(forResource: name, ofType: "jpg"),
@@ -315,14 +327,12 @@ private struct RemoteGalleryTile: View {
         VStack(alignment: .leading, spacing: 7) {
             AsyncImage(url: imageURL, transaction: .init(animation: .easeOut(duration: 0.18))) { phase in
                 switch phase {
-                case .success(let image): image.resizable().scaledToFill()
+                case .success(let image): image.resizable().scaledToFit()
                 case .failure: Color.white.opacity(0.55).overlay(Image(systemName: "photo").foregroundStyle(.black.opacity(0.25)))
                 default: Color.white.opacity(0.42).overlay(ProgressView().tint(.black.opacity(0.35)))
                 }
             }
-            .frame(width: 142, height: 116)
-            .frame(maxWidth: .infinity)
-            .clipped()
+            .frame(width: 142)
             Text(item.title)
                 .lineLimit(1)
                 .font(.system(size: 12, weight: .medium))
@@ -330,8 +340,7 @@ private struct RemoteGalleryTile: View {
                 .padding(.horizontal, 9)
                 .padding(.bottom, 9)
         }
-        .background(.white.opacity(0.68), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .frame(width: 142, alignment: .leading)
     }
 }
 
@@ -377,15 +386,17 @@ private struct RemoteGalleryDetailView: View {
                         editorField(title: "第一次看见", text: $visualDescription, lines: 3)
                         editorField(title: "当时留下的印象", text: $firstImpression, lines: 3)
                     } else {
-                        detailSection(title: "第一次看见", text: visualDescription)
-                        detailSection(title: "当时留下的印象", text: firstImpression)
+                        detailSection(title: "第一次看见", text: visualDescription, hasBackground: true)
+                        detailSection(title: "当时留下的印象", text: firstImpression, hasBackground: false)
                     }
                     Button(action: onUse) {
                         Label("带去聊天", systemImage: "paperplane")
                             .frame(maxWidth: .infinity)
+                            .foregroundStyle(.black.opacity(0.72))
+                            .padding(.vertical, 3)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(TogetherColors.heart)
+                    .buttonStyle(.bordered)
+                    .tint(.black.opacity(0.5))
                 }
                 .padding(20)
             }
@@ -413,13 +424,14 @@ private struct RemoteGalleryDetailView: View {
         }
     }
 
-    private func detailSection(title: String, text: String) -> some View {
+    private func detailSection(title: String, text: String, hasBackground: Bool) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.black.opacity(0.42))
             Text(text).font(.system(size: 15)).foregroundStyle(.black.opacity(0.78)).fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 4)
+        .padding(hasBackground ? 14 : 0)
+        .background(hasBackground ? Color.white : .clear, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
     }
 
     private func editorField(title: String, text: Binding<String>, lines: Int) -> some View {
