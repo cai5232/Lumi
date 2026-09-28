@@ -87,6 +87,7 @@ struct SendMessageResponse: Decodable {
     let userMessage: ChatMessage
     let assistantMessage: ChatMessage
     let galleryItems: [RemoteGalleryItem]?
+    let galleryMessages: [ChatMessage]?
     let memorySaved: Bool?
     let speechAudioBase64: String?
     let speechDuration: Double?

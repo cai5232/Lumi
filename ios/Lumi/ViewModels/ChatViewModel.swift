@@ -131,21 +131,25 @@ final class ChatViewModel: ObservableObject {
                 messages.append(bubble)
                 saveLocalConversation()
             }
-            // Only images the AI actually decided to keep produce this lightweight
-            // in-chat collection note. The complete entry remains in “我们 → 相册”.
-            for (index, item) in (response.galleryItems ?? []).enumerated() {
+            // New servers persist these cards with the conversation, so they
+            // survive a restart and appear in every client. Keep the fallback
+            // for an older server during rollout.
+            let collectionMessages = response.galleryMessages ?? (response.galleryItems ?? []).enumerated().compactMap { index, item in
                 let notice = GalleryCollectionNotice(id: item.id, title: item.title, firstImpression: item.firstImpression)
                 guard let data = try? JSONEncoder().encode(notice),
-                      let content = String(data: data, encoding: .utf8) else { continue }
-                messages.append(ChatMessage(
-                    id: UUID(),
-                    role: .assistant,
-                    content: content,
+                      let content = String(data: data, encoding: .utf8) else { return nil }
+                return ChatMessage(
+                    id: UUID(), role: .assistant, content: content,
                     createdAt: assistantMessage.createdAt.addingTimeInterval(0.003 * Double(index + 1)),
-                    localImageFileName: imageFileName,
-                    contentType: "gallery_collected"
-                ))
-                saveLocalConversation()
+                    localImageFileName: imageFileName, contentType: "gallery_collected"
+                )
+            }
+            for var collectionMessage in collectionMessages {
+                collectionMessage.localImageFileName = imageFileName
+                if !messages.contains(where: { $0.id == collectionMessage.id }) {
+                    messages.append(collectionMessage)
+                    saveLocalConversation()
+                }
             }
         } catch { errorMessage = friendlyError(error); saveLocalConversation() }
     }
