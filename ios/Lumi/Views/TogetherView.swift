@@ -470,12 +470,13 @@ private struct RemoteGalleryDetailView: View {
             Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.black.opacity(0.52))
             Text(text)
                 .font(.system(size: 11.5, weight: .regular))
-                .rotationEffect(italic ? .degrees(-3) : .zero, anchor: .leading)
+                .transformEffect(italic ? CGAffineTransform(a: 1, b: 0, c: -0.24, d: 1, tx: 0, ty: 0) : .identity)
                 .foregroundStyle(.black.opacity(0.76))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(hasBackground ? 14 : 0)
+        .padding(.horizontal, 14)
+        .padding(.vertical, hasBackground ? 14 : 0)
         .background(hasBackground ? Color.white : .clear, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
     }
 
