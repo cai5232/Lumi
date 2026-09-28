@@ -252,15 +252,17 @@ struct ChatDetailView: View {
             HStack(spacing: 0) {
                 Button { showingSubscriptionUsage = true } label: {
                     Image(systemName: "doc.text")
-                        .font(.system(size: 18, weight: .medium))
+                        .font(.system(size: 18, weight: .regular))
                         .frame(width: 48, height: 42)
                 }
                 .buttonStyle(.plain)
+                toolbarDivider
                 Button { showingTogether = true } label: {
                     TogetherMark()
                         .frame(width: 48, height: 42)
                 }
                 .buttonStyle(.plain)
+                toolbarDivider
                 Button { showingSettings = true } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 18, weight: .medium))
@@ -320,6 +322,12 @@ struct ChatDetailView: View {
                 .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.12), radius: 8, x: 0, y: 4)
         }
         .buttonStyle(.plain)
+    }
+
+    private var toolbarDivider: some View {
+        Rectangle()
+            .fill(.black.opacity(0.11))
+            .frame(width: 1, height: 30)
     }
 
     /// A single server request can be split into several chat bubbles that share
