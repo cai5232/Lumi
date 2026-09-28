@@ -67,12 +67,18 @@ final class LumiAPIClient {
         return response.items
     }
 
-    func renameGallery(_ item: RemoteGalleryItem, to title: String, in id: String) async throws -> RemoteGalleryItem {
+    func updateGallery(_ item: RemoteGalleryItem, title: String, visualDescription: String, firstImpression: String, in id: String) async throws -> RemoteGalleryItem {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/gallery/\(item.id)"))
         request.httpMethod = "PATCH"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder.api.encode(GalleryRenameRequest(title: title))
+        request.httpBody = try JSONEncoder.api.encode(GalleryUpdateRequest(title: title, visualDescription: visualDescription, firstImpression: firstImpression))
         return try await perform(request)
+    }
+
+    func deleteGallery(_ item: RemoteGalleryItem, in id: String) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/gallery/\(item.id)"))
+        request.httpMethod = "DELETE"
+        let _: GalleryDeleteResponse = try await perform(request)
     }
 
     func galleryImageURL(for item: RemoteGalleryItem, in id: String) -> URL {
@@ -198,7 +204,12 @@ private struct GalleryUploadRequest: Encodable {
     let visualDescription: String
     let firstImpression: String
 }
-private struct GalleryRenameRequest: Encodable { let title: String }
+private struct GalleryUpdateRequest: Encodable {
+    let title: String
+    let visualDescription: String
+    let firstImpression: String
+}
+private struct GalleryDeleteResponse: Decodable { let deleted: Bool }
 
 private struct PushTokenRegistrationResponse: Decodable {
     let registered: Bool

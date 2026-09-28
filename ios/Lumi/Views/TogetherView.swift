@@ -80,8 +80,12 @@ struct TogetherView: View {
             RemoteGalleryDetailView(
                 item: item,
                 imageURL: api.galleryImageURL(for: item, in: "default"),
-                onSave: { updatedTitle in
-                    Task { await rename(item, to: updatedTitle) }
+                onSave: { title, visualDescription, firstImpression in
+                    Task { await update(item, title: title, visualDescription: visualDescription, firstImpression: firstImpression) }
+                },
+                onDelete: {
+                    Task { await delete(item) }
+                    selectedItem = nil
                 },
                 onUse: {
                     onUseInChat(item)
@@ -181,7 +185,7 @@ struct TogetherView: View {
                 VStack(spacing: 9) { Image(systemName: "photo.on.rectangle.angled").font(.system(size: 26)).foregroundStyle(.black.opacity(0.34)); Text(isLoadingGallery ? "正在打开我们的相册…" : "第一张照片，留给我们。\n聊天里发出的图片也会自动收藏在这里。").multilineTextAlignment(.center).font(.system(size: 14)).foregroundStyle(.black.opacity(0.48)) }
                     .frame(maxWidth: .infinity).padding(.vertical, 62).background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             } else {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 9), GridItem(.flexible(), spacing: 9)], spacing: 12) {
+                LazyVGrid(columns: [GridItem(.fixed(142), spacing: 10), GridItem(.fixed(142), spacing: 10)], spacing: 12) {
                     ForEach(gallery) { item in
                         Button { selectedItem = item } label: { RemoteGalleryTile(item: item, imageURL: api.galleryImageURL(for: item, in: "default")) }.buttonStyle(.plain)
                     }
@@ -243,10 +247,17 @@ struct TogetherView: View {
         catch { galleryError = error.localizedDescription }
     }
 
-    private func rename(_ item: RemoteGalleryItem, to title: String) async {
+    private func update(_ item: RemoteGalleryItem, title: String, visualDescription: String, firstImpression: String) async {
         do {
-            let updated = try await api.renameGallery(item, to: title, in: "default")
+            let updated = try await api.updateGallery(item, title: title, visualDescription: visualDescription, firstImpression: firstImpression, in: "default")
             if let index = gallery.firstIndex(where: { $0.id == updated.id }) { gallery[index] = updated }
+        } catch { galleryError = error.localizedDescription }
+    }
+
+    private func delete(_ item: RemoteGalleryItem) async {
+        do {
+            try await api.deleteGallery(item, in: "default")
+            gallery.removeAll { $0.id == item.id }
         } catch { galleryError = error.localizedDescription }
     }
 }
@@ -309,7 +320,7 @@ private struct RemoteGalleryTile: View {
                 default: Color.white.opacity(0.42).overlay(ProgressView().tint(.black.opacity(0.35)))
                 }
             }
-            .frame(height: 128)
+            .frame(width: 142, height: 116)
             .frame(maxWidth: .infinity)
             .clipped()
             Text(item.title)
@@ -328,13 +339,24 @@ private struct RemoteGalleryDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let item: RemoteGalleryItem
     let imageURL: URL
-    let onSave: (String) -> Void
+    let onSave: (String, String, String) -> Void
+    let onDelete: () -> Void
     let onUse: () -> Void
-    init(item: RemoteGalleryItem, imageURL: URL, onSave: @escaping (String) -> Void, onUse: @escaping () -> Void) {
+    @State private var title: String
+    @State private var visualDescription: String
+    @State private var firstImpression: String
+    @State private var isEditing = false
+    @State private var confirmingDeletion = false
+
+    init(item: RemoteGalleryItem, imageURL: URL, onSave: @escaping (String, String, String) -> Void, onDelete: @escaping () -> Void, onUse: @escaping () -> Void) {
         self.item = item
         self.imageURL = imageURL
         self.onSave = onSave
+        self.onDelete = onDelete
         self.onUse = onUse
+        _title = State(initialValue: item.title)
+        _visualDescription = State(initialValue: item.visualDescription)
+        _firstImpression = State(initialValue: item.firstImpression)
     }
 
     var body: some View {
@@ -350,8 +372,14 @@ private struct RemoteGalleryDetailView: View {
                     }
                     .frame(maxHeight: 310)
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    detailSection(title: "画面", text: item.visualDescription)
-                    detailSection(title: "这一刻", text: item.firstImpression)
+                    if isEditing {
+                        editorField(title: "标题", text: $title, lines: 1)
+                        editorField(title: "第一次看见", text: $visualDescription, lines: 3)
+                        editorField(title: "当时留下的印象", text: $firstImpression, lines: 3)
+                    } else {
+                        detailSection(title: "第一次看见", text: visualDescription)
+                        detailSection(title: "当时留下的印象", text: firstImpression)
+                    }
                     Button(action: onUse) {
                         Label("带去聊天", systemImage: "paperplane")
                             .frame(maxWidth: .infinity)
@@ -362,9 +390,26 @@ private struct RemoteGalleryDetailView: View {
                 .padding(20)
             }
             .background(TogetherColors.background.ignoresSafeArea())
-            .navigationTitle(item.title)
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { onSave(item.title); dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isEditing ? "完成" : "编辑") {
+                        if isEditing { onSave(title, visualDescription, firstImpression) }
+                        withAnimation(.easeInOut(duration: 0.18)) { isEditing.toggle() }
+                    }
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    Button(role: .destructive) { confirmingDeletion = true } label: {
+                        Label("删除照片", systemImage: "trash")
+                    }
+                }
+            }
+            .alert("删除这张照片？", isPresented: $confirmingDeletion) {
+                Button("删除", role: .destructive) { onDelete(); dismiss() }
+                Button("取消", role: .cancel) { }
+            } message: { Text("照片和它的相册文字都会删除。") }
         }
     }
 
@@ -374,8 +419,17 @@ private struct RemoteGalleryDetailView: View {
             Text(text).font(.system(size: 15)).foregroundStyle(.black.opacity(0.78)).fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .padding(.vertical, 4)
+    }
+
+    private func editorField(title: String, text: Binding<String>, lines: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.black.opacity(0.42))
+            TextField("", text: text, axis: lines == 1 ? .horizontal : .vertical)
+                .lineLimit(lines, reservesSpace: lines > 1)
+                .padding(10)
+                .background(.white.opacity(0.65), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
     }
 }
 
@@ -397,8 +451,8 @@ private struct GalleryAddDetailsView: View {
                         .frame(maxHeight: 230)
                         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     field(title: "标题", placeholder: "给这一刻起个名字", text: $title, lines: 1)
-                    field(title: "画面", placeholder: "你看见了什么？", text: $visualDescription, lines: 3)
-                    field(title: "这一刻", placeholder: "想留下怎样的感觉？", text: $firstImpression, lines: 3)
+                    field(title: "第一次看见", placeholder: "你第一眼看见了什么？", text: $visualDescription, lines: 3)
+                    field(title: "当时留下的印象", placeholder: "想留下怎样的感觉？", text: $firstImpression, lines: 3)
                     Text("这些文字会和照片一起留在我们的相册里。")
                         .font(.system(size: 12))
                         .foregroundStyle(.black.opacity(0.42))
