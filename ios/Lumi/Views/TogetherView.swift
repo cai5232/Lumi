@@ -275,6 +275,7 @@ private enum TogetherColors {
     static let background = Color(red: 0.984, green: 0.949, blue: 0.957)
     static let heart = Color(red: 0.73, green: 0.36, blue: 0.45)
     static let pulse = Color(red: 0.95, green: 0.56, blue: 0.67)
+    static let plumBrown = Color(red: 0.40, green: 0.24, blue: 0.27)
     static let card = Color.white.opacity(0.72)
     static let line = Color.black.opacity(0.14)
 }
@@ -419,9 +420,10 @@ private struct RemoteGalleryDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    detailHeader
                     CachedGalleryImage(url: imageURL, placeholderHeight: 240)
-                    .frame(maxHeight: 310)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .frame(maxHeight: 310)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     if isEditing {
                         editorField(title: "标题", text: $title, lines: 1)
                         editorField(title: "第一次看见", text: $visualDescription, lines: 3)
@@ -433,31 +435,24 @@ private struct RemoteGalleryDetailView: View {
                     Button(action: onUse) {
                         Label("带去聊天", systemImage: "paperplane")
                             .frame(maxWidth: .infinity)
-                            .foregroundStyle(.black.opacity(0.72))
-                            .padding(.vertical, 3)
+                            .foregroundStyle(TogetherColors.plumBrown)
+                            .padding(.vertical, 11)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(.black.opacity(0.5))
+                    .buttonStyle(.plain)
+                    .overlay(Capsule().stroke(TogetherColors.plumBrown.opacity(0.58), lineWidth: 1))
+                    Button(role: .destructive) { confirmingDeletion = true } label: {
+                        Label("删除照片", systemImage: "trash")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(TogetherColors.plumBrown.opacity(0.76))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(20)
             }
             .background(TogetherColors.background.ignoresSafeArea())
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(isEditing ? "完成" : "编辑") {
-                        if isEditing { onSave(title, visualDescription, firstImpression) }
-                        withAnimation(.easeInOut(duration: 0.18)) { isEditing.toggle() }
-                    }
-                }
-                ToolbarItem(placement: .bottomBar) {
-                    Button(role: .destructive) { confirmingDeletion = true } label: {
-                        Label("删除照片", systemImage: "trash")
-                    }
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .alert("删除这张照片？", isPresented: $confirmingDeletion) {
                 Button("删除", role: .destructive) { onDelete(); dismiss() }
                 Button("取消", role: .cancel) { }
@@ -465,13 +460,37 @@ private struct RemoteGalleryDetailView: View {
         }
     }
 
+    private var detailHeader: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Button("关闭") { dismiss() }
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(TogetherColors.plumBrown)
+                .buttonStyle(.plain)
+            Spacer()
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(TogetherColors.plumBrown)
+                .lineLimit(1)
+            Spacer()
+            Button(isEditing ? "完成" : "编辑") {
+                if isEditing { onSave(title, visualDescription, firstImpression) }
+                withAnimation(.easeInOut(duration: 0.18)) { isEditing.toggle() }
+            }
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(TogetherColors.plumBrown)
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 4)
+    }
+
     private func detailSection(title: String, text: String, hasBackground: Bool, italic: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.black.opacity(0.52))
+            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
             Text(text)
                 .font(.system(size: 11.5, weight: .regular))
                 .transformEffect(italic ? CGAffineTransform(a: 1, b: 0, c: -0.24, d: 1, tx: 0, ty: 0) : .identity)
-                .foregroundStyle(.black.opacity(0.76))
+                .foregroundStyle(TogetherColors.plumBrown.opacity(0.82))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -482,11 +501,12 @@ private struct RemoteGalleryDetailView: View {
 
     private func editorField(title: String, text: Binding<String>, lines: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(.black.opacity(0.42))
+            Text(title).font(.system(size: 12, weight: .semibold)).foregroundStyle(TogetherColors.plumBrown.opacity(0.72))
             TextField("", text: text, axis: lines == 1 ? .horizontal : .vertical)
                 .lineLimit(lines, reservesSpace: lines > 1)
                 .padding(10)
-                .background(.white.opacity(0.65), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .foregroundStyle(TogetherColors.plumBrown)
         }
     }
 }
