@@ -80,10 +80,10 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    func send(imageBase64: String? = nil, imageFileName: String? = nil, tts: TTSRequestSettings? = nil, emojiCatalog: [String: [String]] = [:]) async {
+    func send(imageBase64: String? = nil, imageFileName: String? = nil, galleryImageIDs: [String] = [], tts: TTSRequestSettings? = nil, emojiCatalog: [String: [String]] = [:]) async {
         let typedContent = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!typedContent.isEmpty || imageBase64 != nil), !isSending else { return }
-        let content = typedContent.isEmpty && imageBase64 != nil ? "请描述这张图片。" : typedContent
+        guard (!typedContent.isEmpty || imageBase64 != nil || !galleryImageIDs.isEmpty), !isSending else { return }
+        let content = typedContent.isEmpty ? (imageBase64 != nil ? "请描述这张图片。" : "想和你聊聊这张照片。") : typedContent
         draft = ""
         let optimisticID = UUID()
         messages.append(ChatMessage(id: optimisticID, role: .user, content: content, createdAt: .now, localImageFileName: imageFileName))
@@ -98,7 +98,7 @@ final class ChatViewModel: ObservableObject {
             }
         }
         do {
-            let response = try await api.sendMessage(content, to: chatID, images: imageBase64.map { [$0] } ?? [], emojiCatalog: emojiCatalog, tts: tts)
+            let response = try await api.sendMessage(content, to: chatID, images: imageBase64.map { [$0] } ?? [], galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts)
             var confirmedUserMessage = response.userMessage
             confirmedUserMessage.localImageFileName = imageFileName
             if let optimisticIndex = messages.firstIndex(where: { $0.id == optimisticID }) {
@@ -107,7 +107,6 @@ final class ChatViewModel: ObservableObject {
                 messages.append(confirmedUserMessage)
             }
             if let imageFileName { saveMedia(for: confirmedUserMessage.id, record: MessageMediaRecord(audio: nil, image: imageFileName, duration: nil, speechScript: nil)) }
-            if let imageFileName { TogetherGalleryStore.recordSentImage(fileName: imageFileName, date: confirmedUserMessage.createdAt) }
             saveLocalConversation()
             if response.memorySaved == true {
                 memoryNotice = "-------沈屿记下了这一刻-------"

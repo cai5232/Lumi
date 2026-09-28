@@ -17,6 +17,7 @@ struct ChatDetailView: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var selectedImageData: Data?
     @State private var selectedImageName: String?
+    @State private var selectedGalleryItem: RemoteGalleryItem?
     @State private var showingCallDemo = false
     @State private var incomingCallID: String?
     @State private var incomingCall: IncomingCallInfo?
@@ -155,7 +156,9 @@ struct ChatDetailView: View {
             SettingsView()
         }
         .fullScreenCover(isPresented: $showingTogether) {
-            TogetherView()
+            TogetherView { item in
+                selectedGalleryItem = item
+            }
         }
         .sheet(isPresented: $glassPresentation.showingThinkingDetails) {
             ThinkingDetailsView(text: glassPresentation.thinkingText) { height in
@@ -253,17 +256,11 @@ struct ChatDetailView: View {
                         .frame(width: 48, height: 42)
                 }
                 .buttonStyle(.plain)
-                Rectangle()
-                    .fill(Color.black.opacity(0.12))
-                    .frame(width: 1, height: 24)
                 Button { showingTogether = true } label: {
                     TogetherMark()
                         .frame(width: 48, height: 42)
                 }
                 .buttonStyle(.plain)
-                Rectangle()
-                    .fill(Color.black.opacity(0.12))
-                    .frame(width: 1, height: 24)
                 Button { showingSettings = true } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 18, weight: .medium))
@@ -283,6 +280,7 @@ struct ChatDetailView: View {
         ComposerInputView(
             selectedImageData: $selectedImageData,
             selectedImageName: $selectedImageName,
+            selectedGalleryItem: $selectedGalleryItem,
             photoItem: $photoItem,
             onSend: { text in
                 Task { await sendDraft(text: text) }
@@ -583,7 +581,7 @@ struct ChatDetailView: View {
 
     private func sendDraft(text: String) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || selectedImageData != nil else { return }
+        guard !text.isEmpty || selectedImageData != nil || selectedGalleryItem != nil else { return }
         model.draft = text
         let imageBase64 = selectedImageData.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
         let ttsKey = LumiKeychain.read()
@@ -591,20 +589,19 @@ struct ChatDetailView: View {
         let catalogData = UserDefaults.standard.string(forKey: "lumi.emojiCatalogJSON")?.data(using: .utf8) ?? Data("[]".utf8)
         let entries = (try? JSONDecoder().decode([EmojiEntry].self, from: catalogData)) ?? []
         let catalog = Dictionary(grouping: entries, by: \.mood).mapValues { $0.map(\.face) }
-        await model.send(imageBase64: imageBase64, imageFileName: selectedImageName, tts: tts, emojiCatalog: catalog)
+        await model.send(imageBase64: imageBase64, imageFileName: selectedImageName, galleryImageIDs: selectedGalleryItem.map { [$0.id] } ?? [], tts: tts, emojiCatalog: catalog)
         selectedImageData = nil
         selectedImageName = nil
+        selectedGalleryItem = nil
         photoItem = nil
     }
 }
 
 private struct TogetherMark: View {
     var body: some View {
-        ZStack {
-            Circle().stroke(.black.opacity(0.58), lineWidth: 1.35).frame(width: 13, height: 13).offset(x: -5)
-            Circle().stroke(.black.opacity(0.58), lineWidth: 1.35).frame(width: 13, height: 13).offset(x: 5)
-            Image(systemName: "heart.fill").font(.system(size: 7)).foregroundStyle(Color(red: 0.72, green: 0.34, blue: 0.43)).offset(y: 7)
-        }
+        Image(systemName: "person.2")
+            .font(.system(size: 16, weight: .regular))
+            .frame(width: 22, height: 22)
         .accessibilityLabel("我们")
     }
 }
@@ -612,6 +609,7 @@ private struct TogetherMark: View {
 private struct ComposerInputView: View {
     @Binding var selectedImageData: Data?
     @Binding var selectedImageName: String?
+    @Binding var selectedGalleryItem: RemoteGalleryItem?
     @Binding var photoItem: PhotosPickerItem?
     let onSend: (String) -> Void
     @State private var text = ""
@@ -619,6 +617,21 @@ private struct ComposerInputView: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            if let item = selectedGalleryItem {
+                HStack(spacing: 8) {
+                    Image(systemName: "photo.on.rectangle")
+                        .foregroundStyle(.black.opacity(0.58))
+                    Text("带入相册：\(item.title)")
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                    Spacer()
+                    Button { selectedGalleryItem = nil } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 15)).foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 4)
+            }
             if let data = selectedImageData, let image = UIImage(data: data) {
                 HStack(spacing: 8) {
                     Image(uiImage: image)
@@ -648,7 +661,7 @@ private struct ComposerInputView: View {
                 .padding(.top, 12)
                 .onSubmit {
                     let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if value.isEmpty {
+                    if value.isEmpty && selectedImageData == nil && selectedGalleryItem == nil {
                         focused = false
                         return
                     }
@@ -685,7 +698,7 @@ private struct ComposerInputView: View {
                 .buttonStyle(.plain)
             }
         }
-        .frame(height: selectedImageData == nil ? 96 : 140)
+        .frame(height: selectedImageData == nil && selectedGalleryItem == nil ? 96 : 140)
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 32))

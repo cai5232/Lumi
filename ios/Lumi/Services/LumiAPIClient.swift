@@ -38,19 +38,45 @@ final class LumiAPIClient {
         return try await perform(request)
     }
 
-    func sendMessage(_ content: String, to id: String, images: [String] = [], emojiCatalog: [String: [String]] = [:], tts: TTSRequestSettings? = nil) async throws -> SendMessageResponse {
+    func sendMessage(_ content: String, to id: String, images: [String] = [], galleryImageIDs: [String] = [], emojiCatalog: [String: [String]] = [:], tts: TTSRequestSettings? = nil) async throws -> SendMessageResponse {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/messages"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
         request.httpBody = try JSONEncoder.api.encode(
-            SendMessageRequest(content: content, systemPrompt: LumiSystemPrompt.main, images: images, emojiCatalog: emojiCatalog, tts: tts)
+            SendMessageRequest(content: content, systemPrompt: LumiSystemPrompt.main, images: images, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts)
         )
         let response: SendMessageResponse = try await perform(request)
         if response.assistantMessage.content == "我想先听你说的这一句。" {
             throw LumiAPIError.server("后端目前返回的是默认语录，尚未接通模型。请确认 Zeabur 已部署最新后端，并把真实公网域名填入客户端。")
         }
         return response
+    }
+
+    func fetchGallery(for id: String) async throws -> [RemoteGalleryItem] {
+        let response: GalleryListResponse = try await request(path: "/v1/chats/\(id)/gallery")
+        return response.items
+    }
+
+    func uploadGallery(images: [String], to id: String) async throws -> [RemoteGalleryItem] {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/gallery"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder.api.encode(GalleryUploadRequest(images: images))
+        let response: GalleryListResponse = try await perform(request)
+        return response.items
+    }
+
+    func renameGallery(_ item: RemoteGalleryItem, to title: String, in id: String) async throws -> RemoteGalleryItem {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/gallery/\(item.id)"))
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder.api.encode(GalleryRenameRequest(title: title))
+        return try await perform(request)
+    }
+
+    func galleryImageURL(for item: RemoteGalleryItem, in id: String) -> URL {
+        baseURL.appending(path: "/v1/chats/\(id)/gallery/\(item.id)/image")
     }
 
     func startCall(to id: String, tts: TTSRequestSettings?) async throws -> CallStartResponse {
@@ -165,6 +191,9 @@ private struct PushTokenRegistration: Encodable {
     let environment: String
     let threadId: String
 }
+
+private struct GalleryUploadRequest: Encodable { let images: [String] }
+private struct GalleryRenameRequest: Encodable { let title: String }
 
 private struct PushTokenRegistrationResponse: Decodable {
     let registered: Bool

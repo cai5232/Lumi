@@ -78,6 +78,7 @@ struct SendMessageRequest: Encodable {
     let content: String
     let systemPrompt: String
     var images: [String] = []
+    var galleryImageIDs: [String] = []
     var emojiCatalog: [String: [String]] = [:]
     var tts: TTSRequestSettings?
 }
@@ -89,6 +90,26 @@ struct SendMessageResponse: Decodable {
     let speechAudioBase64: String?
     let speechDuration: Double?
     let speechScript: String?
+}
+
+struct RemoteGalleryItem: Codable, Identifiable, Equatable {
+    let id: String
+    let mimeType: String
+    let fileExtension: String
+    let createdAt: Date
+    let updatedAt: Date
+    var title: String
+    let visualDescription: String
+    let firstImpression: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, mimeType, createdAt, updatedAt, title, visualDescription, firstImpression
+        case fileExtension = "extension"
+    }
+}
+
+struct GalleryListResponse: Decodable {
+    let items: [RemoteGalleryItem]
 }
 
 struct TTSRequestSettings: Encodable {

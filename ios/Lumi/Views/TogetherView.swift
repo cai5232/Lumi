@@ -12,14 +12,37 @@ private enum TogetherTab: String, CaseIterable, Identifiable {
 struct TogetherView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("lumi.together.startAt") private var storedStartAt: Double = 0
+    @AppStorage("lumi.together.didApplyAnniversary20260723") private var didApplyAnniversary = false
     @State private var tab: TogetherTab = .gallery
-    @State private var gallery = TogetherGalleryStore.load()
+    let onUseInChat: (RemoteGalleryItem) -> Void
+    @State private var gallery: [RemoteGalleryItem] = []
     @State private var pickerItem: PhotosPickerItem?
-    @State private var selectedItem: TogetherGalleryItem?
+    @State private var selectedItem: RemoteGalleryItem?
     @State private var showingStartDate = false
+    @State private var galleryError: String?
+    @State private var isLoadingGallery = false
+    private let api = LumiAPIClient()
 
-    private var startDate: Date { storedStartAt > 0 ? Date(timeIntervalSince1970: storedStartAt) : .now }
-    private var daysTogether: Int { max(0, Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: startDate), to: Calendar.current.startOfDay(for: .now)).day ?? 0) }
+    private static let anniversaryStartDate = Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 7, day: 23))!
+
+    init(onUseInChat: @escaping (RemoteGalleryItem) -> Void = { _ in }) {
+        self.onUseInChat = onUseInChat
+    }
+
+    private var startDate: Date { storedStartAt > 0 ? Date(timeIntervalSince1970: storedStartAt) : Self.anniversaryStartDate }
+
+    private func daysTogether(at date: Date) -> Int {
+        max(0, Calendar.current.dateComponents(
+            [.day],
+            from: Calendar.current.startOfDay(for: startDate),
+            to: Calendar.current.startOfDay(for: date)
+        ).day ?? 0)
+    }
+
+    private var anniversaryLabel: String {
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: startDate)
+        return "\(components.year ?? 2026).\(components.month ?? 7).\(components.day ?? 23)"
+    }
 
     var body: some View {
         NavigationStack {
@@ -44,14 +67,26 @@ struct TogetherView: View {
         }
         .tint(.black.opacity(0.72))
         .onAppear {
-            if storedStartAt == 0 { storedStartAt = Date.now.timeIntervalSince1970 }
-            gallery = TogetherGalleryStore.load()
+            if !didApplyAnniversary {
+                storedStartAt = Self.anniversaryStartDate.timeIntervalSince1970
+                didApplyAnniversary = true
+            }
+            Task { await loadGallery() }
         }
         .onChange(of: pickerItem) { _, item in importPhoto(item) }
-        .sheet(item: $selectedItem) { item in GalleryDetailView(item: item) { updated in
-            TogetherGalleryStore.rename(updated.item, to: updated.title)
-            gallery = TogetherGalleryStore.load()
-        } }
+        .sheet(item: $selectedItem) { item in
+            RemoteGalleryDetailView(
+                item: item,
+                imageURL: api.galleryImageURL(for: item, in: "default"),
+                onSave: { updatedTitle in
+                    Task { await rename(item, to: updatedTitle) }
+                },
+                onUse: {
+                    onUseInChat(item)
+                    dismiss()
+                }
+            )
+        }
         .sheet(isPresented: $showingStartDate) {
             NavigationStack {
                 DatePicker("开始日期", selection: Binding(get: { startDate }, set: { storedStartAt = $0.timeIntervalSince1970 }), displayedComponents: .date)
@@ -66,32 +101,32 @@ struct TogetherView: View {
     }
 
     private var relationshipCard: some View {
-        VStack(spacing: 15) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text("在一起已经").font(.system(size: 16, weight: .medium))
-                Text("\(daysTogether)").font(.system(size: 39, weight: .bold, design: .rounded)).contentTransition(.numericText())
-                Text("天").font(.system(size: 16, weight: .medium))
-            }
-            HStack(spacing: 12) {
-                avatar(named: "AssistantAvatar")
-                HStack(spacing: 0) {
-                    Rectangle().fill(TogetherColors.line).frame(height: 1)
-                    Image(systemName: "heart.fill").font(.system(size: 13)).foregroundStyle(TogetherColors.heart).padding(.horizontal, 8)
-                    Rectangle().fill(TogetherColors.line).frame(height: 1)
+        TimelineView(.periodic(from: .now, by: 60)) { timeline in
+            VStack(spacing: 15) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text("在一起已经").font(.system(size: 16, weight: .medium))
+                    Text("\(daysTogether(at: timeline.date))")
+                        .font(.system(size: 39, weight: .bold, design: .rounded))
+                        .contentTransition(.numericText())
+                    Text("天").font(.system(size: 16, weight: .medium))
                 }
-                .frame(maxWidth: 112)
-                avatar(named: "UserAvatar")
+                HStack(spacing: 6) {
+                    avatar(named: "AssistantAvatar")
+                    HeartbeatDivider()
+                        .frame(width: 84, height: 42)
+                    avatar(named: "UserAvatar")
+                }
+                Button { showingStartDate = true } label: {
+                    Text(anniversaryLabel)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.black.opacity(0.48))
+                }
             }
-            Button { showingStartDate = true } label: {
-                Text(startDate.formatted(.dateTime.year().month(.twoDigits).day(.twoDigits)).replacingOccurrences(of: "/", with: "."))
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.black.opacity(0.48))
-            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 24)
+            .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(.white.opacity(0.85), lineWidth: 1))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
-        .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(.white.opacity(0.85), lineWidth: 1))
     }
 
     private var tabPicker: some View {
@@ -120,13 +155,14 @@ struct TogetherView: View {
     private var galleryContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack { Text("相册").font(.system(size: 20, weight: .bold)); Spacer(); PhotosPicker(selection: $pickerItem, matching: .images) { Label("添加", systemImage: "plus").font(.system(size: 14, weight: .medium)) }.buttonStyle(.bordered).tint(.black.opacity(0.7)) }
+            if let galleryError { Text(galleryError).font(.system(size: 12)).foregroundStyle(.red.opacity(0.72)) }
             if gallery.isEmpty {
-                VStack(spacing: 9) { Image(systemName: "photo.on.rectangle.angled").font(.system(size: 26)).foregroundStyle(.black.opacity(0.34)); Text("第一张照片，留给我们。\n聊天里发出的图片也会自动收藏在这里。").multilineTextAlignment(.center).font(.system(size: 14)).foregroundStyle(.black.opacity(0.48)) }
+                VStack(spacing: 9) { Image(systemName: "photo.on.rectangle.angled").font(.system(size: 26)).foregroundStyle(.black.opacity(0.34)); Text(isLoadingGallery ? "正在打开我们的相册…" : "第一张照片，留给我们。\n聊天里发出的图片也会自动收藏在这里。").multilineTextAlignment(.center).font(.system(size: 14)).foregroundStyle(.black.opacity(0.48)) }
                     .frame(maxWidth: .infinity).padding(.vertical, 62).background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             } else {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                     ForEach(gallery) { item in
-                        Button { selectedItem = item } label: { GalleryTile(item: item) }.buttonStyle(.plain)
+                        Button { selectedItem = item } label: { RemoteGalleryTile(item: item, imageURL: api.galleryImageURL(for: item, in: "default")) }.buttonStyle(.plain)
                     }
                 }
             }
@@ -134,32 +170,176 @@ struct TogetherView: View {
     }
 
     private func placeholder(icon: String, text: String) -> some View { VStack(spacing: 11) { Image(systemName: icon).font(.system(size: 25)).foregroundStyle(TogetherColors.heart); Text(text).font(.system(size: 14)).foregroundStyle(.black.opacity(0.48)) }.frame(maxWidth: .infinity).padding(.vertical, 74).background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous)) }
-    private func avatar(named name: String) -> some View { Group { if let image = UIImage(named: name) { Image(uiImage: image).resizable().scaledToFill() } else { Color.white } }.frame(width: 58, height: 58).clipShape(Circle()).overlay(Circle().stroke(.white, lineWidth: 3)).shadow(color: .black.opacity(0.08), radius: 5, y: 2) }
+    private func avatar(named name: String) -> some View {
+        Group {
+            if let path = Bundle.main.path(forResource: name, ofType: "jpg"),
+               let image = UIImage(contentsOfFile: path) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                Image(systemName: name == "AssistantAvatar" ? "sparkles" : "person.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(name == "AssistantAvatar" ? TogetherColors.heart : .black.opacity(0.55))
+                    .background(name == "AssistantAvatar" ? Color(red: 1.0, green: 0.86, blue: 0.90) : Color.white.opacity(0.72))
+            }
+        }
+        .frame(width: 58, height: 58)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(.white, lineWidth: 3))
+        .shadow(color: .black.opacity(0.08), radius: 5, y: 2)
+    }
 
     private func importPhoto(_ item: PhotosPickerItem?) {
         guard let item else { return }
         Task {
             guard let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.84) else { return }
-            let fileName = "together-\(UUID().uuidString).jpg"
-            let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(fileName)
-            guard (try? jpeg.write(to: url, options: .atomic)) != nil else { return }
-            await MainActor.run { TogetherGalleryStore.addLocalImage(fileName: fileName); gallery = TogetherGalleryStore.load(); pickerItem = nil }
+            do {
+                _ = try await api.uploadGallery(images: ["data:image/jpeg;base64,\(jpeg.base64EncodedString())"], to: "default")
+                await loadGallery()
+            } catch {
+                galleryError = error.localizedDescription
+            }
+            pickerItem = nil
         }
+    }
+
+    private func loadGallery() async {
+        isLoadingGallery = true
+        defer { isLoadingGallery = false }
+        do { gallery = try await api.fetchGallery(for: "default"); galleryError = nil }
+        catch { galleryError = error.localizedDescription }
+    }
+
+    private func rename(_ item: RemoteGalleryItem, to title: String) async {
+        do {
+            let updated = try await api.renameGallery(item, to: title, in: "default")
+            if let index = gallery.firstIndex(where: { $0.id == updated.id }) { gallery[index] = updated }
+        } catch { galleryError = error.localizedDescription }
     }
 }
 
-private enum TogetherColors { static let background = Color(red: 0.984, green: 0.949, blue: 0.957); static let heart = Color(red: 0.73, green: 0.36, blue: 0.45); static let line = Color.black.opacity(0.14) }
-
-private struct GalleryTile: View {
-    let item: TogetherGalleryItem
-    var body: some View { VStack(alignment: .leading, spacing: 7) { if let image = UIImage(contentsOfFile: FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(item.fileName).path) { Image(uiImage: image).resizable().scaledToFill().frame(height: 155).frame(maxWidth: .infinity).clipped() } else { Color.white.opacity(0.55).frame(height: 155).overlay(Image(systemName: "photo").foregroundStyle(.black.opacity(0.25))) }; Text(item.title).lineLimit(1).font(.system(size: 13, weight: .medium)).foregroundStyle(.black.opacity(0.68)).padding(.horizontal, 9).padding(.bottom, 9) }.background(.white.opacity(0.68), in: RoundedRectangle(cornerRadius: 17, style: .continuous)).clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous)) }
+private enum TogetherColors {
+    static let background = Color(red: 0.984, green: 0.949, blue: 0.957)
+    static let heart = Color(red: 0.73, green: 0.36, blue: 0.45)
+    static let pulse = Color(red: 0.95, green: 0.56, blue: 0.67)
+    static let card = Color.white.opacity(0.72)
+    static let line = Color.black.opacity(0.14)
 }
 
-private struct GalleryDetailView: View {
+private struct HeartbeatDivider: View {
+    var body: some View {
+        ZStack {
+            HeartbeatLine()
+                .stroke(TogetherColors.pulse, style: StrokeStyle(lineWidth: 2.25, lineCap: .round, lineJoin: .round))
+            Image(systemName: "heart.fill")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(TogetherColors.pulse)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct HeartbeatLine: Shape {
+    func path(in rect: CGRect) -> Path {
+        let middleY = rect.midY
+        let peak = rect.height * 0.36
+        let low = rect.height * 0.66
+        var path = Path()
+
+        path.move(to: CGPoint(x: rect.minX, y: middleY))
+        path.addLine(to: CGPoint(x: rect.width * 0.14, y: middleY))
+        path.addLine(to: CGPoint(x: rect.width * 0.24, y: peak))
+        path.addLine(to: CGPoint(x: rect.width * 0.35, y: low))
+        path.addLine(to: CGPoint(x: rect.width * 0.40, y: middleY))
+        path.addLine(to: CGPoint(x: rect.width * 0.50, y: middleY))
+
+        path.move(to: CGPoint(x: rect.width * 0.50, y: middleY))
+        path.addLine(to: CGPoint(x: rect.width * 0.60, y: middleY))
+        path.addLine(to: CGPoint(x: rect.width * 0.65, y: low))
+        path.addLine(to: CGPoint(x: rect.width * 0.76, y: peak))
+        path.addLine(to: CGPoint(x: rect.width * 0.86, y: middleY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: middleY))
+        return path
+    }
+}
+
+private struct RemoteGalleryTile: View {
+    let item: RemoteGalleryItem
+    let imageURL: URL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            AsyncImage(url: imageURL, transaction: .init(animation: .easeOut(duration: 0.18))) { phase in
+                switch phase {
+                case .success(let image): image.resizable().scaledToFill()
+                case .failure: Color.white.opacity(0.55).overlay(Image(systemName: "photo").foregroundStyle(.black.opacity(0.25)))
+                default: Color.white.opacity(0.42).overlay(ProgressView().tint(.black.opacity(0.35)))
+                }
+            }
+            .frame(height: 155)
+            .frame(maxWidth: .infinity)
+            .clipped()
+            Text(item.title)
+                .lineLimit(1)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.black.opacity(0.68))
+                .padding(.horizontal, 9)
+                .padding(.bottom, 9)
+        }
+        .background(.white.opacity(0.68), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+    }
+}
+
+private struct RemoteGalleryDetailView: View {
     @Environment(\.dismiss) private var dismiss
-    let item: TogetherGalleryItem
-    let onSave: ((item: TogetherGalleryItem, title: String)) -> Void
+    let item: RemoteGalleryItem
+    let imageURL: URL
+    let onSave: (String) -> Void
+    let onUse: () -> Void
     @State private var title: String
-    init(item: TogetherGalleryItem, onSave: @escaping ((item: TogetherGalleryItem, title: String)) -> Void) { self.item = item; self.onSave = onSave; _title = State(initialValue: item.title) }
-    var body: some View { NavigationStack { VStack(spacing: 20) { if let image = UIImage(contentsOfFile: FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(item.fileName).path) { Image(uiImage: image).resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous)) }; TextField("给这张照片起个名字", text: $title).textFieldStyle(.roundedBorder); Spacer() }.padding(20).background(TogetherColors.background.ignoresSafeArea()).navigationTitle("相册") .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { onSave((item, title)); dismiss() } } } } }
+
+    init(item: RemoteGalleryItem, imageURL: URL, onSave: @escaping (String) -> Void, onUse: @escaping () -> Void) {
+        self.item = item
+        self.imageURL = imageURL
+        self.onSave = onSave
+        self.onUse = onUse
+        _title = State(initialValue: item.title)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    AsyncImage(url: imageURL) { phase in
+                        switch phase {
+                        case .success(let image): image.resizable().scaledToFit()
+                        case .failure: ContentUnavailableView("图片暂时不可用", systemImage: "photo")
+                        default: ProgressView().frame(maxWidth: .infinity, minHeight: 240)
+                        }
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    TextField("给这张照片起个名字", text: $title)
+                        .textFieldStyle(.roundedBorder)
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("画面").font(.system(size: 13, weight: .semibold)).foregroundStyle(.black.opacity(0.48))
+                        Text(item.visualDescription).font(.system(size: 15)).foregroundStyle(.black.opacity(0.75))
+                        Text("这一刻").font(.system(size: 13, weight: .semibold)).foregroundStyle(.black.opacity(0.48)).padding(.top, 4)
+                        Text(item.firstImpression).font(.system(size: 15)).foregroundStyle(.black.opacity(0.75))
+                    }
+                    .padding(14)
+                    .background(.white.opacity(0.65), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    Button(action: onUse) {
+                        Label("带去聊天", systemImage: "paperplane")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(TogetherColors.heart)
+                }
+                .padding(20)
+            }
+            .background(TogetherColors.background.ignoresSafeArea())
+            .navigationTitle("相册")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { onSave(title); dismiss() } } }
+        }
+    }
 }
