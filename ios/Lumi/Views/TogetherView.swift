@@ -357,7 +357,10 @@ private final class GalleryImageLoader: ObservableObject {
             return
         }
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            var request = URLRequest(url: url)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.timeoutInterval = 25
+            let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode),
                   let loaded = thumbnail(from: data, maxPixelSize: maxPixelSize) else {
