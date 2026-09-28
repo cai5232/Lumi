@@ -345,9 +345,11 @@ struct ChatDetailView: View {
         let isHTMLCard = message.htmlContent != nil || message.contentType == "html" || isHTML(message.content)
         let isCallRecord = message.contentType == "call_record"
         let isCallStatus = message.contentType == "call_status"
+        let isGalleryCollection = message.contentType == "gallery_collected"
         let isUserSide = message.callInitiator == "user" || (message.callInitiator == nil && message.role == .user)
         VStack(alignment: isUserSide ? .trailing : .leading, spacing: 5) {
-            if let localName = message.localImageFileName,
+            if !isGalleryCollection,
+               let localName = message.localImageFileName,
                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent(localName),
                let image = UIImage(contentsOfFile: url.path) {
                 Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 210, maxHeight: 190).clipShape(RoundedRectangle(cornerRadius: 14))
@@ -366,7 +368,10 @@ struct ChatDetailView: View {
                 }
                 if isUserSide { Spacer(minLength: 48) }
                 VStack(alignment: .leading, spacing: 7) {
-                if isCallRecord {
+                if isGalleryCollection,
+                   let notice = try? JSONDecoder().decode(GalleryCollectionNotice.self, from: Data(message.content.utf8)) {
+                    GalleryCollectionCard(notice: notice, localImageName: message.localImageFileName)
+                } else if isCallRecord {
                     Button { selectedCallRecord = message } label: {
                         HStack(spacing: 8) {
                             if !isUserSide {
@@ -452,11 +457,11 @@ struct ChatDetailView: View {
                     }
                 }
                 }
-                .padding(.horizontal, isHTMLCard ? 8 : (isCallStatus ? 10 : 13))
-                .padding(.vertical, isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3)))
-                .frame(width: message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8)), alignment: .leading)
-                .background(isUserSide ? LumiPalette.userBubble : .white)
-                .clipShape(RoundedRectangle(cornerRadius: 21))
+                .padding(.horizontal, isGalleryCollection ? 0 : (isHTMLCard ? 8 : (isCallStatus ? 10 : 13)))
+                .padding(.vertical, isGalleryCollection ? 0 : (isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3))))
+                .frame(width: isGalleryCollection ? 292 : (message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8))), alignment: .leading)
+                .background(isGalleryCollection ? .clear : (isUserSide ? LumiPalette.userBubble : .white))
+                .clipShape(RoundedRectangle(cornerRadius: isGalleryCollection ? 0 : 21))
                 if !isUserSide { Spacer(minLength: 48) }
                 if isUserSide {
                     if showAvatar { avatar(for: .user) }
@@ -602,6 +607,75 @@ struct ChatDetailView: View {
         selectedImageName = nil
         selectedGalleryItem = nil
         photoItem = nil
+    }
+}
+
+private struct GalleryCollectionCard: View {
+    let notice: GalleryCollectionNotice
+    let localImageName: String?
+    private let api = LumiAPIClient()
+
+    private var localImage: UIImage? {
+        guard let localImageName,
+              let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return nil }
+        return UIImage(contentsOfFile: directory.appendingPathComponent(localImageName).path)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack(alignment: .bottomTrailing) {
+                Group {
+                    if let localImage {
+                        Image(uiImage: localImage)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        AsyncImage(url: api.galleryImageURL(id: notice.id, in: "default")) { phase in
+                            if let image = phase.image {
+                                image.resizable().scaledToFill()
+                            } else {
+                                Rectangle().fill(Color.black.opacity(0.06))
+                                    .overlay { ProgressView().controlSize(.small) }
+                            }
+                        }
+                    }
+                }
+                .frame(width: 76, height: 82)
+                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+
+                Image(systemName: "star.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 27, height: 27)
+                    .background(Color(red: 0.77, green: 0.40, blue: 0.27), in: Circle())
+                    .offset(x: 6, y: 6)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("沈屿 收藏了")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text("存进了「\(notice.title)」")
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.black.opacity(0.86))
+                    .lineLimit(1)
+                Text(notice.firstImpression)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(.black.opacity(0.52))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(Color.white.opacity(0.96), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.black.opacity(0.07), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.06), radius: 7, y: 3)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("沈屿收藏了，存进了\(notice.title)。\(notice.firstImpression)")
     }
 }
 

@@ -131,6 +131,22 @@ final class ChatViewModel: ObservableObject {
                 messages.append(bubble)
                 saveLocalConversation()
             }
+            // Only images the AI actually decided to keep produce this lightweight
+            // in-chat collection note. The complete entry remains in “我们 → 相册”.
+            for (index, item) in (response.galleryItems ?? []).enumerated() {
+                let notice = GalleryCollectionNotice(id: item.id, title: item.title, firstImpression: item.firstImpression)
+                guard let data = try? JSONEncoder().encode(notice),
+                      let content = String(data: data, encoding: .utf8) else { continue }
+                messages.append(ChatMessage(
+                    id: UUID(),
+                    role: .assistant,
+                    content: content,
+                    createdAt: assistantMessage.createdAt.addingTimeInterval(0.003 * Double(index + 1)),
+                    localImageFileName: imageFileName,
+                    contentType: "gallery_collected"
+                ))
+                saveLocalConversation()
+            }
         } catch { errorMessage = friendlyError(error); saveLocalConversation() }
     }
 

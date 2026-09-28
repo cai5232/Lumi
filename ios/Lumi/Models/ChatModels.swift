@@ -86,10 +86,20 @@ struct SendMessageRequest: Encodable {
 struct SendMessageResponse: Decodable {
     let userMessage: ChatMessage
     let assistantMessage: ChatMessage
+    let galleryItems: [RemoteGalleryItem]?
     let memorySaved: Bool?
     let speechAudioBase64: String?
     let speechDuration: Double?
     let speechScript: String?
+}
+
+/// A local-only chat card shown after the AI elects to collect an image.
+/// The server keeps the gallery record; this keeps the chat presentation small
+/// and stable even after the conversation is reopened.
+struct GalleryCollectionNotice: Codable, Equatable {
+    let id: String
+    let title: String
+    let firstImpression: String
 }
 
 struct RemoteGalleryItem: Codable, Identifiable, Equatable {

@@ -82,7 +82,11 @@ final class LumiAPIClient {
     }
 
     func galleryImageURL(for item: RemoteGalleryItem, in id: String) -> URL {
-        baseURL.appending(path: "/v1/chats/\(id)/gallery/\(item.id)/image")
+        galleryImageURL(id: item.id, in: id)
+    }
+
+    func galleryImageURL(id itemID: String, in chatID: String) -> URL {
+        baseURL.appending(path: "/v1/chats/\(chatID)/gallery/\(itemID)/image")
     }
 
     func startCall(to id: String, tts: TTSRequestSettings?) async throws -> CallStartResponse {
