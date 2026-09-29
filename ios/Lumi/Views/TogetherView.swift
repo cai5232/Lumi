@@ -525,18 +525,12 @@ private struct DiaryDetailView: View {
     let onDelete: () -> Void
     @Environment(\.dismiss) private var dismiss
 
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy年M月d日  HH:mm"
-        return formatter
-    }()
-
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
                 Text(item.title)
                     .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.black.opacity(0.82))
                     .lineLimit(1)
                     .padding(.horizontal, 70)
                 HStack {
@@ -559,13 +553,10 @@ private struct DiaryDetailView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    Text(Self.dateFormatter.string(from: item.createdAt))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.black.opacity(0.38))
                     Text(item.body)
                         .font(.custom("STKaiti", size: 21))
                         .lineSpacing(8)
-                        .foregroundStyle(.black.opacity(0.78))
+                        .foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.horizontal, 24)
