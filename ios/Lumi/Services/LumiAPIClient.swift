@@ -60,6 +60,12 @@ final class LumiAPIClient {
         return try await perform(request)
     }
 
+    func deleteDiary(_ item: RemoteDiaryItem, in id: String) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/diaries/\(item.id)"))
+        request.httpMethod = "DELETE"
+        _ = try await perform(request) as EmptyResponse
+    }
+
     func sendMessage(_ content: String, to id: String, images: [String] = [], galleryImageIDs: [String] = [], emojiCatalog: [String: [String]] = [:], tts: TTSRequestSettings? = nil) async throws -> SendMessageResponse {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/messages"))
         request.httpMethod = "POST"
@@ -252,6 +258,7 @@ private struct GalleryUpdateRequest: Encodable {
     let visualDescription: String
     let firstImpression: String
 }
+private struct EmptyResponse: Decodable { let deleted: Bool? }
 private struct GalleryDeleteResponse: Decodable { let deleted: Bool }
 
 private struct PushTokenRegistrationResponse: Decodable {

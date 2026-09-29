@@ -124,7 +124,9 @@ struct TogetherView: View {
             .presentationBackground(TogetherColors.background)
         }
         .fullScreenCover(item: $diaryToOpen) { item in
-            DiaryDetailView(item: item)
+            DiaryDetailView(item: item) {
+                Task { await deleteDiary(item) }
+            }
         }
     }
 
@@ -327,6 +329,15 @@ struct TogetherView: View {
         } catch { return error.localizedDescription }
     }
 
+    private func deleteDiary(_ item: RemoteDiaryItem) async {
+        do {
+            try await api.deleteDiary(item, in: "default")
+            diaries.removeAll { $0.id == item.id }
+            saveDiariesToCache()
+            diaryToOpen = nil
+        } catch { diaryError = error.localizedDescription }
+    }
+
     private func loadCachedDiaries() -> [RemoteDiaryItem] {
         guard let data = UserDefaults.standard.data(forKey: "lumi.together.diaries.v1"),
               let items = try? diaryCacheDecoder.decode([RemoteDiaryItem].self, from: data) else { return [] }
@@ -452,7 +463,7 @@ private struct DiaryTimeline: View {
                                 Spacer()
                                 if item.isLocked { Image(systemName: item.lock.type == "capsule" ? "hourglass" : "lock.fill").font(.system(size: 12)).foregroundStyle(TogetherColors.plumBrown.opacity(0.62)) }
                             }
-                            Text(item.body).font(.custom("PingFangSC-Regular", size: 16)).lineSpacing(5).lineLimit(3).multilineTextAlignment(.leading)
+                            Text(item.body).font(.custom("STKaiti", size: 16)).lineSpacing(5).lineLimit(3).multilineTextAlignment(.leading)
                                 .foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
                                 .blur(radius: item.isLocked ? 5 : 0)
                                 .overlay { if item.isLocked { Text(item.lock.type == "capsule" ? "时间胶囊" : "回答问题后开启").font(.system(size: 12, weight: .medium)).foregroundStyle(TogetherColors.plumBrown) } }
@@ -511,6 +522,7 @@ private struct DiaryUnlockView: View {
 
 private struct DiaryDetailView: View {
     let item: RemoteDiaryItem
+    let onDelete: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     private static let dateFormatter: DateFormatter = {
@@ -521,19 +533,37 @@ private struct DiaryDetailView: View {
     }()
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            ZStack {
+                Text(item.title)
+                    .font(.system(size: 17, weight: .medium))
+                    .lineLimit(1)
+                    .padding(.horizontal, 70)
+                HStack {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 19, weight: .medium))
+                    }
+                    Spacer()
+                    Button { onDelete() } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 17, weight: .medium))
+                    }
+                }
+            }
+            .foregroundStyle(TogetherColors.plumBrown)
+            .padding(.horizontal, 22)
+            .padding(.top, 12)
+            .padding(.bottom, 14)
+            .background(TogetherColors.background)
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(item.title)
-                            .font(.system(size: 25, weight: .semibold))
-                            .foregroundStyle(TogetherColors.plumBrown)
-                        Text(Self.dateFormatter.string(from: item.createdAt))
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.black.opacity(0.38))
-                    }
+                    Text(Self.dateFormatter.string(from: item.createdAt))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.black.opacity(0.38))
                     Text(item.body)
-                        .font(.custom("STSong", size: 20))
+                        .font(.custom("STKaiti", size: 21))
                         .lineSpacing(8)
                         .foregroundStyle(.black.opacity(0.78))
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -543,14 +573,8 @@ private struct DiaryDetailView: View {
                 .padding(.bottom, 36)
             }
             .background(TogetherColors.background.ignoresSafeArea())
-            .navigationTitle("日记")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("关闭") { dismiss() }
-                }
-            }
         }
+        .background(TogetherColors.background.ignoresSafeArea())
         .tint(TogetherColors.plumBrown)
     }
 }
