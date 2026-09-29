@@ -873,7 +873,8 @@ private struct RemoteGalleryDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, hasBackground ? 14 : 0)
-        .background(hasBackground ? TogetherColors.descriptionPanel : .clear, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+        // Match the lighter diary panel instead of using an opaque block.
+        .background(hasBackground ? TogetherColors.descriptionPanel.opacity(0.48) : .clear, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
         .overlay {
             if hasBackground {
                 RoundedRectangle(cornerRadius: 15, style: .continuous)
