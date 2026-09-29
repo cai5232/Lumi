@@ -78,6 +78,7 @@ struct TogetherView: View {
                 storedStartAt = Self.anniversaryStartDate.timeIntervalSince1970
                 didApplyAnniversary = true
             }
+            if diaries.isEmpty { diaries = loadCachedDiaries() }
             Task { await loadGallery(); await loadDiaries() }
         }
         .onChange(of: tab) { _, selected in if selected == .diary { Task { await loadDiaries() } } }
@@ -291,17 +292,50 @@ struct TogetherView: View {
     private func loadDiaries() async {
         isLoadingDiaries = true
         defer { isLoadingDiaries = false }
-        do { diaries = try await api.fetchDiaries(for: "default"); diaryError = nil }
+        do {
+            diaries = try await api.fetchDiaries(for: "default")
+            saveDiariesToCache()
+            diaryError = nil
+        }
         catch { diaryError = error.localizedDescription }
     }
 
     private func unlock(_ item: RemoteDiaryItem, answer: String) async -> String? {
         do {
             let updated = try await api.unlockDiary(item, answer: answer, in: "default")
-            if let index = diaries.firstIndex(where: { $0.id == updated.id }) { diaries[index] = updated }
+            if let index = diaries.firstIndex(where: { $0.id == updated.id }) { diaries[index] = updated; saveDiariesToCache() }
             diaryToUnlock = nil
             return nil
         } catch { return error.localizedDescription }
+    }
+
+    private func loadCachedDiaries() -> [RemoteDiaryItem] {
+        guard let data = UserDefaults.standard.data(forKey: "lumi.together.diaries.v1"),
+              let items = try? diaryCacheDecoder.decode([RemoteDiaryItem].self, from: data) else { return [] }
+        return items
+    }
+
+    private func saveDiariesToCache() {
+        guard let data = try? diaryCacheEncoder.encode(diaries) else { return }
+        UserDefaults.standard.set(data, forKey: "lumi.together.diaries.v1")
+    }
+
+    private var diaryCacheEncoder: JSONEncoder {
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; return encoder
+    }
+
+    private var diaryCacheDecoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { value in
+            let source = try value.singleValueContainer().decode(String.self)
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = formatter.date(from: source) { return date }
+            formatter.formatOptions = [.withInternetDateTime]
+            if let date = formatter.date(from: source) { return date }
+            throw DecodingError.dataCorrupted(.init(codingPath: value.codingPath, debugDescription: "Invalid cached diary date"))
+        }
+        return decoder
     }
 
     private func update(_ item: RemoteGalleryItem, title: String, visualDescription: String, firstImpression: String) async {
