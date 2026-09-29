@@ -478,30 +478,45 @@ private struct DiaryTimeline: View {
                     Button {
                         onTap(item)
                     } label: {
-                        VStack(alignment: .leading, spacing: 9) {
-                            HStack {
-                                if item.isLocked {
-                                    Label("已封缄", systemImage: item.lock.type == "capsule" ? "hourglass" : "lock.fill")
-                                        .font(.system(size: 13, weight: .medium))
-                                    Spacer()
-                                    if item.lock.type == "capsule", let unlockAt = item.lock.unlockAt {
-                                        Text("解封于 · \(unlockAt.formatted(.dateTime.month(.abbreviated).day().hour().minute()))")
-                                            .font(.system(size: 12, weight: .medium))
+                        Group {
+                            if item.isLocked {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Label("已封缄", systemImage: item.lock.type == "capsule" ? "hourglass" : "lock.fill")
+                                            .font(.system(size: 16, weight: .medium))
+                                        Spacer()
+                                        if item.lock.type == "capsule", let unlockAt = item.lock.unlockAt {
+                                            Text("⌛ \(remainingText(unlockAt))")
+                                                .font(.system(size: 15, weight: .regular))
+                                        }
                                     }
-                                } else {
-                                    Text(item.title)
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundStyle(.black.opacity(0.82))
-                                    Spacer()
+                                    .foregroundStyle(TogetherColors.plumBrown.opacity(0.70))
+                                    Spacer(minLength: 12)
+                                    Text(item.lock.type == "capsule" ? "时间胶囊" : "回答问题后开启")
+                                        .font(.system(size: 18, weight: .medium))
+                                        .foregroundStyle(TogetherColors.plumBrown.opacity(0.62))
+                                    Spacer(minLength: 14)
+                                    if let unlockAt = item.lock.unlockAt {
+                                        Text("解封于 · \(unlockAt.formatted(.dateTime.month(.abbreviated).day().weekday(.wide).hour().minute()))")
+                                            .font(.system(size: 14, weight: .regular))
+                                    }
                                 }
+                                .foregroundStyle(TogetherColors.plumBrown.opacity(0.55))
+                                .padding(.horizontal, 22)
+                                .padding(.vertical, 18)
+                                .frame(maxWidth: .infinity, minHeight: 148, alignment: .leading)
+                            } else {
+                                VStack(alignment: .leading, spacing: 9) {
+                                    Text(item.title)
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundStyle(.black.opacity(0.82))
+                                    Text(item.body).font(.custom("STKaiti", size: 16)).lineSpacing(5).lineLimit(3).multilineTextAlignment(.leading)
+                                        .foregroundStyle(.black.opacity(0.82))
+                                }
+                                .padding(16)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            Text(item.body).font(.custom("STKaiti", size: 16)).lineSpacing(5).lineLimit(3).multilineTextAlignment(.leading)
-                                .foregroundStyle(.black.opacity(0.82))
-                                .blur(radius: item.isLocked ? 5 : 0)
-                                .overlay { if item.isLocked { Text(item.lock.type == "capsule" ? "时间胶囊" : "回答问题后开启").font(.system(size: 12, weight: .medium)).foregroundStyle(TogetherColors.plumBrown) } }
                         }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                         .background {
                             if item.isLocked {
                                 DiagonalDiaryPattern()
@@ -517,6 +532,13 @@ private struct DiaryTimeline: View {
                 }
             }
         }
+    }
+
+    private func remainingText(_ date: Date) -> String {
+        let seconds = max(0, Int(date.timeIntervalSinceNow))
+        if seconds >= 86_400 { return "还有\(seconds / 86_400)天" }
+        if seconds >= 3_600 { return "还有\(seconds / 3_600)小时" }
+        return "还有\(max(1, seconds / 60))分钟"
     }
 }
 
