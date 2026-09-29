@@ -8,14 +8,30 @@ struct LumiApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ChatDetailView(model: ChatViewModel(
-                initialMessages: [
-                    ChatMessage(id: UUID(), role: .assistant, content: "下午的风很轻，想和你说说话。", createdAt: .now),
-                    ChatMessage(id: UUID(), role: .user, content: "我在，慢慢说。", createdAt: .now),
-                    ChatMessage(id: UUID(), role: .assistant, content: "那就从窗边的云开始吧。", createdAt: .now)
-                ],
-                shouldLoadFromServer: true
-            ))
+            LumiRootView()
+        }
+    }
+}
+
+@MainActor
+private struct LumiRootView: View {
+    @StateObject private var model: ChatViewModel
+
+    init() {
+        _model = StateObject(wrappedValue: ChatViewModel(
+            initialMessages: [
+                ChatMessage(id: UUID(), role: .assistant, content: "下午的风很轻，想和你说说话。", createdAt: .now),
+                ChatMessage(id: UUID(), role: .user, content: "我在，慢慢说。", createdAt: .now),
+                ChatMessage(id: UUID(), role: .assistant, content: "那就从窗边的云开始吧。", createdAt: .now)
+            ],
+            shouldLoadFromServer: true
+        ))
+    }
+
+    var body: some View {
+        ZStack {
+            ChatDetailView(model: model)
+            DraggableClawdPet(assetName: model.isSending ? "clawd-working-thinking" : "clawd-idle-follow")
         }
     }
 }

@@ -146,12 +146,6 @@ struct ChatDetailView: View {
             composer
                 .padding(.bottom, 10)
         }
-        .overlay(alignment: .bottomTrailing) {
-            ClawdPetView(assetName: model.isSending ? "clawd-working-thinking" : "clawd-idle-follow")
-                .frame(width: 58, height: 58)
-                .padding(.trailing, 16)
-                .padding(.bottom, 154)
-        }
         .task {
             await model.load(waitForRemote: false)
             await model.load()
