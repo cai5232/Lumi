@@ -2,6 +2,7 @@ import SwiftUI
 import PhotosUI
 import UIKit
 import ImageIO
+import UserNotifications
 
 private enum TogetherTab: String, CaseIterable, Identifiable {
     case gallery = "相册"
@@ -315,6 +316,7 @@ struct TogetherView: View {
                 diarySelectedDate = newest.createdAt
             }
             saveDiariesToCache()
+            scheduleDiaryNotifications(diaries)
             diaryError = nil
         }
         catch { diaryError = error.localizedDescription }
@@ -347,6 +349,25 @@ struct TogetherView: View {
     private func saveDiariesToCache() {
         guard let data = try? diaryCacheEncoder.encode(diaries) else { return }
         UserDefaults.standard.set(data, forKey: "lumi.together.diaries.v1")
+    }
+
+    private func scheduleDiaryNotifications(_ items: [RemoteDiaryItem]) {
+        let center = UNUserNotificationCenter.current()
+        for item in items where item.isLocked && item.lock.type == "capsule" {
+            guard let unlockAt = item.lock.unlockAt, unlockAt > .now else { continue }
+            let components = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: unlockAt)
+            let content = UNMutableNotificationContent()
+            content.title = "时间胶囊可以打开了"
+            content.body = item.title
+            content.sound = .default
+            content.userInfo = ["kind": "diary_capsule", "diaryID": item.id]
+            let request = UNNotificationRequest(
+                identifier: "lumi.diary.capsule.\(item.id)",
+                content: content,
+                trigger: UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+            )
+            center.add(request)
+        }
     }
 
     private var diaryCacheEncoder: JSONEncoder {
@@ -459,11 +480,20 @@ private struct DiaryTimeline: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 9) {
                             HStack {
-                                Text(item.isLocked ? "锁住的日记" : item.title)
+                                if item.isLocked {
+                                    Label("已封缄", systemImage: item.lock.type == "capsule" ? "hourglass" : "lock.fill")
+                                        .font(.system(size: 13, weight: .medium))
+                                    Spacer()
+                                    if item.lock.type == "capsule", let unlockAt = item.lock.unlockAt {
+                                        Text("解封于 · \(unlockAt.formatted(.dateTime.month(.abbreviated).day().hour().minute()))")
+                                            .font(.system(size: 12, weight: .medium))
+                                    }
+                                } else {
+                                    Text(item.title)
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundStyle(.black.opacity(0.82))
-                                Spacer()
-                                if item.isLocked { Image(systemName: item.lock.type == "capsule" ? "hourglass" : "lock.fill").font(.system(size: 12)).foregroundStyle(TogetherColors.plumBrown.opacity(0.62)) }
+                                    Spacer()
+                                }
                             }
                             Text(item.body).font(.custom("STKaiti", size: 16)).lineSpacing(5).lineLimit(3).multilineTextAlignment(.leading)
                                 .foregroundStyle(.black.opacity(0.82))
@@ -472,13 +502,38 @@ private struct DiaryTimeline: View {
                         }
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(TogetherColors.descriptionPanel.opacity(0.48), in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+                        .background {
+                            if item.isLocked {
+                                DiagonalDiaryPattern()
+                                    .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
+                            } else {
+                                TogetherColors.descriptionPanel.opacity(0.48)
+                                    .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
+                            }
+                        }
                         .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous).stroke(TogetherColors.plumBrown.opacity(0.11), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
+    }
+}
+
+private struct DiagonalDiaryPattern: View {
+    var body: some View {
+        Canvas { context, size in
+            let spacing: CGFloat = 15
+            var path = Path()
+            var x = -size.height
+            while x < size.width + size.height {
+                path.move(to: CGPoint(x: x, y: size.height))
+                path.addLine(to: CGPoint(x: x + size.height, y: 0))
+                x += spacing
+            }
+            context.stroke(path, with: .color(TogetherColors.plumBrown.opacity(0.10)), lineWidth: 1)
+        }
+        .background(TogetherColors.descriptionPanel.opacity(0.34))
     }
 }
 
