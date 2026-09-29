@@ -41,7 +41,10 @@ final class LumiAPIClient {
     }
 
     func fetchDiaries(for id: String) async throws -> [RemoteDiaryItem] {
-        let response: DiaryListResponse = try await request(path: "/v1/chats/\(id)/diaries")
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/diaries"))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        let response: DiaryListResponse = try await perform(request)
         return response.items
     }
 
