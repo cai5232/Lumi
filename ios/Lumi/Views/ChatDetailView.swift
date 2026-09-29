@@ -104,11 +104,9 @@ struct ChatDetailView: View {
                     }
                 }
                 .onChange(of: model.messages.last?.id) { _, _ in
-                                    guard keyboardVisible else { return }
                                     Task { @MainActor in
                                         await Task.yield()
-                                        try? await Task.sleep(for: .milliseconds(280))
-                                        guard keyboardVisible else { return }
+                                        try? await Task.sleep(for: .milliseconds(120))
                                         withAnimation(.easeOut(duration: 0.24)) { proxy.scrollTo("chat-bottom-anchor", anchor: .bottom) }
                                     }
                                 }
@@ -251,7 +249,7 @@ struct ChatDetailView: View {
                     .frame(width: 44, height: 44)
                     .foregroundStyle(.gray.opacity(0.78))
                     .background(.ultraThinMaterial, in: Circle())
-                    .background(Color(red: 0.985, green: 0.956, blue: 0.950).opacity(0.80), in: Circle())
+                    .background(Color(red: 0.957, green: 0.910, blue: 0.916).opacity(0.80), in: Circle())
                     .overlay(Circle().stroke(.white.opacity(0.42), lineWidth: 1))
                     .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
             }
@@ -275,7 +273,7 @@ struct ChatDetailView: View {
             }
             .foregroundStyle(.gray.opacity(0.78))
             .background(.ultraThinMaterial, in: Capsule())
-            .background(Color(red: 0.985, green: 0.956, blue: 0.950).opacity(0.80), in: Capsule())
+            .background(Color(red: 0.957, green: 0.910, blue: 0.916).opacity(0.80), in: Capsule())
             .overlay(Capsule().stroke(.white.opacity(0.42), lineWidth: 1))
             .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         }
@@ -322,7 +320,7 @@ struct ChatDetailView: View {
                 .foregroundStyle(.gray.opacity(0.78))
                 .frame(width: 44, height: 44)
                 .background(.ultraThinMaterial, in: Circle())
-                .background(Color(red: 0.985, green: 0.956, blue: 0.950).opacity(0.80), in: Circle())
+                .background(Color(red: 0.957, green: 0.910, blue: 0.916).opacity(0.80), in: Circle())
                 .overlay(Circle().stroke(.white.opacity(0.42), lineWidth: 1))
                 .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         }
@@ -357,7 +355,8 @@ struct ChatDetailView: View {
                let localName = message.localImageFileName,
                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent(localName),
                let image = UIImage(contentsOfFile: url.path) {
-                Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 210, maxHeight: 190).clipShape(RoundedRectangle(cornerRadius: 14))
+                Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 210, maxHeight: 190)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             HStack(alignment: .top) {
                 if !isUserSide {
@@ -803,7 +802,7 @@ private struct ComposerInputView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
-        .background(Color(red: 0.985, green: 0.956, blue: 0.950).opacity(0.80), in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+        .background(Color(red: 0.957, green: 0.910, blue: 0.916).opacity(0.80), in: RoundedRectangle(cornerRadius: 32, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 32, style: .continuous).stroke(.white.opacity(0.42), lineWidth: 1))
         .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         .padding(.horizontal, 16)

@@ -28,6 +28,7 @@ struct TogetherView: View {
     @State private var diaryError: String?
     @State private var isLoadingDiaries = false
     @State private var diaryToUnlock: RemoteDiaryItem?
+    @State private var diarySelectedDate = Date()
     private let api = LumiAPIClient()
 
     private static let anniversaryStartDate = Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 7, day: 23))!
@@ -54,7 +55,7 @@ struct TogetherView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 24) {
+                VStack(spacing: 14) {
                     relationshipCard
                     tabPicker
                     tabContent
@@ -176,15 +177,15 @@ struct TogetherView: View {
     }
 
     private var diaryContent: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            DiaryWeekStrip()
+        VStack(alignment: .leading, spacing: 11) {
+            DiaryWeekStrip(selectedDate: $diarySelectedDate)
             HStack(alignment: .firstTextBaseline) {
-                Text("日记").font(.system(size: 21, weight: .bold))
+                Text(diarySelectedDate.formatted(.dateTime.weekday(.wide))).font(.system(size: 21, weight: .bold))
                 Spacer()
-                Text("\(diaries.count) 篇").font(.system(size: 13, weight: .medium)).foregroundStyle(.black.opacity(0.38))
+                Text("\(diariesForSelectedDate.count) 篇").font(.system(size: 13, weight: .medium)).foregroundStyle(.black.opacity(0.38))
             }
             if let diaryError { Text(diaryError).font(.system(size: 12)).foregroundStyle(.red.opacity(0.72)) }
-            if diaries.isEmpty {
+            if diariesForSelectedDate.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "book.closed").font(.system(size: 26)).foregroundStyle(TogetherColors.plumBrown.opacity(0.56))
                     Text(isLoadingDiaries ? "正在翻开日记…" : "有些瞬间，会被他悄悄写进这里。")
@@ -193,9 +194,13 @@ struct TogetherView: View {
                 .frame(maxWidth: .infinity).padding(.vertical, 62)
                 .background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             } else {
-                DiaryTimeline(items: diaries) { item in diaryToUnlock = item }
+                DiaryTimeline(items: diariesForSelectedDate) { item in diaryToUnlock = item }
             }
         }
+    }
+
+    private var diariesForSelectedDate: [RemoteDiaryItem] {
+        diaries.filter { Calendar.current.isDate($0.createdAt, inSameDayAs: diarySelectedDate) }
     }
 
     private var galleryContent: some View {
@@ -364,29 +369,46 @@ private enum TogetherColors {
 }
 
 private struct DiaryWeekStrip: View {
+    @Binding var selectedDate: Date
     private let calendar = Calendar.current
     private var days: [Date] {
         let today = calendar.startOfDay(for: .now)
-        let weekday = calendar.component(.weekday, from: today)
-        let first = calendar.date(byAdding: .day, value: -(weekday - 1), to: today) ?? today
-        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: first) }
+        return (-14...21).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
     }
+    private static let englishWeekday: DateFormatter = {
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.dateFormat = "EEE"; return formatter
+    }()
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(days, id: \.self) { date in
-                VStack(spacing: 8) {
-                    Text(date.formatted(.dateTime.weekday(.narrow)))
-                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.black.opacity(0.38))
-                    Text(date.formatted(.dateTime.day()))
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(calendar.isDateInToday(date) ? .white : .black.opacity(0.74))
-                        .frame(width: 34, height: 34)
-                        .background(calendar.isDateInToday(date) ? TogetherColors.plumBrown : .clear, in: Circle())
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(days, id: \.self) { date in
+                        Button {
+                            withAnimation(.easeOut(duration: 0.18)) { selectedDate = date }
+                        } label: {
+                            VStack(spacing: 7) {
+                                Text(Self.englishWeekday.string(from: date).uppercased())
+                                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(.black.opacity(0.38))
+                                    .frame(width: 42)
+                                Text(date.formatted(.dateTime.day()))
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(calendar.isDate(date, inSameDayAs: selectedDate) ? .white : .black.opacity(0.74))
+                                    .frame(width: 34, height: 34)
+                                    .background(calendar.isDate(date, inSameDayAs: selectedDate) ? TogetherColors.plumBrown : .clear, in: Circle())
+                            }
+                            .frame(width: 48)
+                        }
+                        .buttonStyle(.plain)
+                        .id(calendar.startOfDay(for: date))
+                    }
                 }
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 1)
             }
+            .scrollIndicators(.hidden)
+            .onAppear { proxy.scrollTo(calendar.startOfDay(for: selectedDate), anchor: .center) }
+            .onChange(of: selectedDate) { _, date in proxy.scrollTo(calendar.startOfDay(for: date), anchor: .center) }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 2)
     }
 }
 
@@ -478,10 +500,12 @@ private struct HeartbeatDivider: View {
     var body: some View {
         ZStack {
             HeartbeatLine()
-                .stroke(TogetherColors.pulse, style: StrokeStyle(lineWidth: 2.25, lineCap: .round, lineJoin: .round))
+                .stroke(TogetherColors.pulse.opacity(0.90), style: StrokeStyle(lineWidth: 2.15, lineCap: .round, lineJoin: .round))
             Image(systemName: "heart.fill")
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(TogetherColors.pulse)
+                .padding(4)
+                .background(.white.opacity(0.86), in: Circle())
         }
         .accessibilityHidden(true)
     }
@@ -490,22 +514,13 @@ private struct HeartbeatDivider: View {
 private struct HeartbeatLine: Shape {
     func path(in rect: CGRect) -> Path {
         let middleY = rect.midY
-        let peak = rect.height * 0.36
-        let low = rect.height * 0.66
         var path = Path()
 
         path.move(to: CGPoint(x: rect.minX, y: middleY))
-        path.addLine(to: CGPoint(x: rect.width * 0.14, y: middleY))
-        path.addLine(to: CGPoint(x: rect.width * 0.24, y: peak))
-        path.addLine(to: CGPoint(x: rect.width * 0.35, y: low))
-        path.addLine(to: CGPoint(x: rect.width * 0.40, y: middleY))
-        path.addLine(to: CGPoint(x: rect.width * 0.50, y: middleY))
-
-        path.move(to: CGPoint(x: rect.width * 0.50, y: middleY))
-        path.addLine(to: CGPoint(x: rect.width * 0.60, y: middleY))
-        path.addLine(to: CGPoint(x: rect.width * 0.65, y: low))
-        path.addLine(to: CGPoint(x: rect.width * 0.76, y: peak))
-        path.addLine(to: CGPoint(x: rect.width * 0.86, y: middleY))
+        path.addLine(to: CGPoint(x: rect.width * 0.22, y: middleY))
+        path.addCurve(to: CGPoint(x: rect.width * 0.42, y: middleY), control1: CGPoint(x: rect.width * 0.28, y: middleY), control2: CGPoint(x: rect.width * 0.31, y: rect.height * 0.37))
+        path.move(to: CGPoint(x: rect.width * 0.58, y: middleY))
+        path.addCurve(to: CGPoint(x: rect.width * 0.78, y: middleY), control1: CGPoint(x: rect.width * 0.69, y: rect.height * 0.37), control2: CGPoint(x: rect.width * 0.72, y: middleY))
         path.addLine(to: CGPoint(x: rect.maxX, y: middleY))
         return path
     }

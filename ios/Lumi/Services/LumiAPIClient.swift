@@ -68,7 +68,19 @@ final class LumiAPIClient {
         request.httpBody = try JSONEncoder.api.encode(
             SendMessageRequest(content: content, systemPrompt: LumiSystemPrompt.main, images: images, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts)
         )
-        let response: SendMessageResponse = try await perform(request)
+        // A model reply can outlive the foreground network timeout. Retrying
+        // the *same* idempotency key asks the server for that in-flight or
+        // completed result instead of starting a second model response.
+        let response: SendMessageResponse
+        do {
+            response = try await perform(request)
+        } catch {
+            let nsError = error as NSError
+            guard nsError.domain == NSURLErrorDomain,
+                  [NSURLErrorTimedOut, NSURLErrorNetworkConnectionLost].contains(nsError.code) else { throw error }
+            try? await Task.sleep(for: .seconds(1.2))
+            response = try await perform(request)
+        }
         if response.assistantMessage.content == "我想先听你说的这一句。" {
             throw LumiAPIError.server("后端目前返回的是默认语录，尚未接通模型。请确认 Zeabur 已部署最新后端，并把真实公网域名填入客户端。")
         }
