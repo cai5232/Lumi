@@ -1273,7 +1273,24 @@ private struct SettingsView: View {
         ModelProvider(id: "backup", models: [], configuredModel: nil)
     ]
     @AppStorage("lumi.modelProvider") private var selectedProvider = "zenmux"
-    @AppStorage("lumi.modelName") private var selectedModel = ""
+    private var selectedModel: String {
+        get {
+            let key = "lumi.modelName.\(selectedProvider)"
+            if let value = UserDefaults.standard.string(forKey: key) { return value }
+            // Migrate the old single-model preference to ZenMux only.
+            if selectedProvider == "zenmux" {
+                return UserDefaults.standard.string(forKey: "lumi.modelName") ?? ""
+            }
+            return ""
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "lumi.modelName.\(selectedProvider)")
+            if selectedProvider == "zenmux" { UserDefaults.standard.set(newValue, forKey: "lumi.modelName") }
+        }
+    }
+    private var selectedModelBinding: Binding<String> {
+        Binding(get: { selectedModel }, set: { selectedModel = $0 })
+    }
     private let api = LumiAPIClient()
 
     var body: some View {
@@ -1299,7 +1316,7 @@ private struct SettingsView: View {
                             }
                         }
                         if let provider = modelProviders.first(where: { $0.id == selectedProvider }) {
-                            Picker("模型", selection: $selectedModel) {
+                            Picker("模型", selection: selectedModelBinding) {
                                 if provider.models.isEmpty {
                                     Text("暂无模型，点击刷新").tag("")
                                 } else {
