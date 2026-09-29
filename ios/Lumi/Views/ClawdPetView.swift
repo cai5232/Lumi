@@ -48,7 +48,7 @@ private extension WKWebView {
 /// so this stays above every Lumi screen and can be dragged anywhere in the window.
 struct DraggableClawdPet: View {
     var assetName: String = "clawd-idle-follow"
-    private let size: CGFloat = 96
+    private let size: CGFloat = 112
     @AppStorage("lumi.clawd.pet.x") private var storedX = 0.0
     @AppStorage("lumi.clawd.pet.y") private var storedY = 0.0
     @State private var dragTranslation: CGSize = .zero
