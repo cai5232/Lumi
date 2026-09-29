@@ -1273,23 +1273,18 @@ private struct SettingsView: View {
         ModelProvider(id: "backup", models: [], configuredModel: nil)
     ]
     @AppStorage("lumi.modelProvider") private var selectedProvider = "zenmux"
-    private var selectedModel: String {
-        get {
-            let key = "lumi.modelName.\(selectedProvider)"
-            if let value = UserDefaults.standard.string(forKey: key) { return value }
-            // Migrate the old single-model preference to ZenMux only.
-            if selectedProvider == "zenmux" {
-                return UserDefaults.standard.string(forKey: "lumi.modelName") ?? ""
-            }
-            return ""
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "lumi.modelName.\(selectedProvider)")
-            if selectedProvider == "zenmux" { UserDefaults.standard.set(newValue, forKey: "lumi.modelName") }
-        }
-    }
+    @AppStorage("lumi.modelName.zenmux") private var zenmuxModel = ""
+    @AppStorage("lumi.modelName.backup") private var backupModel = ""
+    @AppStorage("lumi.modelName") private var legacyModel = ""
+    private var selectedModel: String { selectedProvider == "backup" ? backupModel : (zenmuxModel.isEmpty ? legacyModel : zenmuxModel) }
     private var selectedModelBinding: Binding<String> {
-        Binding(get: { selectedModel }, set: { selectedModel = $0 })
+        Binding(
+            get: { selectedModel },
+            set: { value in
+                if selectedProvider == "backup" { backupModel = value }
+                else { zenmuxModel = value; legacyModel = value }
+            }
+        )
     }
     private let api = LumiAPIClient()
 
@@ -1411,7 +1406,7 @@ private struct SettingsView: View {
         .onChange(of: proactiveNudgeInterval) { _, _ in saveProactiveSettings() }
         .onChange(of: proactiveNudgeMessage) { _, _ in saveProactiveSettings() }
         .onChange(of: selectedProvider) { _, _ in
-            selectedModel = ""
+            setSelectedModel("")
             Task { await loadModelProviders() }
         }
         .background(Color(red: 0.984, green: 0.949, blue: 0.957))
@@ -1492,8 +1487,13 @@ private struct SettingsView: View {
         modelProviders = [zenmux, fetchedBackup]
         if !modelProviders.contains(where: { $0.id == selectedProvider }) { selectedProvider = modelProviders[0].id }
         if let provider = modelProviders.first(where: { $0.id == selectedProvider }), !provider.models.contains(selectedModel) {
-            selectedModel = provider.configuredModel ?? provider.models.first ?? ""
+            setSelectedModel(provider.configuredModel ?? provider.models.first ?? "")
         }
+    }
+
+    private func setSelectedModel(_ value: String) {
+        if selectedProvider == "backup" { backupModel = value }
+        else { zenmuxModel = value; legacyModel = value }
     }
 
     private func saveProactiveSettings() {
