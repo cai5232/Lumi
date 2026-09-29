@@ -1268,7 +1268,7 @@ private struct SettingsView: View {
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
     @State private var showingMiniMaxSettings = false
     @State private var pushAPIToken = LumiKeychain.read(account: "push-api-token")
-    @State private var modelProviders: [ModelProvider] = []
+    @State private var modelProviders: [ModelProvider] = [ModelProvider(id: "zenmux", models: [], configuredModel: nil)]
     @AppStorage("lumi.modelProvider") private var selectedProvider = "zenmux"
     @AppStorage("lumi.modelName") private var selectedModel = ""
     private let api = LumiAPIClient()
@@ -1449,10 +1449,14 @@ private struct SettingsView: View {
     }
 
     private func loadModelProviders() async {
-        guard let providers = try? await api.fetchModelProviders(), !providers.isEmpty else { return }
-        modelProviders = providers
-        if !providers.contains(where: { $0.id == selectedProvider }) { selectedProvider = providers[0].id }
-        if let provider = providers.first(where: { $0.id == selectedProvider }), !provider.models.contains(selectedModel) {
+        let zenmux = ModelProvider(id: "zenmux", models: [], configuredModel: nil)
+        guard let fetched = try? await api.fetchModelProviders() else {
+            modelProviders = [zenmux]
+            return
+        }
+        modelProviders = [zenmux] + fetched.filter { $0.id != "zenmux" }
+        if !modelProviders.contains(where: { $0.id == selectedProvider }) { selectedProvider = modelProviders[0].id }
+        if let provider = modelProviders.first(where: { $0.id == selectedProvider }), !provider.models.contains(selectedModel) {
             selectedModel = provider.configuredModel ?? provider.models.first ?? ""
         }
     }
