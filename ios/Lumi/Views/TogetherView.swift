@@ -486,21 +486,21 @@ private struct DiaryTimeline: View {
                                 VStack(alignment: .leading, spacing: 0) {
                                     HStack(alignment: .firstTextBaseline) {
                                         Text(item.title)
-                                            .font(.system(size: 15, weight: .medium))
+                                            .font(.system(size: 13, weight: .medium))
                                         Spacer()
                                         if item.lock.type == "capsule", let unlockAt = item.lock.unlockAt {
                                             Text(remainingText(unlockAt))
-                                                .font(.system(size: 15, weight: .regular))
+                                                .font(.system(size: 13, weight: .regular))
                                         }
                                     }
                                     .foregroundStyle(TogetherColors.plumBrown.opacity(0.70))
                                     Spacer(minLength: 10)
                                     if let unlockAt = item.lock.unlockAt {
                                         Text("解封于 · \(Self.unlockDate.string(from: unlockAt))")
-                                            .font(.system(size: 14, weight: .regular))
+                                            .font(.system(size: 12, weight: .regular))
                                     } else {
                                         Text("回答问题后开启")
-                                            .font(.system(size: 14, weight: .regular))
+                                            .font(.system(size: 12, weight: .regular))
                                     }
                                 }
                                 .foregroundStyle(TogetherColors.plumBrown.opacity(0.55))
