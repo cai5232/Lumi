@@ -489,11 +489,11 @@ private struct DiaryTimeline: View {
                                 VStack(alignment: .leading, spacing: 0) {
                                     HStack(alignment: .firstTextBaseline) {
                                         Text(item.title)
-                                            .font(.system(size: 13, weight: .medium))
+                                            .font(.system(size: 12, weight: .medium))
                                         Spacer()
                                         if item.lock.type == "capsule", let unlockAt = item.lock.unlockAt {
                                             Text(remainingText(unlockAt))
-                                                .font(.system(size: 13, weight: .regular))
+                                                .font(.system(size: 12, weight: .regular))
                                         }
                                     }
                                     .foregroundStyle(TogetherColors.plumBrown.opacity(0.70))
@@ -513,9 +513,9 @@ private struct DiaryTimeline: View {
                             } else {
                                 VStack(alignment: .leading, spacing: 9) {
                                     Text(item.title)
-                                        .font(.system(size: 14, weight: .medium))
+                                        .font(.system(size: 12, weight: .medium))
                                         .foregroundStyle(.black.opacity(0.82))
-                                    Text(item.body).font(.custom("STKaiti", size: 16)).lineSpacing(5).lineLimit(3).multilineTextAlignment(.leading)
+                                    Text(item.body).font(.custom("STKaiti", size: 15)).lineSpacing(4).lineLimit(3).multilineTextAlignment(.leading)
                                         .foregroundStyle(.black.opacity(0.82))
                                 }
                                 .padding(16)

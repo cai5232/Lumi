@@ -48,10 +48,18 @@ private extension WKWebView {
 /// so this stays above every Lumi screen and can be dragged anywhere in the window.
 struct DraggableClawdPet: View {
     var assetName: String = "clawd-idle-follow"
-    private let size: CGFloat = 72
+    private let size: CGFloat = 96
     @AppStorage("lumi.clawd.pet.x") private var storedX = 0.0
     @AppStorage("lumi.clawd.pet.y") private var storedY = 0.0
     @State private var dragTranslation: CGSize = .zero
+    @State private var isDragging = false
+    @State private var isTapped = false
+
+    private var visibleAsset: String {
+        if isDragging { return "clawd-react-drag" }
+        if isTapped { return "clawd-react-double-jump" }
+        return assetName
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -59,7 +67,7 @@ struct DraggableClawdPet: View {
             let fallbackY = proxy.size.height - max(proxy.safeAreaInsets.bottom, 18) - 190
             let x = storedX > 0 ? storedX : fallbackX
             let y = storedY > 0 ? storedY : fallbackY
-            ClawdPetView(assetName: assetName)
+            ClawdPetView(assetName: visibleAsset)
                 .frame(width: size, height: size)
                 .contentShape(Rectangle())
                 .position(x: clamp(x + dragTranslation.width, lower: size / 2, upper: proxy.size.width - size / 2),
@@ -67,12 +75,22 @@ struct DraggableClawdPet: View {
                 .allowsHitTesting(true)
                 .gesture(
                     DragGesture(minimumDistance: 2)
-                        .onChanged { dragTranslation = $0.translation }
+                        .onChanged {
+                            isDragging = true
+                            dragTranslation = $0.translation
+                        }
                         .onEnded { value in
                             storedX = clamp(x + value.translation.width, lower: size / 2, upper: proxy.size.width - size / 2)
                             storedY = clamp(y + value.translation.height, lower: size / 2 + proxy.safeAreaInsets.top, upper: proxy.size.height - size / 2)
                             dragTranslation = .zero
+                            isDragging = false
                         }
+                )
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        isTapped = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { isTapped = false }
+                    }
                 )
                 .onAppear {
                     if storedX == 0 { storedX = fallbackX }
