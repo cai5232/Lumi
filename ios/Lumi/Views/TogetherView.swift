@@ -460,13 +460,13 @@ private struct DiaryTimeline: View {
                         VStack(alignment: .leading, spacing: 9) {
                             HStack {
                                 Text(item.isLocked ? "锁住的日记" : item.title)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(.black.opacity(0.82))
                                 Spacer()
                                 if item.isLocked { Image(systemName: item.lock.type == "capsule" ? "hourglass" : "lock.fill").font(.system(size: 12)).foregroundStyle(TogetherColors.plumBrown.opacity(0.62)) }
                             }
                             Text(item.body).font(.custom("STKaiti", size: 16)).lineSpacing(5).lineLimit(3).multilineTextAlignment(.leading)
-                                .foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
+                                .foregroundStyle(.black.opacity(0.82))
                                 .blur(radius: item.isLocked ? 5 : 0)
                                 .overlay { if item.isLocked { Text(item.lock.type == "capsule" ? "时间胶囊" : "回答问题后开启").font(.system(size: 12, weight: .medium)).foregroundStyle(TogetherColors.plumBrown) } }
                         }
@@ -531,8 +531,8 @@ private struct DiaryDetailView: View {
         VStack(spacing: 0) {
             ZStack {
                 Text(item.title)
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.black.opacity(0.82))
                     .lineLimit(1)
                     .padding(.horizontal, 70)
                 HStack {
@@ -558,7 +558,7 @@ private struct DiaryDetailView: View {
                     Text(item.body)
                         .font(.custom("STKaiti", size: 21))
                         .lineSpacing(8)
-                        .foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
+                        .foregroundStyle(.black.opacity(0.82))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.horizontal, 24)
