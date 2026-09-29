@@ -95,6 +95,12 @@ struct RemoteDiaryItem: Codable, Identifiable, Equatable {
 
 struct DiaryListResponse: Decodable { let items: [RemoteDiaryItem] }
 struct DiaryUnlockResponse: Decodable { let item: RemoteDiaryItem }
+struct ModelProvider: Decodable, Identifiable {
+    let id: String
+    let models: [String]
+    let configuredModel: String?
+}
+struct ModelProvidersResponse: Decodable { let providers: [ModelProvider] }
 
 struct SendMessageRequest: Encodable {
     let content: String
@@ -103,6 +109,8 @@ struct SendMessageRequest: Encodable {
     var galleryImageIDs: [String] = []
     var emojiCatalog: [String: [String]] = [:]
     var tts: TTSRequestSettings?
+    var provider: String = "zenmux"
+    var model: String = ""
 }
 
 struct SendMessageResponse: Decodable {

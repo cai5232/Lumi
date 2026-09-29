@@ -1268,6 +1268,9 @@ private struct SettingsView: View {
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
     @State private var showingMiniMaxSettings = false
     @State private var pushAPIToken = LumiKeychain.read(account: "push-api-token")
+    @State private var modelProviders: [ModelProvider] = []
+    @AppStorage("lumi.modelProvider") private var selectedProvider = "zenmux"
+    @AppStorage("lumi.modelName") private var selectedModel = ""
     private let api = LumiAPIClient()
 
     var body: some View {
@@ -1281,6 +1284,25 @@ private struct SettingsView: View {
                     NavigationLink(destination: EmojiManagementView()) {
                         settingsCard(title: "颜文字管理", subtitle: "按心情整理，供沈屿自然选用", icon: "face.smiling")
                     }
+                }
+
+                Section("模型线路") {
+                    if modelProviders.isEmpty {
+                        Text("正在读取中转站模型…").font(.system(size: 13)).foregroundStyle(.secondary)
+                    } else {
+                        Picker("线路", selection: $selectedProvider) {
+                            ForEach(modelProviders) { provider in
+                                Text(provider.id == "zenmux" ? "ZenMux" : "备用中转").tag(provider.id)
+                            }
+                        }
+                        if let provider = modelProviders.first(where: { $0.id == selectedProvider }), !provider.models.isEmpty {
+                            Picker("模型", selection: $selectedModel) {
+                                ForEach(provider.models, id: \.self) { model in Text(model).tag(model) }
+                            }
+                        }
+                    }
+                    Text("切换后聊天、图片、日记、电话和保活都会使用当前线路。模型名称由中转站自动提供。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -1354,6 +1376,7 @@ private struct SettingsView: View {
         .task {
             await refreshNotificationStatus()
             await loadProactiveSettings()
+            await loadModelProviders()
         }
         .onChange(of: proactiveNudgeEnabled) { _, _ in saveProactiveSettings() }
         .onChange(of: proactiveNudgeInterval) { _, _ in saveProactiveSettings() }
@@ -1423,6 +1446,15 @@ private struct SettingsView: View {
             syncStatus = syncErrorMessage(error)
         }
         settingsLoaded = true
+    }
+
+    private func loadModelProviders() async {
+        guard let providers = try? await api.fetchModelProviders(), !providers.isEmpty else { return }
+        modelProviders = providers
+        if !providers.contains(where: { $0.id == selectedProvider }) { selectedProvider = providers[0].id }
+        if let provider = providers.first(where: { $0.id == selectedProvider }), !provider.models.contains(selectedModel) {
+            selectedModel = provider.configuredModel ?? provider.models.first ?? ""
+        }
     }
 
     private func saveProactiveSettings() {

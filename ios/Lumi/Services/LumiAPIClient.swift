@@ -28,6 +28,11 @@ final class LumiAPIClient {
 
     init(session: URLSession = .shared) { self.session = session }
 
+    func fetchModelProviders() async throws -> [ModelProvider] {
+        let response: ModelProvidersResponse = try await perform(URLRequest(url: baseURL.appending(path: "/v1/providers")))
+        return response.providers
+    }
+
     func fetchThread(id: String, limit: Int = 100, before: Date? = nil) async throws -> ChatThread {
         var components = URLComponents(url: baseURL.appending(path: "/v1/chats/\(id)"), resolvingAgainstBaseURL: false)!
         var items = [URLQueryItem(name: "limit", value: String(limit))]
@@ -69,13 +74,13 @@ final class LumiAPIClient {
         _ = try await perform(request) as EmptyResponse
     }
 
-    func sendMessage(_ content: String, to id: String, images: [String] = [], galleryImageIDs: [String] = [], emojiCatalog: [String: [String]] = [:], tts: TTSRequestSettings? = nil) async throws -> SendMessageResponse {
+    func sendMessage(_ content: String, to id: String, images: [String] = [], galleryImageIDs: [String] = [], emojiCatalog: [String: [String]] = [:], tts: TTSRequestSettings? = nil, provider: String = "zenmux", model: String = "") async throws -> SendMessageResponse {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/messages"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
         request.httpBody = try JSONEncoder.api.encode(
-            SendMessageRequest(content: content, systemPrompt: LumiSystemPrompt.main, images: images, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts)
+            SendMessageRequest(content: content, systemPrompt: LumiSystemPrompt.main, images: images, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: provider, model: model)
         )
         // A model reply can outlive the foreground network timeout. Retrying
         // the *same* idempotency key asks the server for that in-flight or

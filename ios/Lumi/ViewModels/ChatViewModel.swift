@@ -130,7 +130,9 @@ final class ChatViewModel: ObservableObject {
             }
         }
         do {
-            let response = try await api.sendMessage(content, to: chatID, images: imageBase64.map { [$0] } ?? [], galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts)
+            let provider = UserDefaults.standard.string(forKey: "lumi.modelProvider") ?? "zenmux"
+            let model = UserDefaults.standard.string(forKey: "lumi.modelName") ?? ""
+            let response = try await api.sendMessage(content, to: chatID, images: imageBase64.map { [$0] } ?? [], galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: provider, model: model)
             var confirmedUserMessage = response.userMessage
             confirmedUserMessage.localImageFileName = imageFileName
             if let optimisticIndex = messages.firstIndex(where: { $0.id == optimisticID }) {
