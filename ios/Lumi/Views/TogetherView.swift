@@ -299,6 +299,13 @@ struct TogetherView: View {
         defer { isLoadingDiaries = false }
         do {
             diaries = try await api.fetchDiaries(for: "default")
+            // A newly created entry may use a different local day than the
+            // currently selected calendar cell. Always open on the newest
+            // saved entry instead of presenting an apparently empty diary.
+            if let newest = diaries.first,
+               !diaries.contains(where: { Calendar.current.isDate($0.createdAt, inSameDayAs: diarySelectedDate) }) {
+                diarySelectedDate = newest.createdAt
+            }
             saveDiariesToCache()
             diaryError = nil
         }
