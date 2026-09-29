@@ -76,6 +76,12 @@ struct TogetherView: View {
             }
         }
         .tint(.black.opacity(0.72))
+        .overlay(alignment: .bottomTrailing) {
+            ClawdPetView()
+                .frame(width: 64, height: 64)
+                .padding(.trailing, 12)
+                .padding(.bottom, 22)
+        }
         .onAppear {
             if !didApplyAnniversary {
                 storedStartAt = Self.anniversaryStartDate.timeIntervalSince1970

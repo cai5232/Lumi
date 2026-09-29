@@ -18,6 +18,8 @@
 		A10000000000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* Assets.xcassets */; };
 		A10000000000000000000010 /* TogetherGalleryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000011 /* TogetherGalleryStore.swift */; };
 		A10000000000000000000011 /* TogetherView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* TogetherView.swift */; };
+		A10000000000000000000012 /* ClawdPetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* ClawdPetView.swift */; };
+		A10000000000000000000013 /* PetAssets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* PetAssets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,6 +35,8 @@
 		B10000000000000000000010 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10000000000000000000011 /* TogetherGalleryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TogetherGalleryStore.swift; sourceTree = "<group>"; };
 		B10000000000000000000012 /* TogetherView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TogetherView.swift; sourceTree = "<group>"; };
+		B10000000000000000000013 /* ClawdPetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClawdPetView.swift; sourceTree = "<group>"; };
+		B10000000000000000000014 /* PetAssets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = PetAssets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -84,6 +88,7 @@
 			children = (
 				B10000000000000000000006 /* ChatDetailView.swift */,
 				B10000000000000000000012 /* TogetherView.swift */,
+				B10000000000000000000013 /* ClawdPetView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -104,6 +109,7 @@
 				B10000000000000000000008 /* UserAvatar.jpg */,
 				B10000000000000000000009 /* AssistantAvatar.jpg */,
 				B10000000000000000000010 /* Assets.xcassets */,
+				B10000000000000000000014 /* PetAssets */,
 				C10000000000000000000003 /* Models */,
 				C10000000000000000000004 /* Services */,
 				C10000000000000000000005 /* ViewModels */,
@@ -177,6 +183,7 @@
 				A10000000000000000000007 /* UserAvatar.jpg in Resources */,
 				A10000000000000000000008 /* AssistantAvatar.jpg in Resources */,
 				A10000000000000000000009 /* Assets.xcassets in Resources */,
+				A10000000000000000000013 /* PetAssets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -212,6 +219,7 @@
 				A10000000000000000000006 /* ChatDetailView.swift in Sources */,
 				A10000000000000000000010 /* TogetherGalleryStore.swift in Sources */,
 				A10000000000000000000011 /* TogetherView.swift in Sources */,
+				A10000000000000000000012 /* ClawdPetView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
