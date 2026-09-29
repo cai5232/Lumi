@@ -1298,9 +1298,18 @@ private struct SettingsView: View {
                                 Text(provider.id == "zenmux" ? "ZenMux" : "备用中转").tag(provider.id)
                             }
                         }
-                        if let provider = modelProviders.first(where: { $0.id == selectedProvider }), !provider.models.isEmpty {
+                        if let provider = modelProviders.first(where: { $0.id == selectedProvider }) {
                             Picker("模型", selection: $selectedModel) {
-                                ForEach(provider.models, id: \.self) { model in Text(model).tag(model) }
+                                if provider.models.isEmpty {
+                                    Text("暂无模型，点击刷新").tag("")
+                                } else {
+                                    ForEach(provider.models, id: \.self) { model in Text(model).tag(model) }
+                                }
+                            }
+                            Button {
+                                Task { await loadModelProviders() }
+                            } label: {
+                                Label("刷新模型列表", systemImage: "arrow.clockwise")
                             }
                         }
                     }
@@ -1384,6 +1393,10 @@ private struct SettingsView: View {
         .onChange(of: proactiveNudgeEnabled) { _, _ in saveProactiveSettings() }
         .onChange(of: proactiveNudgeInterval) { _, _ in saveProactiveSettings() }
         .onChange(of: proactiveNudgeMessage) { _, _ in saveProactiveSettings() }
+        .onChange(of: selectedProvider) { _, _ in
+            selectedModel = ""
+            Task { await loadModelProviders() }
+        }
         .background(Color(red: 0.984, green: 0.949, blue: 0.957))
         .preferredColorScheme(.light)
         .sheet(isPresented: $showingMiniMaxSettings) {
