@@ -79,9 +79,6 @@ final class ChatViewModel: ObservableObject {
             saveLocalConversation()
             nextHistoryBefore = thread.nextBefore
             historyFullyLoaded = thread.hasMore != true
-            if !historyFullyLoaded {
-                Task { await loadOlderHistoryGradually() }
-            }
         }
         catch {
             if !localMessages.isEmpty { messages = Self.deduplicateHTMLCards(localMessages) }
@@ -89,32 +86,29 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    /// The first screen only needs the latest conversations. Older pages are
-    /// merged quietly afterwards and retained in the on-device cache.
-    private func loadOlderHistoryGradually() async {
+    /// Called only when the reader reaches the oldest visible message. Each
+    /// pull requests one earlier page, leaving the rest on the server.
+    func loadOlderHistoryIfNeeded() async {
         guard shouldLoadFromServer, !isLoadingOlderHistory else { return }
         isLoadingOlderHistory = true
         defer { isLoadingOlderHistory = false }
-        while !historyFullyLoaded, let before = nextHistoryBefore, !Task.isCancelled {
-            do {
-                try? await Task.sleep(for: .milliseconds(450))
-                let page = try await api.fetchThread(id: chatID, limit: 100, before: before)
-                let restored = page.messages.map(restoreMedia).flatMap { message in
-                    message.role == .assistant && message.contentType != "call_record" && message.contentType != "call_status"
-                        ? assistantBubbles(from: message) : [message]
-                }
-                let present = Set(messages.map(\.id))
-                let missing = restored.filter { !present.contains($0.id) }
-                if !missing.isEmpty {
-                    messages = Self.deduplicateHTMLCards((messages + missing).sorted { $0.createdAt < $1.createdAt })
-                    saveLocalConversation()
-                }
-                nextHistoryBefore = page.nextBefore
-                historyFullyLoaded = page.hasMore != true || page.messages.isEmpty
-            } catch {
-                // Cached / newest history remains fully usable; retry on the next app open.
-                break
+        guard !historyFullyLoaded, let before = nextHistoryBefore else { return }
+        do {
+            let page = try await api.fetchThread(id: chatID, limit: 100, before: before)
+            let restored = page.messages.map(restoreMedia).flatMap { message in
+                message.role == .assistant && message.contentType != "call_record" && message.contentType != "call_status"
+                    ? assistantBubbles(from: message) : [message]
             }
+            let present = Set(messages.map(\.id))
+            let missing = restored.filter { !present.contains($0.id) }
+            if !missing.isEmpty {
+                messages = Self.deduplicateHTMLCards((messages + missing).sorted { $0.createdAt < $1.createdAt })
+                saveLocalConversation()
+            }
+            nextHistoryBefore = page.nextBefore
+            historyFullyLoaded = page.hasMore != true || page.messages.isEmpty
+        } catch {
+            // Cached /newest history remains fully usable; retry on the next pull.
         }
     }
 

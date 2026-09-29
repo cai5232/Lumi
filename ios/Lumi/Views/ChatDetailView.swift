@@ -6,6 +6,11 @@ import AVFoundation
 import Speech
 import WebKit
 
+private struct ChatHistoryTopOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = -.greatestFiniteMagnitude
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 @MainActor
 struct ChatDetailView: View {
     @StateObject private var model: ChatViewModel
@@ -25,6 +30,8 @@ struct ChatDetailView: View {
     @State private var selectedCallRecord: ChatMessage?
     @State private var showingSubscriptionUsage = false
     @State private var showingTogether = false
+    @State private var historyPagingArmed = false
+    @State private var historyPagingPrimed = false
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
     @AppStorage("lumi.ttsModel") private var ttsModel = "speech-2.8-hd"
     @AppStorage("lumi.ttsVoiceID") private var ttsVoiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"
@@ -42,6 +49,11 @@ struct ChatDetailView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 10) {
+                        Color.clear
+                            .frame(height: 1)
+                            .background(GeometryReader { reader in
+                                Color.clear.preference(key: ChatHistoryTopOffsetKey.self, value: reader.frame(in: .named("chat-scroll")).minY)
+                            })
                         // A sent message is first rendered with a local UUID and then
                         // confirmed with the server UUID. Keep the row identity stable
                         // across that replacement so SwiftUI does not briefly remove the
@@ -60,6 +72,16 @@ struct ChatDetailView: View {
                         .id("chat-bottom-anchor")
                 }
                 .scrollIndicators(.hidden)
+                .coordinateSpace(name: "chat-scroll")
+                .onPreferenceChange(ChatHistoryTopOffsetKey.self) { offset in
+                    // Before the initial jump to the newest message, the top marker is
+                    // naturally visible. Do not treat that as an upward history pull.
+                    guard historyPagingArmed else { return }
+                    if offset < 0 { historyPagingPrimed = true; return }
+                    guard historyPagingPrimed, offset >= 0, !model.isLoadingOlderHistory else { return }
+                    historyPagingPrimed = false
+                    Task { await model.loadOlderHistoryIfNeeded() }
+                }
                 .scrollDismissesKeyboard(.interactively)
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -108,6 +130,7 @@ struct ChatDetailView: View {
                                         await Task.yield()
                                         try? await Task.sleep(for: .milliseconds(120))
                                         withAnimation(.easeOut(duration: 0.24)) { proxy.scrollTo("chat-bottom-anchor", anchor: .bottom) }
+                                        historyPagingArmed = true
                                     }
                                 }
             }
