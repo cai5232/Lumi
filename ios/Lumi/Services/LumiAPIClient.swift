@@ -15,7 +15,7 @@ enum LumiAPIError: LocalizedError {
 
 final class LumiAPIClient {
     // Zeabur 公网 API；真机和模拟器都可以直接访问。
-    var baseURL = URL(string: "https://lumi-api.zeabur.app")!
+    var baseURL = URL(string: "https://lumi-tokyo-api.zeabur.app")!
     private let session: URLSession
     private var pushAPIToken: String? {
         let stored = LumiKeychain.read(account: "push-api-token")
