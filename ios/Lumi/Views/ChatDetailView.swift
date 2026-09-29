@@ -246,19 +246,22 @@ struct ChatDetailView: View {
 
     private var topBar: some View {
         HStack {
-            glassCircleButton("line.3.horizontal") { glassPresentation.showing = true }
+            Button { showingTogether = true } label: {
+                TogetherMark()
+                    .frame(width: 44, height: 44)
+                    .foregroundStyle(.black.opacity(0.58))
+                    .background(.ultraThinMaterial, in: Circle())
+                    .background(Color.white.opacity(0.16), in: Circle())
+                    .overlay(Circle().stroke(.white.opacity(0.42), lineWidth: 1))
+                    .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
+            }
+            .buttonStyle(.plain)
             Spacer()
             glassCircleButton("phone") { showingCallDemo = true }
             HStack(spacing: 0) {
                 Button { showingSubscriptionUsage = true } label: {
                     Image(systemName: "doc.text")
                         .font(.system(size: 18, weight: .regular))
-                        .frame(width: 48, height: 42)
-                }
-                .buttonStyle(.plain)
-                toolbarDivider
-                Button { showingTogether = true } label: {
-                    TogetherMark()
                         .frame(width: 48, height: 42)
                 }
                 .buttonStyle(.plain)
@@ -271,9 +274,10 @@ struct ChatDetailView: View {
                 .buttonStyle(.plain)
             }
             .foregroundStyle(.black.opacity(0.58))
-            .background(.regularMaterial, in: Capsule())
-            .background(Color(red: 0.965, green: 0.905, blue: 0.925).opacity(0.92), in: Capsule())
-            .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.12), radius: 8, x: 0, y: 4)
+            .background(.ultraThinMaterial, in: Capsule())
+            .background(Color.white.opacity(0.16), in: Capsule())
+            .overlay(Capsule().stroke(.white.opacity(0.42), lineWidth: 1))
+            .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         }
         .padding(.horizontal, 16)
     }
@@ -317,9 +321,10 @@ struct ChatDetailView: View {
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.black.opacity(0.58))
                 .frame(width: 44, height: 44)
-                .background(.regularMaterial, in: Circle())
-                .background(Color(red: 0.965, green: 0.905, blue: 0.925).opacity(0.92), in: Circle())
-                .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.12), radius: 8, x: 0, y: 4)
+                .background(.ultraThinMaterial, in: Circle())
+                .background(Color.white.opacity(0.16), in: Circle())
+                .overlay(Circle().stroke(.white.opacity(0.42), lineWidth: 1))
+                .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         }
         .buttonStyle(.plain)
     }
@@ -769,13 +774,14 @@ private struct ComposerInputView: View {
                 PhotosPicker(selection: $photoItem, matching: .images) {
                     Image(systemName: "plus")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.black.opacity(0.9))
+                        .foregroundStyle(.black.opacity(0.58))
                         .frame(width: 42, height: 42)
                 }
                 Spacer()
                 Button { focused = true } label: {
                     Image(systemName: "mic")
                         .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(.black.opacity(0.58))
                         .frame(width: 40, height: 40)
                 }
                 .buttonStyle(.plain)
@@ -788,8 +794,7 @@ private struct ComposerInputView: View {
                     Image(systemName: "waveform")
                         .font(.system(size: 16, weight: .medium))
                         .frame(width: 38, height: 38)
-                        .background(Color(red: 0.31, green: 0.22, blue: 0.26), in: Circle())
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.black.opacity(0.58))
                 }
                 .buttonStyle(.plain)
             }
@@ -797,9 +802,10 @@ private struct ComposerInputView: View {
         .frame(height: selectedImageData == nil && selectedGalleryItem == nil ? 96 : 140)
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 32))
-        .background(Color(red: 0.965, green: 0.905, blue: 0.925).opacity(0.92), in: RoundedRectangle(cornerRadius: 32))
-        .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.12), radius: 8, x: 0, y: 4)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+        .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 32, style: .continuous).stroke(.white.opacity(0.42), lineWidth: 1))
+        .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         .padding(.horizontal, 16)
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
