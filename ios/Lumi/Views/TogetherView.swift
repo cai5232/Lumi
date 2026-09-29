@@ -556,7 +556,7 @@ private struct DiaryDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     Text(item.body)
-                        .font(.custom("STKaiti", size: 21))
+                        .font(.custom("STKaiti", size: 17))
                         .lineSpacing(8)
                         .foregroundStyle(.black.opacity(0.82))
                         .frame(maxWidth: .infinity, alignment: .leading)
