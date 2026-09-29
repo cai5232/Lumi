@@ -459,7 +459,9 @@ private struct DiaryTimeline: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 9) {
                             HStack {
-                                Text(item.isLocked ? "锁住的日记" : item.title).font(.system(size: 15, weight: .semibold))
+                                Text(item.isLocked ? "锁住的日记" : item.title)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
                                 Spacer()
                                 if item.isLocked { Image(systemName: item.lock.type == "capsule" ? "hourglass" : "lock.fill").font(.system(size: 12)).foregroundStyle(TogetherColors.plumBrown.opacity(0.62)) }
                             }
@@ -530,7 +532,7 @@ private struct DiaryDetailView: View {
             ZStack {
                 Text(item.title)
                     .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(.black.opacity(0.82))
+                    .foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
                     .lineLimit(1)
                     .padding(.horizontal, 70)
                 HStack {
