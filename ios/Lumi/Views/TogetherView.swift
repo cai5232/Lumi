@@ -123,9 +123,8 @@ struct TogetherView: View {
             .presentationDetents([.medium])
             .presentationBackground(TogetherColors.background)
         }
-        .sheet(item: $diaryToOpen) { item in
+        .fullScreenCover(item: $diaryToOpen) { item in
             DiaryDetailView(item: item)
-                .presentationBackground(TogetherColors.background)
         }
     }
 
@@ -453,7 +452,7 @@ private struct DiaryTimeline: View {
                                 Spacer()
                                 if item.isLocked { Image(systemName: item.lock.type == "capsule" ? "hourglass" : "lock.fill").font(.system(size: 12)).foregroundStyle(TogetherColors.plumBrown.opacity(0.62)) }
                             }
-                            Text(item.body).font(.system(size: 16, design: .serif)).lineSpacing(5).lineLimit(3).multilineTextAlignment(.leading)
+                            Text(item.body).font(.custom("PingFangSC-Regular", size: 16)).lineSpacing(5).lineLimit(3).multilineTextAlignment(.leading)
                                 .foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
                                 .blur(radius: item.isLocked ? 5 : 0)
                                 .overlay { if item.isLocked { Text(item.lock.type == "capsule" ? "时间胶囊" : "回答问题后开启").font(.system(size: 12, weight: .medium)).foregroundStyle(TogetherColors.plumBrown) } }
@@ -534,7 +533,7 @@ private struct DiaryDetailView: View {
                             .foregroundStyle(.black.opacity(0.38))
                     }
                     Text(item.body)
-                        .font(.system(size: 18, design: .serif))
+                        .font(.custom("STSong", size: 20))
                         .lineSpacing(8)
                         .foregroundStyle(.black.opacity(0.78))
                         .frame(maxWidth: .infinity, alignment: .leading)
