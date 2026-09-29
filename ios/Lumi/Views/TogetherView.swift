@@ -28,6 +28,7 @@ struct TogetherView: View {
     @State private var diaryError: String?
     @State private var isLoadingDiaries = false
     @State private var diaryToUnlock: RemoteDiaryItem?
+    @State private var diaryToOpen: RemoteDiaryItem?
     @State private var diarySelectedDate = Date()
     private let api = LumiAPIClient()
 
@@ -122,6 +123,10 @@ struct TogetherView: View {
             .presentationDetents([.medium])
             .presentationBackground(TogetherColors.background)
         }
+        .sheet(item: $diaryToOpen) { item in
+            DiaryDetailView(item: item)
+                .presentationBackground(TogetherColors.background)
+        }
     }
 
     private var relationshipCard: some View {
@@ -194,7 +199,9 @@ struct TogetherView: View {
                 .frame(maxWidth: .infinity).padding(.vertical, 62)
                 .background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             } else {
-                DiaryTimeline(items: diariesForSelectedDate) { item in diaryToUnlock = item }
+                DiaryTimeline(items: diariesForSelectedDate) { item in
+                    if item.isLocked { diaryToUnlock = item } else { diaryToOpen = item }
+                }
             }
         }
     }
@@ -421,7 +428,7 @@ private struct DiaryWeekStrip: View {
 
 private struct DiaryTimeline: View {
     let items: [RemoteDiaryItem]
-    let onTapLocked: (RemoteDiaryItem) -> Void
+    let onTap: (RemoteDiaryItem) -> Void
 
     private static let clock: DateFormatter = {
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN"); formatter.dateFormat = "HH:mm"; return formatter
@@ -438,7 +445,7 @@ private struct DiaryTimeline: View {
                     }
                     .frame(width: 42)
                     Button {
-                        if item.isLocked { onTapLocked(item) }
+                        onTap(item)
                     } label: {
                         VStack(alignment: .leading, spacing: 9) {
                             HStack {
@@ -446,7 +453,7 @@ private struct DiaryTimeline: View {
                                 Spacer()
                                 if item.isLocked { Image(systemName: item.lock.type == "capsule" ? "hourglass" : "lock.fill").font(.system(size: 12)).foregroundStyle(TogetherColors.plumBrown.opacity(0.62)) }
                             }
-                            Text(item.body).font(.system(size: 16, design: .serif)).lineSpacing(5).multilineTextAlignment(.leading)
+                            Text(item.body).font(.system(size: 16, design: .serif)).lineSpacing(5).lineLimit(3).multilineTextAlignment(.leading)
                                 .foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
                                 .blur(radius: item.isLocked ? 5 : 0)
                                 .overlay { if item.isLocked { Text(item.lock.type == "capsule" ? "时间胶囊" : "回答问题后开启").font(.system(size: 12, weight: .medium)).foregroundStyle(TogetherColors.plumBrown) } }
@@ -500,6 +507,52 @@ private struct DiaryUnlockView: View {
             Button("关闭") { dismiss() }.font(.system(size: 15, weight: .medium)).padding(.top, 3)
         }
         .padding(28)
+    }
+}
+
+private struct DiaryDetailView: View {
+    let item: RemoteDiaryItem
+    @Environment(\.dismiss) private var dismiss
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日  HH:mm"
+        return formatter
+    }()
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(item.title)
+                            .font(.system(size: 25, weight: .semibold))
+                            .foregroundStyle(TogetherColors.plumBrown)
+                        Text(Self.dateFormatter.string(from: item.createdAt))
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.black.opacity(0.38))
+                    }
+                    Text(item.body)
+                        .font(.system(size: 18, design: .serif))
+                        .lineSpacing(8)
+                        .foregroundStyle(.black.opacity(0.78))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 18)
+                .padding(.bottom, 36)
+            }
+            .background(TogetherColors.background.ignoresSafeArea())
+            .navigationTitle("日记")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+        }
+        .tint(TogetherColors.plumBrown)
     }
 }
 
