@@ -249,9 +249,9 @@ struct ChatDetailView: View {
             Button { showingTogether = true } label: {
                 TogetherMark()
                     .frame(width: 44, height: 44)
-                    .foregroundStyle(.black.opacity(0.58))
+                    .foregroundStyle(.gray.opacity(0.78))
                     .background(.ultraThinMaterial, in: Circle())
-                    .background(Color.white.opacity(0.16), in: Circle())
+                    .background(Color(red: 0.985, green: 0.956, blue: 0.950).opacity(0.80), in: Circle())
                     .overlay(Circle().stroke(.white.opacity(0.42), lineWidth: 1))
                     .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
             }
@@ -273,9 +273,9 @@ struct ChatDetailView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .foregroundStyle(.black.opacity(0.58))
+            .foregroundStyle(.gray.opacity(0.78))
             .background(.ultraThinMaterial, in: Capsule())
-            .background(Color.white.opacity(0.16), in: Capsule())
+            .background(Color(red: 0.985, green: 0.956, blue: 0.950).opacity(0.80), in: Capsule())
             .overlay(Capsule().stroke(.white.opacity(0.42), lineWidth: 1))
             .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         }
@@ -319,10 +319,10 @@ struct ChatDetailView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.black.opacity(0.58))
+                .foregroundStyle(.gray.opacity(0.78))
                 .frame(width: 44, height: 44)
                 .background(.ultraThinMaterial, in: Circle())
-                .background(Color.white.opacity(0.16), in: Circle())
+                .background(Color(red: 0.985, green: 0.956, blue: 0.950).opacity(0.80), in: Circle())
                 .overlay(Circle().stroke(.white.opacity(0.42), lineWidth: 1))
                 .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         }
@@ -774,14 +774,14 @@ private struct ComposerInputView: View {
                 PhotosPicker(selection: $photoItem, matching: .images) {
                     Image(systemName: "plus")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.black.opacity(0.58))
+                        .foregroundStyle(.gray.opacity(0.78))
                         .frame(width: 42, height: 42)
                 }
                 Spacer()
                 Button { focused = true } label: {
                     Image(systemName: "mic")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.black.opacity(0.58))
+                        .foregroundStyle(.gray.opacity(0.78))
                         .frame(width: 40, height: 40)
                 }
                 .buttonStyle(.plain)
@@ -794,7 +794,7 @@ private struct ComposerInputView: View {
                     Image(systemName: "waveform")
                         .font(.system(size: 16, weight: .medium))
                         .frame(width: 38, height: 38)
-                        .foregroundStyle(.black.opacity(0.58))
+                        .foregroundStyle(.gray.opacity(0.78))
                 }
                 .buttonStyle(.plain)
             }
@@ -803,7 +803,7 @@ private struct ComposerInputView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
-        .background(Color.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+        .background(Color(red: 0.985, green: 0.956, blue: 0.950).opacity(0.80), in: RoundedRectangle(cornerRadius: 32, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 32, style: .continuous).stroke(.white.opacity(0.42), lineWidth: 1))
         .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         .padding(.horizontal, 16)

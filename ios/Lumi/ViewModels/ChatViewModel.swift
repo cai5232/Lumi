@@ -16,11 +16,14 @@ final class ChatViewModel: ObservableObject {
     @Published var isSending = false
     @Published var errorMessage: String?
     @Published var memoryNotice: String?
+    @Published private(set) var isLoadingOlderHistory = false
 
     private let chatID: String
     private let api: LumiAPIClient
     private let shouldLoadFromServer: Bool
     private let localConversationURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("lumi-conversation.json")
+    private var nextHistoryBefore: Date?
+    private var historyFullyLoaded = false
 
     init(chatID: String = "default", api: LumiAPIClient = LumiAPIClient(), initialMessages: [ChatMessage] = [], shouldLoadFromServer: Bool = true) {
         self.chatID = chatID
@@ -43,7 +46,8 @@ final class ChatViewModel: ObservableObject {
             return
         }
         do {
-            let loaded = try await api.fetchThread(id: chatID).messages.map(restoreMedia)
+            let thread = try await api.fetchThread(id: chatID, limit: 100)
+            let loaded = thread.messages.map(restoreMedia)
             let remoteMessages = Self.deduplicateHTMLCards(loaded.flatMap { message in
                 let restored = message
                 return restored.role == .assistant && restored.contentType != "call_record" && restored.contentType != "call_status" ? assistantBubbles(from: restored) : [restored]
@@ -73,10 +77,44 @@ final class ChatViewModel: ObservableObject {
                 messages = Self.deduplicateHTMLCards(localMessages.isEmpty ? remoteMessages : localMessages)
             }
             saveLocalConversation()
+            nextHistoryBefore = thread.nextBefore
+            historyFullyLoaded = thread.hasMore != true
+            if !historyFullyLoaded {
+                Task { await loadOlderHistoryGradually() }
+            }
         }
         catch {
             if !localMessages.isEmpty { messages = Self.deduplicateHTMLCards(localMessages) }
             else if messages.isEmpty { errorMessage = friendlyError(error) }
+        }
+    }
+
+    /// The first screen only needs the latest conversations. Older pages are
+    /// merged quietly afterwards and retained in the on-device cache.
+    private func loadOlderHistoryGradually() async {
+        guard shouldLoadFromServer, !isLoadingOlderHistory else { return }
+        isLoadingOlderHistory = true
+        defer { isLoadingOlderHistory = false }
+        while !historyFullyLoaded, let before = nextHistoryBefore, !Task.isCancelled {
+            do {
+                try? await Task.sleep(for: .milliseconds(450))
+                let page = try await api.fetchThread(id: chatID, limit: 100, before: before)
+                let restored = page.messages.map(restoreMedia).flatMap { message in
+                    message.role == .assistant && message.contentType != "call_record" && message.contentType != "call_status"
+                        ? assistantBubbles(from: message) : [message]
+                }
+                let present = Set(messages.map(\.id))
+                let missing = restored.filter { !present.contains($0.id) }
+                if !missing.isEmpty {
+                    messages = Self.deduplicateHTMLCards((messages + missing).sorted { $0.createdAt < $1.createdAt })
+                    saveLocalConversation()
+                }
+                nextHistoryBefore = page.nextBefore
+                historyFullyLoaded = page.hasMore != true || page.messages.isEmpty
+            } catch {
+                // Cached / newest history remains fully usable; retry on the next app open.
+                break
+            }
         }
     }
 

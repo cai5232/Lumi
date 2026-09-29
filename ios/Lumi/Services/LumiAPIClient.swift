@@ -28,8 +28,30 @@ final class LumiAPIClient {
 
     init(session: URLSession = .shared) { self.session = session }
 
-    func fetchThread(id: String) async throws -> ChatThread {
-        try await request(path: "/v1/chats/\(id)")
+    func fetchThread(id: String, limit: Int = 100, before: Date? = nil) async throws -> ChatThread {
+        var components = URLComponents(url: baseURL.appending(path: "/v1/chats/\(id)"), resolvingAgainstBaseURL: false)!
+        var items = [URLQueryItem(name: "limit", value: String(limit))]
+        if let before {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            items.append(URLQueryItem(name: "before", value: formatter.string(from: before)))
+        }
+        components.queryItems = items
+        return try await perform(URLRequest(url: components.url!))
+    }
+
+    func fetchDiaries(for id: String) async throws -> [RemoteDiaryItem] {
+        let response: DiaryListResponse = try await request(path: "/v1/chats/\(id)/diaries")
+        return response.items
+    }
+
+    func unlockDiary(_ item: RemoteDiaryItem, answer: String, in id: String) async throws -> RemoteDiaryItem {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/diaries/\(item.id)/unlock"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["answer": answer])
+        let response: DiaryUnlockResponse = try await perform(request)
+        return response.item
     }
 
     func fetchSubscriptionUsage() async throws -> SubscriptionUsage {

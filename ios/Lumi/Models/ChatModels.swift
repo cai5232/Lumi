@@ -72,7 +72,29 @@ struct ChatThread: Codable, Identifiable {
     let id: String
     var title: String
     var messages: [ChatMessage]
+    var hasMore: Bool?
+    var nextBefore: Date?
 }
+
+struct DiaryLock: Codable, Equatable {
+    let type: String
+    let question: String?
+    let choices: [String]
+    let retryUntil: Date?
+    let unlockAt: Date?
+}
+
+struct RemoteDiaryItem: Codable, Identifiable, Equatable {
+    let id: String
+    let createdAt: Date
+    let title: String
+    let body: String
+    let isLocked: Bool
+    let lock: DiaryLock
+}
+
+struct DiaryListResponse: Decodable { let items: [RemoteDiaryItem] }
+struct DiaryUnlockResponse: Decodable { let item: RemoteDiaryItem }
 
 struct SendMessageRequest: Encodable {
     let content: String

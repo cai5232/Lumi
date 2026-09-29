@@ -24,6 +24,10 @@ struct TogetherView: View {
     @State private var showingStartDate = false
     @State private var galleryError: String?
     @State private var isLoadingGallery = false
+    @State private var diaries: [RemoteDiaryItem] = []
+    @State private var diaryError: String?
+    @State private var isLoadingDiaries = false
+    @State private var diaryToUnlock: RemoteDiaryItem?
     private let api = LumiAPIClient()
 
     private static let anniversaryStartDate = Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 7, day: 23))!
@@ -74,8 +78,9 @@ struct TogetherView: View {
                 storedStartAt = Self.anniversaryStartDate.timeIntervalSince1970
                 didApplyAnniversary = true
             }
-            Task { await loadGallery() }
+            Task { await loadGallery(); await loadDiaries() }
         }
+        .onChange(of: tab) { _, selected in if selected == .diary { Task { await loadDiaries() } } }
         .onChange(of: pickerItem) { _, item in importPhoto(item) }
         .sheet(item: $selectedItem) { item in
             RemoteGalleryDetailView(
@@ -104,6 +109,13 @@ struct TogetherView: View {
                     .padding()
                     .navigationTitle("在一起的开始")
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showingStartDate = false } } }
+            }
+            .presentationDetents([.medium])
+            .presentationBackground(TogetherColors.background)
+        }
+        .sheet(item: $diaryToUnlock) { item in
+            DiaryUnlockView(item: item) { answer in
+                await unlock(item, answer: answer)
             }
             .presentationDetents([.medium])
             .presentationBackground(TogetherColors.background)
@@ -157,8 +169,31 @@ struct TogetherView: View {
     @ViewBuilder private var tabContent: some View {
         switch tab {
         case .gallery: galleryContent
-        case .diary: placeholder(icon: "book.closed", text: "把想记下的日子留在这里。")
+        case .diary: diaryContent
         case .achievements: placeholder(icon: "sparkles", text: "我们的每个小瞬间都会慢慢点亮。")
+        }
+    }
+
+    private var diaryContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            DiaryWeekStrip()
+            HStack(alignment: .firstTextBaseline) {
+                Text("日记").font(.system(size: 21, weight: .bold))
+                Spacer()
+                Text("\(diaries.count) 篇").font(.system(size: 13, weight: .medium)).foregroundStyle(.black.opacity(0.38))
+            }
+            if let diaryError { Text(diaryError).font(.system(size: 12)).foregroundStyle(.red.opacity(0.72)) }
+            if diaries.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "book.closed").font(.system(size: 26)).foregroundStyle(TogetherColors.plumBrown.opacity(0.56))
+                    Text(isLoadingDiaries ? "正在翻开日记…" : "有些瞬间，会被他悄悄写进这里。")
+                        .font(.system(size: 14)).foregroundStyle(.black.opacity(0.48))
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 62)
+                .background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            } else {
+                DiaryTimeline(items: diaries) { item in diaryToUnlock = item }
+            }
         }
     }
 
@@ -253,6 +288,22 @@ struct TogetherView: View {
         catch { galleryError = error.localizedDescription }
     }
 
+    private func loadDiaries() async {
+        isLoadingDiaries = true
+        defer { isLoadingDiaries = false }
+        do { diaries = try await api.fetchDiaries(for: "default"); diaryError = nil }
+        catch { diaryError = error.localizedDescription }
+    }
+
+    private func unlock(_ item: RemoteDiaryItem, answer: String) async -> String? {
+        do {
+            let updated = try await api.unlockDiary(item, answer: answer, in: "default")
+            if let index = diaries.firstIndex(where: { $0.id == updated.id }) { diaries[index] = updated }
+            diaryToUnlock = nil
+            return nil
+        } catch { return error.localizedDescription }
+    }
+
     private func update(_ item: RemoteGalleryItem, title: String, visualDescription: String, firstImpression: String) async {
         do {
             let updated = try await api.updateGallery(item, title: title, visualDescription: visualDescription, firstImpression: firstImpression, in: "default")
@@ -276,6 +327,117 @@ private enum TogetherColors {
     static let card = Color.white.opacity(0.72)
     static let line = Color.black.opacity(0.14)
     static let descriptionPanel = Color(red: 0.948, green: 0.882, blue: 0.895)
+}
+
+private struct DiaryWeekStrip: View {
+    private let calendar = Calendar.current
+    private var days: [Date] {
+        let today = calendar.startOfDay(for: .now)
+        let weekday = calendar.component(.weekday, from: today)
+        let first = calendar.date(byAdding: .day, value: -(weekday - 1), to: today) ?? today
+        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: first) }
+    }
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(days, id: \.self) { date in
+                VStack(spacing: 8) {
+                    Text(date.formatted(.dateTime.weekday(.narrow)))
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.black.opacity(0.38))
+                    Text(date.formatted(.dateTime.day()))
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(calendar.isDateInToday(date) ? .white : .black.opacity(0.74))
+                        .frame(width: 34, height: 34)
+                        .background(calendar.isDateInToday(date) ? TogetherColors.plumBrown : .clear, in: Circle())
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.vertical, 5)
+    }
+}
+
+private struct DiaryTimeline: View {
+    let items: [RemoteDiaryItem]
+    let onTapLocked: (RemoteDiaryItem) -> Void
+
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN"); formatter.dateFormat = "HH:mm"; return formatter
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(items) { item in
+                HStack(alignment: .top, spacing: 13) {
+                    VStack(spacing: 7) {
+                        Text(Self.clock.string(from: item.createdAt)).font(.system(size: 12, weight: .medium)).foregroundStyle(.black.opacity(0.46))
+                        Circle().stroke(TogetherColors.plumBrown.opacity(0.45), lineWidth: 1.5).frame(width: 13, height: 13)
+                        Rectangle().fill(TogetherColors.plumBrown.opacity(0.13)).frame(width: 1).frame(maxHeight: .infinity)
+                    }
+                    .frame(width: 42)
+                    Button {
+                        if item.isLocked { onTapLocked(item) }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 9) {
+                            HStack {
+                                Text(item.isLocked ? "锁住的日记" : item.title).font(.system(size: 15, weight: .semibold))
+                                Spacer()
+                                if item.isLocked { Image(systemName: item.lock.type == "capsule" ? "hourglass" : "lock.fill").font(.system(size: 12)).foregroundStyle(TogetherColors.plumBrown.opacity(0.62)) }
+                            }
+                            Text(item.body).font(.system(size: 16, design: .serif)).lineSpacing(5).multilineTextAlignment(.leading)
+                                .foregroundStyle(TogetherColors.plumBrown.opacity(0.78))
+                                .blur(radius: item.isLocked ? 5 : 0)
+                                .overlay { if item.isLocked { Text(item.lock.type == "capsule" ? "时间胶囊" : "回答问题后开启").font(.system(size: 12, weight: .medium)).foregroundStyle(TogetherColors.plumBrown) } }
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(TogetherColors.descriptionPanel.opacity(0.48), in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous).stroke(TogetherColors.plumBrown.opacity(0.11), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+private struct DiaryUnlockView: View {
+    let item: RemoteDiaryItem
+    let unlock: (String) async -> String?
+    @Environment(\.dismiss) private var dismiss
+    @State private var message: String?
+    @State private var working = false
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: item.lock.type == "capsule" ? "hourglass" : "lock.fill")
+                .font(.system(size: 26, weight: .medium)).foregroundStyle(TogetherColors.plumBrown)
+            if item.lock.type == "capsule" {
+                Text("时间胶囊").font(.system(size: 20, weight: .bold))
+                Text("会在 \(item.lock.unlockAt?.formatted(date: .abbreviated, time: .shortened) ?? "约定的时间") 自动打开。")
+                    .font(.system(size: 14)).foregroundStyle(.black.opacity(0.52)).multilineTextAlignment(.center)
+            } else {
+                Text("打开这篇日记").font(.system(size: 20, weight: .bold))
+                Text(item.lock.question ?? "回答一个小问题")
+                    .font(.system(size: 15)).foregroundStyle(.black.opacity(0.66)).multilineTextAlignment(.center)
+                ForEach(item.lock.choices, id: \.self) { choice in
+                    Button(choice) {
+                        Task {
+                            working = true
+                            message = await unlock(choice)
+                            working = false
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity).padding(.vertical, 12)
+                    .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+            }
+            if let message { Text(message.contains("retry_later") || message.contains("wrong_answer") ? "答错啦，三分钟后再试。" : message).font(.system(size: 13)).foregroundStyle(TogetherColors.heart) }
+            if working { ProgressView().tint(TogetherColors.plumBrown) }
+            Button("关闭") { dismiss() }.font(.system(size: 15, weight: .medium)).padding(.top, 3)
+        }
+        .padding(28)
+    }
 }
 
 private struct HeartbeatDivider: View {
