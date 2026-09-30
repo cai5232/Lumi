@@ -74,13 +74,13 @@ final class LumiAPIClient {
         _ = try await perform(request) as EmptyResponse
     }
 
-    func sendMessage(_ content: String, to id: String, images: [String] = [], galleryImageIDs: [String] = [], emojiCatalog: [String: [String]] = [:], tts: TTSRequestSettings? = nil, provider: String = "zenmux", model: String = "") async throws -> SendMessageResponse {
+    func sendMessage(_ content: String, to id: String, images: [String] = [], galleryImageIDs: [String] = [], emojiCatalog: [String: [String]] = [:], tts: TTSRequestSettings? = nil, provider: String = "zenmux") async throws -> SendMessageResponse {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/messages"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
         request.httpBody = try JSONEncoder.api.encode(
-            SendMessageRequest(content: content, systemPrompt: LumiSystemPrompt.main, images: images, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: provider, model: model)
+            SendMessageRequest(content: content, systemPrompt: LumiSystemPrompt.main, images: images, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: provider)
         )
         // A model reply can outlive the foreground network timeout. Retrying
         // the *same* idempotency key asks the server for that in-flight or
