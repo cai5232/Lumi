@@ -1273,19 +1273,6 @@ private struct SettingsView: View {
         ModelProvider(id: "backup", models: [], configuredModel: nil)
     ]
     @AppStorage("lumi.modelProvider") private var selectedProvider = "zenmux"
-    @AppStorage("lumi.modelName.zenmux") private var zenmuxModel = ""
-    @AppStorage("lumi.modelName.backup") private var backupModel = ""
-    @AppStorage("lumi.modelName") private var legacyModel = ""
-    private var selectedModel: String { selectedProvider == "backup" ? backupModel : (zenmuxModel.isEmpty ? legacyModel : zenmuxModel) }
-    private var selectedModelBinding: Binding<String> {
-        Binding(
-            get: { selectedModel },
-            set: { value in
-                if selectedProvider == "backup" { backupModel = value }
-                else { zenmuxModel = value; legacyModel = value }
-            }
-        )
-    }
     private let api = LumiAPIClient()
 
     var body: some View {
@@ -1303,29 +1290,15 @@ private struct SettingsView: View {
 
                 Section("模型线路") {
                     if modelProviders.isEmpty {
-                        Text("正在读取中转站模型…").font(.system(size: 13)).foregroundStyle(.secondary)
+                        Text("正在读取可用线路…").font(.system(size: 13)).foregroundStyle(.secondary)
                     } else {
                         Picker("线路", selection: $selectedProvider) {
                             ForEach(modelProviders) { provider in
                                 Text(provider.id == "zenmux" ? "ZenMux" : "备用中转").tag(provider.id)
                             }
                         }
-                        if let provider = modelProviders.first(where: { $0.id == selectedProvider }) {
-                            Picker("模型", selection: selectedModelBinding) {
-                                if provider.models.isEmpty {
-                                    Text("暂无模型，点击刷新").tag("")
-                                } else {
-                                    ForEach(provider.models, id: \.self) { model in Text(model).tag(model) }
-                                }
-                            }
-                            Button {
-                                Task { await loadModelProviders() }
-                            } label: {
-                                Label("刷新模型列表", systemImage: "arrow.clockwise")
-                            }
-                        }
                     }
-                    Text("切换后聊天、图片、日记、电话和保活都会使用当前线路。模型名称由中转站自动提供。")
+                    Text("切换后聊天、图片、日记、电话和保活都会使用当前线路。模型名称由后端环境变量控制。")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
 
@@ -1406,7 +1379,6 @@ private struct SettingsView: View {
         .onChange(of: proactiveNudgeInterval) { _, _ in saveProactiveSettings() }
         .onChange(of: proactiveNudgeMessage) { _, _ in saveProactiveSettings() }
         .onChange(of: selectedProvider) { _, _ in
-            setSelectedModel("")
             Task { await loadModelProviders() }
         }
         .background(Color(red: 0.984, green: 0.949, blue: 0.957))
@@ -1486,14 +1458,6 @@ private struct SettingsView: View {
         let fetchedBackup = fetched.first(where: { $0.id == "backup" }) ?? backup
         modelProviders = [zenmux, fetchedBackup]
         if !modelProviders.contains(where: { $0.id == selectedProvider }) { selectedProvider = modelProviders[0].id }
-        if let provider = modelProviders.first(where: { $0.id == selectedProvider }), !provider.models.contains(selectedModel) {
-            setSelectedModel(provider.configuredModel ?? provider.models.first ?? "")
-        }
-    }
-
-    private func setSelectedModel(_ value: String) {
-        if selectedProvider == "backup" { backupModel = value }
-        else { zenmuxModel = value; legacyModel = value }
     }
 
     private func saveProactiveSettings() {
