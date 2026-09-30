@@ -110,7 +110,6 @@ struct SendMessageRequest: Encodable {
     var emojiCatalog: [String: [String]] = [:]
     var tts: TTSRequestSettings?
     var provider: String = "zenmux"
-    var model: String = ""
 }
 
 struct SendMessageResponse: Decodable {
