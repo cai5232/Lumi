@@ -23,7 +23,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var callStatus: String?
     var screenStatus: String?
 
-    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount, callID, callDuration, callInitiator, callStatus, screenStatus }
+    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, thinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount, callID, callDuration, callInitiator, callStatus, screenStatus }
 
     init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil, callID: String? = nil, callDuration: Double? = nil, callInitiator: String? = nil, callStatus: String? = nil, screenStatus: String? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil) {
         self.id = id
@@ -57,7 +57,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         htmlTitle = try container.decodeIfPresent(String.self, forKey: .htmlTitle)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         isThinking = try container.decodeIfPresent(Bool.self, forKey: .isThinking) ?? false
-        thinking = nil
+        thinking = try container.decodeIfPresent(String.self, forKey: .thinking)
         audioFileName = try container.decodeIfPresent(String.self, forKey: .audioFileName)
         speechDuration = try container.decodeIfPresent(Double.self, forKey: .speechDuration)
         speechScript = try container.decodeIfPresent(String.self, forKey: .speechScript)
