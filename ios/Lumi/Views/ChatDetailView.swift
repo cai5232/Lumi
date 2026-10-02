@@ -1390,8 +1390,18 @@ private struct SettingsView: View {
                                     .font(.system(size: 13))
                                     .foregroundStyle(.secondary)
                                 Spacer()
-                                BroadcastPickerView(preferredExtension: "com.cai5232.Lumi.BroadcastUpload")
-                                    .frame(width: 44, height: 44)
+                                ZStack {
+                                    Text("开始屏幕共享")
+                                        .font(.system(size: 13, weight: .medium))
+                                        .foregroundStyle(Color(red: 0.82, green: 0.42, blue: 0.58))
+                                        .padding(.horizontal, 12)
+                                        .frame(height: 36)
+                                        .background(Color(red: 1.0, green: 0.93, blue: 0.96))
+                                        .clipShape(Capsule())
+                                    BroadcastPickerView(preferredExtension: "com.cai5232.Lumi.BroadcastUpload")
+                                        .frame(width: 132, height: 36)
+                                        .opacity(0.02)
+                                }
                             }
                             .padding(.vertical, 4)
                         }
