@@ -48,7 +48,7 @@ struct ChatDetailView: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 10) {
+                    LazyVStack(spacing: 3) {
                         Color.clear
                             .frame(height: 1)
                             .background(GeometryReader { reader in
@@ -358,7 +358,7 @@ struct ChatDetailView: View {
         let isScreenRequest = message.contentType == "screen_request"
         let isScreenStatus = message.contentType == "screen_status"
         let isUserSide = message.callInitiator == "user" || (message.callInitiator == nil && message.role == .user)
-        VStack(alignment: isUserSide ? .trailing : .leading, spacing: 5) {
+        VStack(alignment: isUserSide ? .trailing : .leading, spacing: 2) {
             if !isGalleryCollection,
                let localName = message.localImageFileName,
                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.appendingPathComponent(localName),
@@ -385,7 +385,7 @@ struct ChatDetailView: View {
                     } else { Color.clear.frame(width: 42, height: 42) }
                 }
                 if isUserSide { Spacer(minLength: 48) }
-                VStack(alignment: .leading, spacing: 7) {
+                VStack(alignment: .leading, spacing: 3) {
                 if isScreenRequest {
                     // Persisted status only. Consent/system broadcast controls live in Settings;
                     // autonomous wake must not depend on opening this chat.
@@ -489,7 +489,7 @@ struct ChatDetailView: View {
                 }
                 .foregroundStyle(LumiPalette.textPrimary)
                 .padding(.horizontal, isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 8 : (isCallStatus ? 10 : 13)))
-                .padding(.vertical, isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3))))
+                .padding(.vertical, isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 7 : 3))))
                 .frame(width: isGalleryCollection ? 244 : ((isScreenRequest || isScreenStatus) ? nil : (message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8)))), alignment: .leading)
                 .background(isGalleryCollection || isScreenRequest || isScreenStatus ? .clear : (isUserSide ? LumiPalette.userBubble : .white))
                 .clipShape(RoundedRectangle(cornerRadius: isGalleryCollection ? 0 : 21))
