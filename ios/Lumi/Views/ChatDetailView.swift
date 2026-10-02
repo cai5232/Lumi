@@ -1420,6 +1420,20 @@ private struct SettingsView: View {
                             Task { await updateActivity("sleep_abort") }
                         }
                     }
+                    if let nightmare = activityState?.nightmare, nightmare.status == "awake" {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("噩梦惊醒")
+                                .font(.headline)
+                            Text(nightmare.content)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                            HStack {
+                                Button("发消息") { Task { await updateActivity("nightmare_message") } }
+                                Button("继续睡") { Task { await updateActivity("nightmare_continue") } }
+                                Button("切哨兵") { Task { await updateActivity("nightmare_sentinel") } }
+                            }
+                        }
+                    }
                     Text("说“晚安”等告别词后，连续一小时没有新消息会进入睡眠；睡眠期间会生成连续梦境，异常醒来后可切回哨兵模式。")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)

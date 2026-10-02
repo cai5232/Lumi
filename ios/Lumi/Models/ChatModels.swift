@@ -255,6 +255,15 @@ struct ActivityState: Codable {
     var nextDreamAt: String?
     var dreamCycle: Int?
     var sleepStage: String?
+    var nightmare: NightmareState?
+}
+
+struct NightmareState: Codable {
+    var status: String
+    var cycle: Int?
+    var content: String
+    var options: [String]
+    var createdAt: String?
 }
 
 struct SubscriptionUsage: Decodable {
