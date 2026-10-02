@@ -155,6 +155,10 @@ struct ChatDetailView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("LumiIncomingCall"))) { _ in
             Task { incomingCall = try? await LumiAPIClient().fetchIncomingCall(from: "default") }
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("LumiScreenRequest"))) { _ in
+            // ReplayKit consent can only be shown after a foreground user action.
+            showingSettings = true
+        }
         .onAppear {
             if !customVoiceMigrated {
                 ttsVoiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"

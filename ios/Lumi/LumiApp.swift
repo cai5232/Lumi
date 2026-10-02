@@ -80,5 +80,8 @@ final class LumiAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
         if response.notification.request.content.userInfo["kind"] as? String == "incoming_call" {
             NotificationCenter.default.post(name: Notification.Name("LumiIncomingCall"), object: nil)
         }
+        if response.notification.request.content.userInfo["kind"] as? String == "screen_request" {
+            NotificationCenter.default.post(name: Notification.Name("LumiScreenRequest"), object: nil)
+        }
     }
 }

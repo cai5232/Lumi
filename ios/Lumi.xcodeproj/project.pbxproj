@@ -30,11 +30,13 @@
 		A10000000000000000000021 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000025 /* NotificationService.swift */; };
 		A10000000000000000000022 /* AssistantAvatar.jpg in Notification Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* AssistantAvatar.jpg */; };
 		A10000000000000000000023 /* LumiNotificationService.appex in Embed Notification Service */ = {isa = PBXBuildFile; fileRef = B10000000000000000000027 /* LumiNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000024 /* LumiWidget.appex in Embed Widget */ = {isa = PBXBuildFile; fileRef = B10000000000000000000024 /* LumiWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		F10000000000000000000001 /* Proxy for LumiBroadcastUpload */ = {isa = PBXContainerItemProxy; containerPortal = D10000000000000000000003 /* Project object */; proxyType = 1; remoteGlobalIDString = D10000000000000000000005; remoteInfo = LumiBroadcastUpload; };
 		F10000000000000000000004 /* Proxy for LumiNotificationService */ = {isa = PBXContainerItemProxy; containerPortal = D10000000000000000000003 /* Project object */; proxyType = 1; remoteGlobalIDString = D10000000000000000000009; remoteInfo = LumiNotificationService; };
+		F10000000000000000000005 /* Proxy for LumiWidget */ = {isa = PBXContainerItemProxy; containerPortal = D10000000000000000000003 /* Project object */; proxyType = 1; remoteGlobalIDString = D10000000000000000000007; remoteInfo = LumiWidget; };
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
@@ -180,10 +182,11 @@
 				C10000000000000000000011 /* Embed Push API Token */,
 				C10000000000000000000012 /* Embed Broadcast Upload */,
 				C10000000000000000000024 /* Embed Notification Service */,
+				C10000000000000000000025 /* Embed Widget */,
 			);
 			buildRules = (
 			);
-			dependencies = ( F10000000000000000000002 /* LumiBroadcastUpload */, F10000000000000000000003 /* LumiNotificationService */ );
+			dependencies = ( F10000000000000000000002 /* LumiBroadcastUpload */, F10000000000000000000003 /* LumiNotificationService */, F10000000000000000000006 /* LumiWidget */ );
 			name = Lumi;
 			productName = Lumi;
 			productReference = B10000000000000000000007 /* Lumi.app */;
@@ -210,6 +213,7 @@
 /* Begin PBXTargetDependency section */
 		F10000000000000000000002 /* LumiBroadcastUpload */ = {isa = PBXTargetDependency; target = D10000000000000000000005 /* LumiBroadcastUpload */; targetProxy = F10000000000000000000001 /* Proxy for LumiBroadcastUpload */; };
 		F10000000000000000000003 /* LumiNotificationService */ = {isa = PBXTargetDependency; target = D10000000000000000000009 /* LumiNotificationService */; targetProxy = F10000000000000000000004 /* Proxy for LumiNotificationService */; };
+		F10000000000000000000006 /* LumiWidget */ = {isa = PBXTargetDependency; target = D10000000000000000000007 /* LumiWidget */; targetProxy = F10000000000000000000005 /* Proxy for LumiWidget */; };
 /* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
@@ -295,6 +299,7 @@
 		C10000000000000000000013 /* Broadcast Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000018 /* LumiBroadcastUploadHandler.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000014 /* Broadcast Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000024 /* Embed Notification Service */ = { isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = "PlugIns"; dstSubfolderSpec = 13; files = ( A10000000000000000000023 /* LumiNotificationService.appex in Embed Notification Service */, ); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000025 /* Embed Widget */ = { isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = "PlugIns"; dstSubfolderSpec = 13; files = ( A10000000000000000000024 /* LumiWidget.appex in Embed Widget */, ); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000017 /* Widget Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000020 /* LumiWidget.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000018 /* Widget Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000019 /* Widget Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
