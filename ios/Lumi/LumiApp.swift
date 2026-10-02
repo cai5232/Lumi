@@ -40,6 +40,9 @@ private struct LumiRootView: View {
 final class LumiAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().setNotificationCategories([
+            UNNotificationCategory(identifier: "LUMI_MESSAGE", actions: [], intentIdentifiers: [], options: [])
+        ])
         registerIfAuthorized(application)
         return true
     }
