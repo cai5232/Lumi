@@ -5,19 +5,21 @@ struct WakeEntry: TimelineEntry {
     let date: Date
     let lastWakeAt: Date?
     let nextWakeAt: Date?
+    let enabled: Bool
 }
 
 struct WakeProvider: TimelineProvider {
     private let endpoint = URL(string: "https://lumi-tokyo-api.zeabur.app/v1/chats/default/activity")!
 
-    func placeholder(in context: Context) -> WakeEntry { WakeEntry(date: .now, lastWakeAt: nil, nextWakeAt: nil) }
+    func placeholder(in context: Context) -> WakeEntry { WakeEntry(date: .now, lastWakeAt: nil, nextWakeAt: nil, enabled: true) }
     func getSnapshot(in context: Context, completion: @escaping (WakeEntry) -> Void) {
         Task { completion(await load()) }
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<WakeEntry>) -> Void) {
         Task {
             let entry = await load()
-            let refresh = entry.nextWakeAt.map { max(Date().addingTimeInterval(60), $0) } ?? Date().addingTimeInterval(15 * 60)
+            // Re-fetch every minute so the displayed next-wake countdown is live.
+            let refresh = Date().addingTimeInterval(60)
             completion(Timeline(entries: [entry], policy: .after(refresh)))
         }
     }
@@ -27,9 +29,20 @@ struct WakeProvider: TimelineProvider {
             let (data, response) = try await URLSession.shared.data(from: endpoint)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
             let value = try JSONDecoder().decode(ActivityPayload.self, from: data)
-            return WakeEntry(date: .now, lastWakeAt: value.lastWakeAt.flatMap(Self.date), nextWakeAt: value.nextWakeAt.flatMap(Self.date))
+            let settingsData: Data?
+            if let settingsResult = try? await URLSession.shared.data(from: URL(string: "https://lumi-tokyo-api.zeabur.app/v1/settings/proactive")!) {
+                settingsData = settingsResult.0
+            } else {
+                settingsData = nil
+            }
+            let settings = settingsData.flatMap { try? JSONDecoder().decode(ProactivePayload.self, from: $0) }
+            let enabled = settings?.enabled ?? false
+            let interval = Double(settings?.intervalMin ?? 0) * 60
+            let computedNext = value.nextWakeAt.flatMap(Self.date)
+                ?? (enabled ? value.lastUserActivityAt.flatMap(Self.date)?.addingTimeInterval(interval) : nil)
+            return WakeEntry(date: .now, lastWakeAt: value.lastWakeAt.flatMap(Self.date), nextWakeAt: computedNext, enabled: enabled)
         } catch {
-            return WakeEntry(date: .now, lastWakeAt: nil, nextWakeAt: nil)
+            return WakeEntry(date: .now, lastWakeAt: nil, nextWakeAt: nil, enabled: false)
         }
     }
 
@@ -39,6 +52,12 @@ struct WakeProvider: TimelineProvider {
 private struct ActivityPayload: Decodable {
     let lastWakeAt: String?
     let nextWakeAt: String?
+    let lastUserActivityAt: String?
+}
+
+private struct ProactivePayload: Decodable {
+    let enabled: Bool
+    let intervalMin: Int
 }
 
 struct LumiWidgetView: View {
@@ -49,14 +68,19 @@ struct LumiWidgetView: View {
                 .font(.headline)
                 .foregroundStyle(Color(red: 0.72, green: 0.31, blue: 0.48))
             Text("上次醒来：\(time(entry.lastWakeAt))")
-            Text("下次醒来：\(time(entry.nextWakeAt))")
+            if let next = entry.nextWakeAt {
+                Text("下次醒来：\(next, style: .time)")
+                    .widgetAccentable()
+            } else {
+                Text(entry.enabled ? "下次醒来：正在安排" : "下次醒来：未开启")
+            }
         }
         .font(.system(size: 14, design: .rounded))
         .containerBackground(for: .widget) { Color(red: 1.0, green: 0.94, blue: 0.96) }
     }
 
     private func time(_ date: Date?) -> String {
-        guard let date else { return "暂无" }
+        guard let date else { return "尚未触发" }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "M月d日 HH:mm"
