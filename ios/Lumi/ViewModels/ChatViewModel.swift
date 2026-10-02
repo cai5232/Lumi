@@ -207,7 +207,7 @@ final class ChatViewModel: ObservableObject {
 
     func rejectScreenShare(_ request: ChatMessage) async {
         guard request.contentType == "screen_request" else { return }
-        let status = ChatMessage(id: UUID(), role: .assistant, content: "已拒绝", createdAt: .now, contentType: "screen_status", screenStatus: "rejected")
+        let status = ChatMessage(id: UUID(), role: .assistant, content: "已拒绝", createdAt: .now, screenStatus: "rejected", contentType: "screen_status")
         if !messages.contains(where: { $0.contentType == "screen_status" && $0.createdAt.timeIntervalSince(request.createdAt) >= 0 }) {
             messages.append(status)
             saveLocalConversation()
