@@ -387,22 +387,12 @@ struct ChatDetailView: View {
                 if isUserSide { Spacer(minLength: 48) }
                 VStack(alignment: .leading, spacing: 7) {
                 if isScreenRequest {
-                    VStack(spacing: 8) {
-                        Text("———沈屿想看你的屏幕———")
-                            .font(.system(size: 14, weight: .medium, design: .rounded))
-                            .foregroundStyle(LumiPalette.textSecondary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                        HStack(spacing: 14) {
-                            BroadcastPickerView(preferredExtension: "com.cai5232.Lumi.BroadcastUpload")
-                                .frame(width: 52, height: 34)
-                            Button("拒绝") {
-                                Task { await model.rejectScreenShare(message) }
-                            }
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(LumiPalette.textSecondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
+                    // Persisted status only. Consent/system broadcast controls live in Settings;
+                    // autonomous wake must not depend on opening this chat.
+                    Text("———沈屿想看你的屏幕———")
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundStyle(LumiPalette.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 } else if isScreenStatus {
                     Text("———已拒绝———")
                         .font(.system(size: 13, weight: .medium, design: .rounded))
