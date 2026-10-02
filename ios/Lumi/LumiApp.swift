@@ -50,8 +50,19 @@ final class LumiAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
 
     private func registerIfAuthorized(_ application: UIApplication) {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional || settings.authorizationStatus == .ephemeral else { return }
-            DispatchQueue.main.async { application.registerForRemoteNotifications() }
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                DispatchQueue.main.async { application.registerForRemoteNotifications() }
+            case .notDetermined:
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                    guard granted else { return }
+                    DispatchQueue.main.async { application.registerForRemoteNotifications() }
+                }
+            case .denied:
+                break
+            @unknown default:
+                break
+            }
         }
     }
 
@@ -73,7 +84,10 @@ final class LumiAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .sound, .list]
+        if notification.request.content.userInfo["kind"] as? String == "screen_request" {
+            NotificationCenter.default.post(name: Notification.Name("LumiScreenRequest"), object: nil)
+        }
+        return [.banner, .sound, .list]
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {

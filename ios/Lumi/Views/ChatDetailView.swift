@@ -25,6 +25,7 @@ struct ChatDetailView: View {
     @State private var showingCallDemo = false
     @State private var incomingCallID: String?
     @State private var incomingCall: IncomingCallInfo?
+    @State private var screenRequestPending = false
     @State private var respondingToIncomingCallID: String?
     @State private var selectedCallRecord: ChatMessage?
     @State private var showingSubscriptionUsage = false
@@ -155,9 +156,10 @@ struct ChatDetailView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("LumiIncomingCall"))) { _ in
             Task { incomingCall = try? await LumiAPIClient().fetchIncomingCall(from: "default") }
         }
-        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("LumiScreenRequest"))) { _ in
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("LumiScreenRequest"))) { _ in
             // ReplayKit consent can only be shown after a foreground user action.
-            showingSettings = true
+            // Keep the request visible in the chat and expose the real system picker.
+            screenRequestPending = true
         }
         .onAppear {
             if !customVoiceMigrated {
@@ -181,6 +183,11 @@ struct ChatDetailView: View {
         .fullScreenCover(isPresented: $showingTogether) {
             TogetherView { item in
                 selectedGalleryItem = item
+            }
+        }
+        .overlay {
+            if screenRequestPending {
+                screenShareRequestOverlay
             }
         }
         .sheet(isPresented: $glassPresentation.showingThinkingDetails) {
@@ -336,6 +343,40 @@ struct ChatDetailView: View {
                 .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
+    }
+
+    private var screenShareRequestOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.12)
+                .ignoresSafeArea()
+            VStack(spacing: 14) {
+                Text("沈屿想看你的屏幕")
+                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                Text("点击下方按钮后，系统会弹出屏幕广播确认。iOS 不允许应用在后台替你自动确认。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                BroadcastPickerView(preferredExtension: "com.cai5232.Lumi.BroadcastUpload")
+                    .frame(width: 56, height: 56)
+                    .background(Color(red: 0.91, green: 0.58, blue: 0.68), in: Circle())
+                    .overlay {
+                        Image(systemName: "rectangle.inset.filled.and.person.filled")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .allowsHitTesting(false)
+                    }
+                Button("稍后") {
+                    screenRequestPending = false
+                }
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary)
+            }
+            .padding(24)
+            .frame(maxWidth: 320)
+            .background(.white, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
+        }
+        .transition(.opacity)
     }
 
     /// A single server request can be split into several chat bubbles that share
