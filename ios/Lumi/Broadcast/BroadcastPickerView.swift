@@ -8,6 +8,7 @@ struct BroadcastPickerView: UIViewRepresentable {
         let picker = RPSystemBroadcastPickerView(frame: .zero)
         picker.preferredExtension = preferredExtension
         picker.showsMicrophoneButton = false
+        picker.isUserInteractionEnabled = true
         return picker
     }
 

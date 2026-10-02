@@ -1398,6 +1398,7 @@ private struct SettingsView: View {
                                         .frame(height: 36)
                                         .background(Color(red: 1.0, green: 0.93, blue: 0.96))
                                         .clipShape(Capsule())
+                                        .allowsHitTesting(false)
                                     BroadcastPickerView(preferredExtension: "com.cai5232.Lumi.BroadcastUpload")
                                         .frame(width: 132, height: 36)
                                         .opacity(0.02)
