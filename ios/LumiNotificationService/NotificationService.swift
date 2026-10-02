@@ -12,7 +12,6 @@ final class NotificationService: UNNotificationServiceExtension {
             contentHandler(request.content)
             return
         }
-        bestAttemptContent = content
         // Older server builds could put the private reasoning block directly
         // into the alert body. Strip it again at the device boundary so it
         // can never appear in a notification even while a rollout is mixed.
@@ -47,7 +46,11 @@ final class NotificationService: UNNotificationServiceExtension {
                 }
             }
         }
-        contentHandler(self.bestAttemptContent ?? content)
+        // Return the final communication content. The previous implementation
+        // returned the pre-communication copy and silently discarded the
+        // INSendMessageIntent avatar layout.
+        bestAttemptContent = content
+        contentHandler(content)
     }
 
     private static func visibleText(_ value: String) -> String {
