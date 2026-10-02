@@ -119,11 +119,16 @@ async function generateSentinelWake(thread) {
   const proactive = ensureProactive(thread);
   const actions = proactive.actions || { message: true, phone: true, screen: false };
   const recent = (thread.messages || []).slice(-12).map((message) => `${message.role}: ${message.content}`).join("\n");
+  const contextSummary = thread.contextSummary ? `\n<context_summary>\n${thread.contextSummary}\n</context_summary>` : "";
+  const memories = await searchMemories(recent || proactive.message || "主动联系");
+  const retrievedMemories = memories.length
+    ? `\n<retrieved_memories>\n${memories.map((memory) => `- ${memory}`).join("\n")}\n</retrieved_memories>`
+    : "";
   const raw = await callModel({
     messages: [
       {
         role: "system",
-        content: `你是一个会主动关心用户的 AI。根据主动消息设定“${proactive.message}”自然地发起联系。允许的动作：主动消息=${actions.message ? "是" : "否"}，主动电话=${actions.phone ? "是" : "否"}，查看屏幕=${actions.screen ? "是" : "否"}。关闭的动作绝对不要执行。你还要自己决定下一次主动联系的间隔，单位是分钟，必须是 1 到 1440 的整数。只输出 JSON，不要 Markdown：{"message":"要发给用户的话","nextWakeMinutes":整数}`
+        content: `你是一个会主动关心用户的 AI。根据主动消息设定“${proactive.message}”自然地发起联系。允许的动作：主动消息=${actions.message ? "是" : "否"}，主动电话=${actions.phone ? "是" : "否"}，查看屏幕=${actions.screen ? "是" : "否"}。关闭的动作绝对不要执行。你还要自己决定下一次主动联系的间隔，单位是分钟，必须是 1 到 1440 的整数。自主唤醒要结合最近聊天、对话摘要和长期记忆，保持上下文连续。${contextSummary}${retrievedMemories}只输出 JSON，不要 Markdown：{"message":"要发给用户的话","nextWakeMinutes":整数}`
       },
       { role: "user", content: recent || "还没有聊天记录。" }
     ],
