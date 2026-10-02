@@ -251,6 +251,7 @@ struct ProactiveActions: Codable {
 struct ActivityState: Codable {
     var mode: String
     var lastUserActivityAt: String?
+    var lastWakeAt: String?
     var nextWakeAt: String?
     var sleepPendingAt: String?
     var sleepStartedAt: String?

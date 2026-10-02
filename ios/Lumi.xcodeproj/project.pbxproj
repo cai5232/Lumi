@@ -26,6 +26,7 @@
 		A10000000000000000000017 /* BroadcastPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* BroadcastPickerView.swift */; };
 		A10000000000000000000018 /* LumiBroadcastUploadHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000019 /* LumiBroadcastUploadHandler.swift */; };
 		A10000000000000000000019 /* LumiBroadcastUpload.appex in Embed Broadcast Upload */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* LumiBroadcastUpload.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000020 /* LumiWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000022 /* LumiWidget.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -54,6 +55,9 @@
 		B10000000000000000000019 /* LumiBroadcastUploadHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LumiBroadcastUploadHandler.swift; sourceTree = "<group>"; };
 		B10000000000000000000020 /* LumiBroadcastUpload.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = LumiBroadcastUpload.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B10000000000000000000021 /* Broadcast Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B10000000000000000000022 /* LumiWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LumiWidget.swift; sourceTree = "<group>"; };
+		B10000000000000000000023 /* LumiWidget Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B10000000000000000000024 /* LumiWidget.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = LumiWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,6 +78,7 @@
 			path = Broadcast;
 			sourceTree = "<group>";
 		};
+		C10000000000000000000016 /* LumiWidget */ = { isa = PBXGroup; children = ( B10000000000000000000022 /* LumiWidget.swift */, B10000000000000000000023 /* LumiWidget Info.plist */, ); path = LumiWidget; sourceTree = "<group>"; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -125,6 +130,7 @@
 			children = (
 				B10000000000000000000007 /* Lumi.app */,
 				B10000000000000000000020 /* LumiBroadcastUpload.appex */,
+				B10000000000000000000024 /* LumiWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -140,6 +146,7 @@
 				B10000000000000000000016 /* top-icon-phone.jpg */,
 				B10000000000000000000017 /* top-icon-settings.jpg */,
 				C10000000000000000000015 /* Broadcast */,
+				C10000000000000000000016 /* LumiWidget */,
 				B10000000000000000000010 /* Assets.xcassets */,
 				B10000000000000000000014 /* PetAssets */,
 				C10000000000000000000003 /* Models */,
@@ -185,6 +192,7 @@
 			productReference = B10000000000000000000020 /* LumiBroadcastUpload.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		D10000000000000000000007 /* LumiWidget */ = { isa = PBXNativeTarget; buildConfigurationList = D10000000000000000000008 /* Build configuration list for LumiWidget */; buildPhases = ( C10000000000000000000017 /* Widget Sources */, C10000000000000000000018 /* Widget Frameworks */, C10000000000000000000019 /* Widget Resources */, ); buildRules = (); dependencies = (); name = LumiWidget; productName = LumiWidget; productReference = B10000000000000000000024 /* LumiWidget.appex */; productType = "com.apple.product-type.app-extension"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXTargetDependency section */
@@ -205,7 +213,8 @@
 							};
 						};
 					};
-					D10000000000000000000005 = { CreatedOnToolsVersion = 27.0; };
+				D10000000000000000000005 = { CreatedOnToolsVersion = 27.0; };
+				D10000000000000000000007 = { CreatedOnToolsVersion = 27.0; };
 				};
 			};
 			buildConfigurationList = D10000000000000000000004 /* Build configuration list for PBXProject "Lumi" */;
@@ -223,6 +232,7 @@
 			targets = (
 				D10000000000000000000001 /* Lumi */,
 				D10000000000000000000005 /* LumiBroadcastUpload */,
+				D10000000000000000000007 /* LumiWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -269,6 +279,9 @@
 		};
 		C10000000000000000000013 /* Broadcast Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000018 /* LumiBroadcastUploadHandler.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000014 /* Broadcast Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000017 /* Widget Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000020 /* LumiWidget.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000018 /* Widget Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000019 /* Widget Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -374,6 +387,8 @@
 		};
 		E10000000000000000000005 /* Broadcast Debug */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RWRB87B53S; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Lumi/Broadcast/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.Lumi.BroadcastUpload; PRODUCT_NAME = LumiBroadcastUpload; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
 		E10000000000000000000006 /* Broadcast Release */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RWRB87B53S; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Lumi/Broadcast/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.Lumi.BroadcastUpload; PRODUCT_NAME = LumiBroadcastUpload; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		E10000000000000000000007 /* Widget Debug */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RWRB87B53S; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = LumiWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.LumiPush.widget; PRODUCT_NAME = LumiWidget; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		E10000000000000000000008 /* Widget Release */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RWRB87B53S; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = LumiWidget/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.LumiPush.widget; PRODUCT_NAME = LumiWidget; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -396,6 +411,7 @@
 			defaultConfigurationName = Release;
 		};
 		D10000000000000000000006 /* Build configuration list for PBXNativeTarget "LumiBroadcastUpload" */ = { isa = XCConfigurationList; buildConfigurations = ( E10000000000000000000005 /* Broadcast Debug */, E10000000000000000000006 /* Broadcast Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		D10000000000000000000008 /* Build configuration list for LumiWidget */ = { isa = XCConfigurationList; buildConfigurations = ( E10000000000000000000007 /* Widget Debug */, E10000000000000000000008 /* Widget Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = D10000000000000000000003 /* Project object */;
