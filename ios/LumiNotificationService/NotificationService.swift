@@ -29,8 +29,8 @@ final class NotificationService: UNNotificationServiceExtension {
 
     private static func visibleText(_ value: String) -> String {
         var text = value
-        text = text.replacingOccurrences(of: #"(?is)<thinking\b[^>]*>.*?(?:</thinking>|$)"#, with: "", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"(?i)</?thinking\b[^>]*>"#, with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(?is)<(?:thinking|think|analysis|reasoning)\b[^>]*>.*?(?:</(?:thinking|think|analysis|reasoning)>|$)"#, with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(?i)</?(?:thinking|think|analysis|reasoning)\b[^>]*>"#, with: "", options: .regularExpression)
         text = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
