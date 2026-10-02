@@ -1371,13 +1371,20 @@ private struct SettingsView: View {
                     TextField("主动联系内容", text: $proactiveNudgeMessage, axis: .vertical)
                         .lineLimit(2...5)
 
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 0) {
                         Text("AI 醒来后可以做什么")
                             .font(.system(size: 14, weight: .medium))
+                            .padding(.bottom, 8)
                         Toggle("主动消息", isOn: $proactiveActionMessage)
+                            .padding(.vertical, 7)
+                        Divider()
                         Toggle("主动电话", isOn: $proactiveActionPhone)
+                            .padding(.vertical, 7)
+                        Divider()
                         Toggle("查看屏幕", isOn: $proactiveActionScreen)
+                            .padding(.vertical, 7)
                         if proactiveActionScreen {
+                            Divider()
                             HStack {
                                 Text("屏幕共享")
                                     .font(.system(size: 13))
@@ -1386,11 +1393,12 @@ private struct SettingsView: View {
                                 BroadcastPickerView(preferredExtension: "com.cai5232.Lumi.BroadcastUpload")
                                     .frame(width: 44, height: 44)
                             }
+                            .padding(.vertical, 4)
                         }
                     }
-                    .tint(Color(red: 0.72, green: 0.35, blue: 0.49))
+                    .tint(Color(red: 0.91, green: 0.58, blue: 0.68))
 
-                    Text("每次触发会走正常聊天模型并产生一次模型调用；保活默认关闭。\(syncStatus)")
+                    Text("主动消息和电话会带上最近聊天、长期记忆和当前上下文；查看屏幕只在开启并开始系统直播后提供最新画面。每次触发会走正常聊天模型并产生一次模型调用。\(syncStatus)")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 } header: {
