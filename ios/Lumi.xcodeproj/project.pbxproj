@@ -53,6 +53,7 @@
 		B10000000000000000000018 /* BroadcastPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BroadcastPickerView.swift; sourceTree = "<group>"; };
 		B10000000000000000000019 /* LumiBroadcastUploadHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LumiBroadcastUploadHandler.swift; sourceTree = "<group>"; };
 		B10000000000000000000020 /* LumiBroadcastUpload.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = LumiBroadcastUpload.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000021 /* Broadcast Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -66,6 +67,7 @@
 		C10000000000000000000015 /* Broadcast */ = {
 			isa = PBXGroup;
 			children = (
+				B10000000000000000000021 /* Broadcast Info.plist */,
 				B10000000000000000000018 /* BroadcastPickerView.swift */,
 				B10000000000000000000019 /* LumiBroadcastUploadHandler.swift */,
 			);
@@ -370,8 +372,8 @@
 			};
 			name = Release;
 		};
-		E10000000000000000000005 /* Broadcast Debug */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RWRB87B53S; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier = "com.apple.broadcast-services-upload"; INFOPLIST_KEY_NSExtension_NSExtensionPrincipalClass = "$(PRODUCT_MODULE_NAME).LumiBroadcastUploadHandler"; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.Lumi.BroadcastUpload; PRODUCT_NAME = LumiBroadcastUpload; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
-		E10000000000000000000006 /* Broadcast Release */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RWRB87B53S; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier = "com.apple.broadcast-services-upload"; INFOPLIST_KEY_NSExtension_NSExtensionPrincipalClass = "$(PRODUCT_MODULE_NAME).LumiBroadcastUploadHandler"; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.Lumi.BroadcastUpload; PRODUCT_NAME = LumiBroadcastUpload; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		E10000000000000000000005 /* Broadcast Debug */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RWRB87B53S; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Lumi/Broadcast/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.Lumi.BroadcastUpload; PRODUCT_NAME = LumiBroadcastUpload; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		E10000000000000000000006 /* Broadcast Release */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RWRB87B53S; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Lumi/Broadcast/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.Lumi.BroadcastUpload; PRODUCT_NAME = LumiBroadcastUpload; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */

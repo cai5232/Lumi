@@ -76,20 +76,20 @@ struct DraggableClawdPet: View {
                 .gesture(
                     DragGesture(minimumDistance: 2)
                         .onChanged {
-                            isDragging = true
-                            dragTranslation = $0.translation
+                            self.isDragging = true
+                            self.dragTranslation = $0.translation
                         }
                         .onEnded { value in
-                            storedX = clamp(x + value.translation.width, lower: size / 2, upper: proxy.size.width - size / 2)
-                            storedY = clamp(y + value.translation.height, lower: size / 2 + proxy.safeAreaInsets.top, upper: proxy.size.height - size / 2)
-                            dragTranslation = .zero
-                            isDragging = false
+                            self.storedX = clamp(x + value.translation.width, lower: size / 2, upper: proxy.size.width - size / 2)
+                            self.storedY = clamp(y + value.translation.height, lower: size / 2 + proxy.safeAreaInsets.top, upper: proxy.size.height - size / 2)
+                            self.dragTranslation = .zero
+                            self.isDragging = false
                         }
                 )
                 .simultaneousGesture(
                     TapGesture().onEnded {
-                        isTapped = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { isTapped = false }
+                        self.isTapped = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self.isTapped = false }
                     }
                 )
                 .onAppear {
