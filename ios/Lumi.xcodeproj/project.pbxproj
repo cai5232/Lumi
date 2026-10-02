@@ -282,7 +282,7 @@
 			inputPaths = (
 			);
 			name = "Embed Push API Token";
-			outputPaths = ( "$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)" );
+			outputPaths = ( );
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -eu\nif [ -z \"${LUMI_PUSH_API_TOKEN:-}\" ]; then\n  echo \"LUMI_PUSH_API_TOKEN is not set; skipping push authorization token.\"\n  exit 0\nfi\nplist=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n/usr/libexec/PlistBuddy -c \"Set :LUMI_PUSH_API_TOKEN $LUMI_PUSH_API_TOKEN\" \"$plist\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Add :LUMI_PUSH_API_TOKEN string $LUMI_PUSH_API_TOKEN\" \"$plist\"\n";
