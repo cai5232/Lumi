@@ -162,6 +162,10 @@ struct ChatDetailView: View {
             screenRequestPending = true
         }
         .onAppear {
+            if UserDefaults.standard.bool(forKey: "lumi.screenRequestPending") {
+                screenRequestPending = true
+                UserDefaults.standard.removeObject(forKey: "lumi.screenRequestPending")
+            }
             if !customVoiceMigrated {
                 ttsVoiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"
                 customVoiceMigrated = true
