@@ -236,6 +236,25 @@ struct ProactiveSettings: Codable {
     var intervalMax: Int
     var nextDueAt: String?
     var scheduledForUserMessageId: String?
+    var actions: ProactiveActions? = nil
+}
+
+struct ProactiveActions: Codable {
+    var message: Bool
+    var phone: Bool
+    var screen: Bool
+}
+
+struct ActivityState: Codable {
+    var mode: String
+    var lastUserActivityAt: String?
+    var nextWakeAt: String?
+    var sleepPendingAt: String?
+    var sleepStartedAt: String?
+    var sleepUntil: String?
+    var nextDreamAt: String?
+    var dreamCycle: Int?
+    var sleepStage: String?
 }
 
 struct SubscriptionUsage: Decodable {

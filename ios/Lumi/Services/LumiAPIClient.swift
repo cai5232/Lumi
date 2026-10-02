@@ -198,6 +198,19 @@ final class LumiAPIClient {
         return try await perform(request)
     }
 
+    func fetchActivityState(for id: String = "default") async throws -> ActivityState {
+        let request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/activity"))
+        return try await perform(request)
+    }
+
+    func updateActivityState(_ action: String, for id: String = "default") async throws -> ActivityState {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/activity"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["action": action])
+        return try await perform(request)
+    }
+
     func registerPushToken(_ token: String, environment: String) async throws {
         var request = URLRequest(url: baseURL.appending(path: "/v1/push/register"))
         request.httpMethod = "POST"

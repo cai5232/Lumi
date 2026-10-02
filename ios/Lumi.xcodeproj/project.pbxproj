@@ -20,6 +20,12 @@
 		A10000000000000000000011 /* TogetherView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* TogetherView.swift */; };
 		A10000000000000000000012 /* ClawdPetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* ClawdPetView.swift */; };
 		A10000000000000000000013 /* PetAssets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* PetAssets */; };
+		A10000000000000000000014 /* top-icon-together.png in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000015 /* top-icon-together.png */; };
+		A10000000000000000000015 /* top-icon-phone.png in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* top-icon-phone.png */; };
+		A10000000000000000000016 /* top-icon-settings.png in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* top-icon-settings.png */; };
+		A10000000000000000000017 /* BroadcastPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000018 /* BroadcastPickerView.swift */; };
+		A10000000000000000000018 /* LumiBroadcastUploadHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000019 /* LumiBroadcastUploadHandler.swift */; };
+		A10000000000000000000019 /* LumiBroadcastUpload.appex in Embed Broadcast Upload */ = {isa = PBXBuildFile; fileRef = B10000000000000000000020 /* LumiBroadcastUpload.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +43,12 @@
 		B10000000000000000000012 /* TogetherView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TogetherView.swift; sourceTree = "<group>"; };
 		B10000000000000000000013 /* ClawdPetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClawdPetView.swift; sourceTree = "<group>"; };
 		B10000000000000000000014 /* PetAssets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = PetAssets; sourceTree = "<group>"; };
+		B10000000000000000000015 /* top-icon-together.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "top-icon-together.png"; sourceTree = "<group>"; };
+		B10000000000000000000016 /* top-icon-phone.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "top-icon-phone.png"; sourceTree = "<group>"; };
+		B10000000000000000000017 /* top-icon-settings.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "top-icon-settings.png"; sourceTree = "<group>"; };
+		B10000000000000000000018 /* BroadcastPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BroadcastPickerView.swift; sourceTree = "<group>"; };
+		B10000000000000000000019 /* LumiBroadcastUploadHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LumiBroadcastUploadHandler.swift; sourceTree = "<group>"; };
+		B10000000000000000000020 /* LumiBroadcastUpload.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = LumiBroadcastUpload.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -46,6 +58,15 @@
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C10000000000000000000015 /* Broadcast */ = {
+			isa = PBXGroup;
+			children = (
+				B10000000000000000000018 /* BroadcastPickerView.swift */,
+				B10000000000000000000019 /* LumiBroadcastUploadHandler.swift */,
+			);
+			path = Broadcast;
+			sourceTree = "<group>";
 		};
 /* End PBXFrameworksBuildPhase section */
 
@@ -108,6 +129,10 @@
 				B10000000000000000000002 /* Preview.swift */,
 				B10000000000000000000008 /* UserAvatar.jpg */,
 				B10000000000000000000009 /* AssistantAvatar.jpg */,
+				B10000000000000000000015 /* top-icon-together.jpg */,
+				B10000000000000000000016 /* top-icon-phone.jpg */,
+				B10000000000000000000017 /* top-icon-settings.jpg */,
+				C10000000000000000000015 /* Broadcast */,
 				B10000000000000000000010 /* Assets.xcassets */,
 				B10000000000000000000014 /* PetAssets */,
 				C10000000000000000000003 /* Models */,
@@ -129,15 +154,29 @@
 				C10000000000000000000001 /* Frameworks */,
 				C10000000000000000000010 /* Resources */,
 				C10000000000000000000011 /* Embed Push API Token */,
+				C10000000000000000000012 /* Embed Broadcast Upload */,
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
+			dependencies = ();
 			name = Lumi;
 			productName = Lumi;
 			productReference = B10000000000000000000007 /* Lumi.app */;
 			productType = "com.apple.product-type.application";
+		};
+		D10000000000000000000005 /* LumiBroadcastUpload */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D10000000000000000000006 /* Build configuration list for PBXNativeTarget "LumiBroadcastUpload" */;
+			buildPhases = (
+				C10000000000000000000013 /* Broadcast Sources */,
+				C10000000000000000000014 /* Broadcast Frameworks */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = LumiBroadcastUpload;
+			productName = LumiBroadcastUpload;
+			productReference = B10000000000000000000020 /* LumiBroadcastUpload.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -155,6 +194,7 @@
 							};
 						};
 					};
+					D10000000000000000000005 = { CreatedOnToolsVersion = 27.0; };
 				};
 			};
 			buildConfigurationList = D10000000000000000000004 /* Build configuration list for PBXProject "Lumi" */;
@@ -171,6 +211,7 @@
 			projectRoot = "";
 			targets = (
 				D10000000000000000000001 /* Lumi */,
+				D10000000000000000000005 /* LumiBroadcastUpload */,
 			);
 		};
 /* End PBXProject section */
@@ -182,6 +223,9 @@
 			files = (
 				A10000000000000000000007 /* UserAvatar.jpg in Resources */,
 				A10000000000000000000008 /* AssistantAvatar.jpg in Resources */,
+				A10000000000000000000014 /* top-icon-together.png in Resources */,
+				A10000000000000000000015 /* top-icon-phone.png in Resources */,
+				A10000000000000000000016 /* top-icon-settings.png in Resources */,
 				A10000000000000000000009 /* Assets.xcassets in Resources */,
 				A10000000000000000000013 /* PetAssets in Resources */,
 			);
@@ -204,6 +248,16 @@
 			shellPath = /bin/sh;
 			shellScript = "set -eu\nif [ -z \"${LUMI_PUSH_API_TOKEN:-}\" ]; then\n  echo \"LUMI_PUSH_API_TOKEN is not set; skipping push authorization token.\"\n  exit 0\nfi\nplist=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n/usr/libexec/PlistBuddy -c \"Set :LUMI_PUSH_API_TOKEN $LUMI_PUSH_API_TOKEN\" \"$plist\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Add :LUMI_PUSH_API_TOKEN string $LUMI_PUSH_API_TOKEN\" \"$plist\"\n";
 		};
+		C10000000000000000000012 /* Embed Broadcast Upload */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "PlugIns";
+			dstSubfolderSpec = 13;
+			files = ( A10000000000000000000019 /* LumiBroadcastUpload.appex in Embed Broadcast Upload */, );
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C10000000000000000000013 /* Broadcast Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000018 /* LumiBroadcastUploadHandler.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000014 /* Broadcast Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -220,6 +274,7 @@
 				A10000000000000000000010 /* TogetherGalleryStore.swift in Sources */,
 				A10000000000000000000011 /* TogetherView.swift in Sources */,
 				A10000000000000000000012 /* ClawdPetView.swift in Sources */,
+				A10000000000000000000017 /* BroadcastPickerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -306,6 +361,8 @@
 			};
 			name = Release;
 		};
+		E10000000000000000000005 /* Broadcast Debug */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RWRB87B53S; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier = "com.apple.broadcast-services-upload"; INFOPLIST_KEY_NSExtension_NSExtensionPrincipalClass = "$(PRODUCT_MODULE_NAME).LumiBroadcastUploadHandler"; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.Lumi.BroadcastUpload; PRODUCT_NAME = LumiBroadcastUpload; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		E10000000000000000000006 /* Broadcast Release */ = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = RWRB87B53S; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier = "com.apple.broadcast-services-upload"; INFOPLIST_KEY_NSExtension_NSExtensionPrincipalClass = "$(PRODUCT_MODULE_NAME).LumiBroadcastUploadHandler"; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.cai5232.Lumi.BroadcastUpload; PRODUCT_NAME = LumiBroadcastUpload; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -327,6 +384,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		D10000000000000000000006 /* Build configuration list for PBXNativeTarget "LumiBroadcastUpload" */ = { isa = XCConfigurationList; buildConfigurations = ( E10000000000000000000005 /* Broadcast Debug */, E10000000000000000000006 /* Broadcast Release */, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = D10000000000000000000003 /* Project object */;

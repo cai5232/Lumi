@@ -14,7 +14,6 @@ private struct ChatHistoryTopOffsetKey: PreferenceKey {
 @MainActor
 struct ChatDetailView: View {
     @StateObject private var model: ChatViewModel
-    @State private var keyboardVisible = false
     @StateObject private var glassPresentation = GlassComparisonPresentation()
     @State private var showingSettings = false
     @State private var htmlMessage: ChatMessage?
@@ -32,6 +31,7 @@ struct ChatDetailView: View {
     @State private var showingTogether = false
     @State private var historyPagingArmed = false
     @State private var historyPagingPrimed = false
+    @State private var didInitialScroll = false
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
     @AppStorage("lumi.ttsModel") private var ttsModel = "speech-2.8-hd"
     @AppStorage("lumi.ttsVoiceID") private var ttsVoiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"
@@ -59,14 +59,17 @@ struct ChatDetailView: View {
                         // across that replacement so SwiftUI does not briefly remove the
                         // user's bubble while the assistant reply arrives.
                         ForEach(Array(model.messages.enumerated()), id: \.offset) { index, message in
+                            if shouldShowTimeDivider(at: index) {
+                                timeDivider(for: message.createdAt)
+                            }
                             messageBubble(message, showAvatar: shouldShowAvatar(at: index))
                         }
                         if model.isSending { thinkingBubble }
                     }
                     .animation(.easeOut(duration: 0.24), value: model.messages.count)
                     .padding(.horizontal, 16)
-                    .padding(.top, 92)
-                    .padding(.bottom, keyboardVisible ? 24 : 180)
+                    .padding(.top, 112)
+                    .padding(.bottom, 20)
                     Color.clear
                         .frame(height: 1)
                         .id("chat-bottom-anchor")
@@ -82,72 +85,67 @@ struct ChatDetailView: View {
                     historyPagingPrimed = false
                     Task { await model.loadOlderHistoryIfNeeded() }
                 }
-                .scrollDismissesKeyboard(.interactively)
+                .scrollDismissesKeyboard(.immediately)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    guard keyboardVisible else { return }
                     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                    keyboardVisible = true
-                    guard model.messages.last != nil else { return }
-                    Task { @MainActor in
-                        await Task.yield()
-                        try? await Task.sleep(for: .milliseconds(280))
-                        guard keyboardVisible else { return }
-                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("chat-bottom-anchor", anchor: .bottom) }
+                    DispatchQueue.main.async {
+                        proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
                     }
                 }
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
-                    keyboardVisible = true
-                    guard !model.messages.isEmpty else { return }
+                .onChange(of: model.messages.count) { _, _ in
+                    guard !didInitialScroll else { return }
                     Task { @MainActor in
-                        await Task.yield()
                         try? await Task.sleep(for: .milliseconds(120))
-                        guard keyboardVisible else { return }
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
-                        }
+                        proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                        didInitialScroll = true
+                        historyPagingArmed = true
                     }
                 }
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-                    keyboardVisible = false
+                .task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    guard !didInitialScroll else { return }
+                    proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                    didInitialScroll = true
+                    historyPagingArmed = true
                 }
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-                    let endFrame = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
-                    let isShowing = endFrame.map { $0.minY < UIScreen.main.bounds.height } ?? true
-                    keyboardVisible = isShowing
-                    guard isShowing, model.messages.last != nil else { return }
-                    Task { @MainActor in
-                        await Task.yield()
-                        try? await Task.sleep(for: .milliseconds(320))
-                        guard keyboardVisible else { return }
-                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("chat-bottom-anchor", anchor: .bottom) }
-                    }
-                }
-                .onChange(of: model.messages.last?.id) { _, _ in
-                                    Task { @MainActor in
-                                        await Task.yield()
-                                        try? await Task.sleep(for: .milliseconds(120))
-                                        withAnimation(.easeOut(duration: 0.24)) { proxy.scrollTo("chat-bottom-anchor", anchor: .bottom) }
-                                        historyPagingArmed = true
-                                    }
-                                }
             }
             GeometryReader { geometry in
-                topBar
-                    .padding(.top, max(geometry.safeAreaInsets.top, 54) + 8)
-                    .frame(width: geometry.size.width, alignment: .top)
+                ZStack(alignment: .top) {
+                    VStack(spacing: 0) {
+                        Color.white
+                            .frame(height: max(geometry.safeAreaInsets.top, 44) + 44)
+                            .overlay(alignment: .bottom) {
+                                TopBarWaveEdge()
+                                    .fill(LumiPalette.chatBackground)
+                                    .frame(height: 6)
+                            }
+                        Spacer(minLength: 0)
+                    }
+                    .ignoresSafeArea(edges: .top)
+
+                    topBar
+                        .padding(.top, max(geometry.safeAreaInsets.top, 44))
+                        .frame(width: geometry.size.width, alignment: .top)
+                }
             }
         }
+        .foregroundStyle(LumiPalette.textPrimary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(edges: [.top, .horizontal])
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            composer
-                .padding(.bottom, 10)
+            ZStack(alignment: .top) {
+                Color.white
+                    .frame(height: 52)
+                composer
+                    .padding(.top, 4)
+            }
+            .frame(height: 52)
+            .background(Color.white.ignoresSafeArea(edges: .bottom))
         }
         .task {
-            await model.load(waitForRemote: false)
             await model.load()
             await pollIncomingCall()
         }
@@ -268,37 +266,27 @@ struct ChatDetailView: View {
     private var topBar: some View {
         HStack {
             Button { showingTogether = true } label: {
-                TogetherMark()
+                PixelArtIcon(assetName: "top-icon-together")
+                    .frame(width: 25, height: 25)
                     .frame(width: 44, height: 44)
-                    .foregroundStyle(.gray.opacity(0.78))
-            .background(Color(red: 1.0, green: 0.982, blue: 0.988).opacity(0.42), in: Circle())
-            .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().stroke(.white.opacity(0.42), lineWidth: 1))
-                    .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
             }
             .buttonStyle(.plain)
             Spacer()
-            glassCircleButton("phone") { showingCallDemo = true }
+            Button { showingSettings = true } label: {
+                PixelArtIcon(assetName: "top-icon-settings")
+                    .frame(width: 25, height: 25)
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
             HStack(spacing: 0) {
-                Button { showingSubscriptionUsage = true } label: {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 18, weight: .regular))
-                        .frame(width: 48, height: 42)
-                }
-                .buttonStyle(.plain)
-                toolbarDivider
-                Button { showingSettings = true } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 18, weight: .medium))
+                Button { showingCallDemo = true } label: {
+                    PixelArtIcon(assetName: "top-icon-phone")
+                        .frame(width: 25, height: 25)
                         .frame(width: 48, height: 42)
                 }
                 .buttonStyle(.plain)
             }
             .foregroundStyle(.gray.opacity(0.78))
-            .background(Color(red: 1.0, green: 0.982, blue: 0.988).opacity(0.42), in: Capsule())
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.42), lineWidth: 1))
-            .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         }
         .padding(.horizontal, 16)
     }
@@ -342,18 +330,8 @@ struct ChatDetailView: View {
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.gray.opacity(0.78))
                 .frame(width: 44, height: 44)
-                .background(Color(red: 1.0, green: 0.982, blue: 0.988).opacity(0.42), in: Circle())
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(Circle().stroke(.white.opacity(0.42), lineWidth: 1))
-                .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         }
         .buttonStyle(.plain)
-    }
-
-    private var toolbarDivider: some View {
-        Rectangle()
-            .fill(.black.opacity(0.11))
-            .frame(width: 1, height: 30)
     }
 
     /// A single server request can be split into several chat bubbles that share
@@ -365,6 +343,11 @@ struct ChatDetailView: View {
         let previous = model.messages[index - 1]
         guard current.role == previous.role else { return true }
         return abs(current.createdAt.timeIntervalSince(previous.createdAt)) >= 0.01
+    }
+
+    private func shouldShowTimeDivider(at index: Int) -> Bool {
+        guard index > 0 else { return false }
+        return model.messages[index].createdAt.timeIntervalSince(model.messages[index - 1].createdAt) > 30 * 60
     }
 
     @ViewBuilder private func messageBubble(_ message: ChatMessage, showAvatar: Bool) -> some View {
@@ -384,13 +367,19 @@ struct ChatDetailView: View {
             HStack(alignment: .top) {
                 if !isUserSide {
                     if showAvatar {
-                        if let thinking = thinkingText(for: message) {
-                            Button {
-                                glassPresentation.thinkingText = thinking
-                                glassPresentation.showingThinkingDetails = true
-                            } label: { assistantAvatar(for: message) }
-                            .buttonStyle(.plain)
-                        } else { assistantAvatar(for: message) }
+                        VStack(spacing: 3) {
+                            if let thinking = thinkingText(for: message) {
+                                Button {
+                                    glassPresentation.thinkingText = thinking
+                                    glassPresentation.showingThinkingDetails = true
+                                } label: { assistantAvatar(for: message) }
+                                .buttonStyle(.plain)
+                            } else { assistantAvatar(for: message) }
+                            Text(beijingTime(message.createdAt))
+                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                                .foregroundStyle(LumiPalette.textSecondary)
+                                .frame(width: 48)
+                        }
                     } else { Color.clear.frame(width: 42, height: 42) }
                 }
                 if isUserSide { Spacer(minLength: 48) }
@@ -471,19 +460,20 @@ struct ChatDetailView: View {
                 } else {
                     if looksLikeCode(message.content) {
                         Text(codeDisplayContent(message.content))
-                            .foregroundStyle(.black)
+                            .foregroundStyle(LumiPalette.textPrimary)
                             .font(.system(size: 13, weight: .regular, design: .monospaced))
                             .lineSpacing(2)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         markdownText(visibleContent(message.content))
-                            .foregroundStyle(.black)
+                            .foregroundStyle(LumiPalette.textPrimary)
                             .font(.system(size: 14, weight: .regular))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 }
+                .foregroundStyle(LumiPalette.textPrimary)
                 .padding(.horizontal, isGalleryCollection ? 0 : (isHTMLCard ? 8 : (isCallStatus ? 10 : 13)))
                 .padding(.vertical, isGalleryCollection ? 0 : (isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3))))
                 .frame(width: isGalleryCollection ? 244 : (message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8))), alignment: .leading)
@@ -536,11 +526,11 @@ struct ChatDetailView: View {
         }
 
     private func timeDivider(for date: Date) -> some View {
-        Text("-- \(beijingTime(date)) --")
+        Text(beijingTime(date))
             .font(.system(size: 11, weight: .medium, design: .rounded))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(LumiPalette.textSecondary)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 5)
+            .padding(.vertical, 7)
     }
 
     private func visibleContent(_ content: String) -> String {
@@ -720,12 +710,41 @@ private struct GalleryCollectionCard: View {
     }
 }
 
-private struct TogetherMark: View {
+private struct PixelArtIcon: View {
+    let assetName: String
+
     var body: some View {
-        Image(systemName: "person.2")
-            .font(.system(size: 16, weight: .regular))
-            .frame(width: 22, height: 22)
-        .accessibilityLabel("我们")
+        Image(uiImage: Self.image(named: assetName))
+            .resizable()
+            .scaledToFit()
+            .accessibilityHidden(true)
+    }
+
+    private static func image(named name: String) -> UIImage {
+        let sourceImage = Bundle.main.url(forResource: name, withExtension: "png")
+            .flatMap { UIImage(contentsOfFile: $0.path) }
+            ?? UIImage(named: name)
+        return sourceImage ?? UIImage()
+    }
+}
+
+private struct TopBarWaveEdge: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let baseline = rect.height * 0.45
+        let amplitude = min(1.25, rect.height * 0.22)
+        let wavelength = max(14, rect.width / 18)
+        path.move(to: CGPoint(x: 0, y: baseline))
+        var x: CGFloat = 0
+        while x <= rect.width {
+            let y = baseline + sin((x / wavelength) * .pi * 2) * amplitude
+            path.addLine(to: CGPoint(x: x, y: y))
+            x += 2
+        }
+        path.addLine(to: CGPoint(x: rect.width, y: rect.height))
+        path.addLine(to: CGPoint(x: 0, y: rect.height))
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -776,59 +795,43 @@ private struct ComposerInputView: View {
                 }
                 .padding(.horizontal, 4)
             }
-            TextField("", text: $text)
-                .focused($focused)
-                .lineLimit(1)
-                .submitLabel(.send)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .padding(.top, 12)
-                .onSubmit {
-                    let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if value.isEmpty && selectedImageData == nil && selectedGalleryItem == nil {
-                        focused = false
-                        return
-                    }
-                    text = ""
-                    onSend(value)
-                    focused = false
-                }
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 PhotosPicker(selection: $photoItem, matching: .images) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.gray.opacity(0.78))
-                        .frame(width: 42, height: 42)
-                }
-                Spacer()
-                Button { focused = true } label: {
-                    Image(systemName: "mic")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(.gray.opacity(0.78))
-                        .frame(width: 40, height: 40)
-                }
-                .buttonStyle(.plain)
-                Button {
-                    let value = text
-                    text = ""
-                    focused = false
-                    onSend(value)
-                } label: {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 16, weight: .medium))
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(LumiPalette.iconPink)
                         .frame(width: 38, height: 38)
-                        .foregroundStyle(.gray.opacity(0.78))
+                        .background(Color.white, in: Circle())
+                        .overlay(Circle().stroke(LumiPalette.iconPink, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                HStack(spacing: 6) {
+                    TextField("输入消息", text: $text)
+                        .focused($focused)
+                        .foregroundStyle(LumiPalette.textPrimary)
+                        .tint(LumiPalette.iconPink)
+                        .lineLimit(1)
+                        .submitLabel(.send)
+                        .onSubmit {
+                            let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if value.isEmpty && selectedImageData == nil && selectedGalleryItem == nil {
+                                focused = false
+                                return
+                            }
+                            text = ""
+                            onSend(value)
+                            focused = false
+                        }
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 38)
+                .background(Color.white, in: Capsule())
+                .overlay(Capsule().stroke(LumiPalette.iconPink, lineWidth: 1))
             }
         }
-        .frame(height: selectedImageData == nil && selectedGalleryItem == nil ? 96 : 140)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
-        .background(Color(red: 1.0, green: 0.982, blue: 0.988).opacity(0.42), in: RoundedRectangle(cornerRadius: 32, style: .continuous))
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 32, style: .continuous).stroke(.white.opacity(0.42), lineWidth: 1))
-        .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
+        .frame(height: selectedImageData == nil && selectedGalleryItem == nil ? 40 : 92)
         .padding(.horizontal, 16)
+        .padding(.vertical, 2)
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task {
@@ -854,6 +857,9 @@ private struct ComposerInputView: View {
 private enum LumiPalette {
     static let chatBackground = Color(red: 0.984, green: 0.949, blue: 0.957)
     static let userBubble = Color(red: 0.9608, green: 0.9255, blue: 0.9255)
+    static let iconPink = Color(red: 0.955, green: 0.745, blue: 0.800)
+    static let textPrimary = Color(red: 0.20, green: 0.17, blue: 0.19)
+    static let textSecondary = Color(red: 0.36, green: 0.31, blue: 0.34)
 }
 
 private struct ThinkingDots: View {
@@ -1262,9 +1268,13 @@ private struct SettingsView: View {
     @AppStorage("lumi.proactiveNudgeEnabled") private var proactiveNudgeEnabled = false
     @AppStorage("lumi.proactiveNudgeInterval") private var proactiveNudgeInterval = 60
     @AppStorage("lumi.proactiveNudgeMessage") private var proactiveNudgeMessage = "有一段时间没聊了，结合我们的上下文自然地来找我说句话。"
+    @AppStorage("lumi.proactiveActionMessage") private var proactiveActionMessage = true
+    @AppStorage("lumi.proactiveActionPhone") private var proactiveActionPhone = true
+    @AppStorage("lumi.proactiveActionScreen") private var proactiveActionScreen = false
     @State private var settingsLoaded = false
     @State private var syncStatus = "正在连接后端…"
     @State private var settingsSaveTask: Task<Void, Never>?
+    @State private var activityState: ActivityState?
     @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
     @State private var showingMiniMaxSettings = false
     @State private var pushAPIToken = LumiKeychain.read(account: "push-api-token")
@@ -1361,11 +1371,52 @@ private struct SettingsView: View {
                     TextField("主动联系内容", text: $proactiveNudgeMessage, axis: .vertical)
                         .lineLimit(2...5)
 
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("AI 醒来后可以做什么")
+                            .font(.system(size: 14, weight: .medium))
+                        Toggle("主动消息", isOn: $proactiveActionMessage)
+                        Toggle("主动电话", isOn: $proactiveActionPhone)
+                        Toggle("查看屏幕", isOn: $proactiveActionScreen)
+                        if proactiveActionScreen {
+                            HStack {
+                                Text("屏幕共享")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                BroadcastPickerView(preferredExtension: "com.cai5232.Lumi.BroadcastUpload")
+                                    .frame(width: 44, height: 44)
+                            }
+                        }
+                    }
+                    .tint(Color(red: 0.72, green: 0.35, blue: 0.49))
+
                     Text("每次触发会走正常聊天模型并产生一次模型调用；保活默认关闭。\(syncStatus)")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 } header: {
                     Text("主动联系")
+                }
+
+                Section {
+                    HStack {
+                        Label("当前状态", systemImage: activityState?.mode == "sleeping" ? "moon.zzz" : "antenna.radiowaves.left.and.right")
+                        Spacer()
+                        Text(activityStateLabel)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("现在重新开始哨兵计时") {
+                        Task { await updateActivity("sentinel_start") }
+                    }
+                    if activityState?.mode == "sleeping" {
+                        Button("结束睡眠，切回自主活动") {
+                            Task { await updateActivity("sleep_abort") }
+                        }
+                    }
+                    Text("说“晚安”等告别词后，连续一小时没有新消息会进入睡眠；睡眠期间会生成连续梦境，异常醒来后可切回哨兵模式。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("自主活动与睡眠")
                 }
 
                 Section {
@@ -1400,11 +1451,15 @@ private struct SettingsView: View {
         .task {
             await refreshNotificationStatus()
             await loadProactiveSettings()
+            await loadActivityState()
             await loadModelProviders()
         }
         .onChange(of: proactiveNudgeEnabled) { _, _ in saveProactiveSettings() }
         .onChange(of: proactiveNudgeInterval) { _, _ in saveProactiveSettings() }
         .onChange(of: proactiveNudgeMessage) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveActionMessage) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveActionPhone) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveActionScreen) { _, _ in saveProactiveSettings() }
         .onChange(of: selectedProvider) { _, _ in
             setSelectedModel("")
             Task { await loadModelProviders() }
@@ -1465,6 +1520,9 @@ private struct SettingsView: View {
             proactiveNudgeEnabled = settings.enabled
             proactiveNudgeInterval = settings.intervalMin
             proactiveNudgeMessage = settings.message
+            proactiveActionMessage = settings.actions?.message ?? true
+            proactiveActionPhone = settings.actions?.phone ?? true
+            proactiveActionScreen = settings.actions?.screen ?? false
             syncStatus = "已同步到后端"
             let authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
             if authorization == .authorized || authorization == .provisional || authorization == .ephemeral {
@@ -1474,6 +1532,22 @@ private struct SettingsView: View {
             syncStatus = syncErrorMessage(error)
         }
         settingsLoaded = true
+    }
+
+    private var activityStateLabel: String {
+        switch activityState?.mode {
+        case "sleeping": return "睡眠中"
+        case "sentinel": return "哨兵模式"
+        default: return "未同步"
+        }
+    }
+
+    private func loadActivityState() async {
+        activityState = try? await api.fetchActivityState()
+    }
+
+    private func updateActivity(_ action: String) async {
+        activityState = try? await api.updateActivityState(action)
     }
 
     private func loadModelProviders() async {
@@ -1509,7 +1583,8 @@ private struct SettingsView: View {
                     threadId: "default",
                     message: proactiveNudgeMessage,
                     intervalMin: proactiveNudgeInterval,
-                    intervalMax: proactiveNudgeInterval
+                    intervalMax: proactiveNudgeInterval,
+                    actions: ProactiveActions(message: proactiveActionMessage, phone: proactiveActionPhone, screen: proactiveActionScreen)
                 ))
                 syncStatus = "已同步到后端"
             } catch {
