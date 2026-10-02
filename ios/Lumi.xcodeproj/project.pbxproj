@@ -31,6 +31,7 @@
 		A10000000000000000000022 /* AssistantAvatar.jpg in Notification Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* AssistantAvatar.jpg */; };
 		A10000000000000000000023 /* LumiNotificationService.appex in Embed Notification Service */ = {isa = PBXBuildFile; fileRef = B10000000000000000000027 /* LumiNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A10000000000000000000024 /* LumiWidget.appex in Embed Widget */ = {isa = PBXBuildFile; fileRef = B10000000000000000000024 /* LumiWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000025 /* Intents.framework in Notification Frameworks */ = {isa = PBXBuildFile; fileRef = B10000000000000000000028 /* Intents.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -67,6 +68,7 @@
 		B10000000000000000000025 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		B10000000000000000000026 /* Notification Service Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		B10000000000000000000027 /* LumiNotificationService.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = LumiNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000028 /* Intents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Intents.framework; path = System/Library/Frameworks/Intents.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -303,7 +305,7 @@
 		C10000000000000000000018 /* Widget Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000019 /* Widget Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000021 /* Notification Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000021 /* NotificationService.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
-		C10000000000000000000022 /* Notification Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000022 /* Notification Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000025 /* Intents.framework in Notification Frameworks */, ); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000023 /* Notification Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000022 /* AssistantAvatar.jpg in Notification Resources */, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXShellScriptBuildPhase section */
 

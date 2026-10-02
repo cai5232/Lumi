@@ -1,5 +1,6 @@
 import UserNotifications
 import Foundation
+import Intents
 
 final class NotificationService: UNNotificationServiceExtension {
     private var contentHandler: ((UNNotificationContent) -> Void)?
@@ -7,7 +8,7 @@ final class NotificationService: UNNotificationServiceExtension {
 
     override func didReceive(_ request: UNNotificationRequest, withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
         self.contentHandler = contentHandler
-        guard let content = request.content.mutableCopy() as? UNMutableNotificationContent else {
+        guard var content = request.content.mutableCopy() as? UNMutableNotificationContent else {
             contentHandler(request.content)
             return
         }
@@ -22,6 +23,28 @@ final class NotificationService: UNNotificationServiceExtension {
             let url = URL(fileURLWithPath: path)
             if let attachment = try? UNNotificationAttachment(identifier: "shen-yu-avatar", url: url) {
                 content.attachments = [attachment]
+            }
+            // Use Apple's communication-notification layout so the sender
+            // avatar is prominent and iOS keeps the Lumi app icon as the badge.
+            if let imageData = try? Data(contentsOf: url) {
+                let handle = INPersonHandle(value: "shen-yu", type: .unknown)
+                let sender = INPerson(personHandle: handle,
+                                       nameComponents: nil,
+                                       displayName: "沈屿",
+                                       image: INImage(imageData: imageData),
+                                       contactIdentifier: nil,
+                                       customIdentifier: "lumi-shen-yu")
+                let intent = INSendMessageIntent(recipients: nil,
+                                                 outgoingMessageType: .outgoingMessageText,
+                                                 content: content.body,
+                                                 speakableGroupName: nil,
+                                                 conversationIdentifier: "lumi-default",
+                                                 serviceName: "Lumi",
+                                                 sender: sender,
+                                                 attachments: nil)
+                if let updated = try? content.updating(from: intent) as? UNMutableNotificationContent {
+                    content = updated
+                }
             }
         }
         contentHandler(self.bestAttemptContent ?? content)
