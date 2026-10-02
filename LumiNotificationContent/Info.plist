@@ -13,7 +13,7 @@
 <key>NSExtensionAttributes</key><dict>
 <key>UNNotificationExtensionCategory</key><array><string>LUMI_MESSAGE</string></array>
 <key>UNNotificationExtensionInitialContentSizeRatio</key><real>0.45</real>
-<key>UNNotificationExtensionUserInteractionEnabled</key><true/>
+<key>UNNotificationExtensionDefaultContentHidden</key><true/>
 </dict>
 </dict>
 </dict></plist>

@@ -10,15 +10,19 @@ final class NotificationViewController: UIViewController, UNNotificationContentE
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = .clear
         avatarView.contentMode = .scaleAspectFill
         avatarView.clipsToBounds = true
         avatarView.layer.cornerRadius = 18
-        avatarView.image = UIImage(named: "AssistantAvatar.jpg")
+        if let url = Bundle.main.url(forResource: "AssistantAvatar", withExtension: "jpg") {
+            avatarView.image = UIImage(contentsOfFile: url.path)
+        }
         appIconView.contentMode = .scaleAspectFill
         appIconView.clipsToBounds = true
         appIconView.layer.cornerRadius = 10
-        appIconView.image = UIImage(named: "AppIcon.png")
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "png") {
+            appIconView.image = UIImage(contentsOfFile: url.path)
+        }
         titleLabel.font = .preferredFont(forTextStyle: .headline)
         bodyLabel.font = .preferredFont(forTextStyle: .body)
         bodyLabel.numberOfLines = 0
