@@ -78,7 +78,7 @@
 			path = Broadcast;
 			sourceTree = "<group>";
 		};
-		C10000000000000000000016 /* LumiWidget */ = { isa = PBXGroup; children = ( B10000000000000000000022 /* LumiWidget.swift */, B10000000000000000000023 /* LumiWidget Info.plist */, ); path = LumiWidget; sourceTree = "<group>"; };
+		C10000000000000000000016 /* LumiWidget */ = { isa = PBXGroup; children = ( B10000000000000000000022 /* LumiWidget.swift */, B10000000000000000000023 /* LumiWidget Info.plist */, ); path = ../LumiWidget; sourceTree = "<group>"; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
