@@ -282,7 +282,8 @@ final class ChatViewModel: ObservableObject {
             )
             return [status, reply]
         }
-        let thinking = extractThinking(from: message.content)
+        let storedThinking = message.thinking?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let thinking = storedThinking?.isEmpty == false ? storedThinking : extractThinking(from: message.content)
         let visible = message.content
             .replacingOccurrences(of: #"(?is)<thinking>.*?</thinking>"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)</?thinking>"#, with: "", options: .regularExpression)

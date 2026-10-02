@@ -87,6 +87,7 @@ final class LumiAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+        NotificationCenter.default.post(name: Notification.Name("LumiRemoteMessageReceived"), object: nil)
         if notification.request.content.userInfo["kind"] as? String == "screen_request" {
             UserDefaults.standard.set(true, forKey: "lumi.screenRequestPending")
             NotificationCenter.default.post(name: Notification.Name("LumiScreenRequest"), object: nil)

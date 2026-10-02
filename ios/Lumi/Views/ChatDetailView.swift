@@ -153,6 +153,9 @@ struct ChatDetailView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task { await model.load() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("LumiRemoteMessageReceived"))) { _ in
+            Task { await model.load() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("LumiIncomingCall"))) { _ in
             Task { incomingCall = try? await LumiAPIClient().fetchIncomingCall(from: "default") }
         }
@@ -418,13 +421,11 @@ struct ChatDetailView: View {
             HStack(alignment: .top) {
                 if !isUserSide {
                     if showAvatar {
-                        if let thinking = thinkingText(for: message) {
-                            Button {
-                                glassPresentation.thinkingText = thinking
-                                glassPresentation.showingThinkingDetails = true
-                            } label: { assistantAvatar(for: message) }
-                            .buttonStyle(.plain)
-                        } else { assistantAvatar(for: message) }
+                        Button {
+                            glassPresentation.thinkingText = thinkingText(for: message) ?? "这条回复没有保存心声内容。"
+                            glassPresentation.showingThinkingDetails = true
+                        } label: { assistantAvatar(for: message) }
+                        .buttonStyle(.plain)
                     } else { Color.clear.frame(width: 42, height: 42) }
                 }
                 if isUserSide { Spacer(minLength: 48) }
