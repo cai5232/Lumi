@@ -373,36 +373,34 @@ struct ChatDetailView: View {
             HStack(alignment: .top) {
                 if !isUserSide {
                     if showAvatar {
-                        VStack(spacing: 3) {
-                            if let thinking = thinkingText(for: message) {
-                                Button {
-                                    glassPresentation.thinkingText = thinking
-                                    glassPresentation.showingThinkingDetails = true
-                                } label: { assistantAvatar(for: message) }
-                                .buttonStyle(.plain)
-                            } else { assistantAvatar(for: message) }
-                            Text(beijingTime(message.createdAt))
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
-                                .foregroundStyle(LumiPalette.textSecondary)
-                                .frame(width: 48)
-                        }
+                        if let thinking = thinkingText(for: message) {
+                            Button {
+                                glassPresentation.thinkingText = thinking
+                                glassPresentation.showingThinkingDetails = true
+                            } label: { assistantAvatar(for: message) }
+                            .buttonStyle(.plain)
+                        } else { assistantAvatar(for: message) }
                     } else { Color.clear.frame(width: 42, height: 42) }
                 }
                 if isUserSide { Spacer(minLength: 48) }
                 VStack(alignment: .leading, spacing: 3) {
-                if isScreenRequest {
-                    // Persisted status only. Consent/system broadcast controls live in Settings;
-                    // autonomous wake must not depend on opening this chat.
-                    Text("———沈屿想看你的屏幕———")
-                        .font(.system(size: 14, weight: .medium, design: .rounded))
-                        .foregroundStyle(LumiPalette.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                } else if isScreenStatus {
-                    Text("———已拒绝———")
-                        .font(.system(size: 13, weight: .medium, design: .rounded))
-                        .foregroundStyle(LumiPalette.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                } else if isGalleryCollection,
+                    if isScreenRequest {
+                        Text("沈屿想看你的屏幕")
+                            .font(.system(size: 9, weight: .medium, design: .rounded))
+                            .foregroundStyle(LumiPalette.textSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.white.opacity(0.92), in: Capsule())
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    } else if isScreenStatus {
+                        Text("已拒绝")
+                            .font(.system(size: 9, weight: .medium, design: .rounded))
+                            .foregroundStyle(LumiPalette.textSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.white.opacity(0.92), in: Capsule())
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    } else if isGalleryCollection,
                    let notice = try? JSONDecoder().decode(GalleryCollectionNotice.self, from: Data(message.content.utf8)) {
                     GalleryCollectionCard(notice: notice, localImageName: message.localImageFileName)
                 } else if isCallRecord {
