@@ -21,10 +21,11 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var callDuration: Double?
     var callInitiator: String?
     var callStatus: String?
+    var screenStatus: String?
 
-    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount, callID, callDuration, callInitiator, callStatus }
+    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount, callID, callDuration, callInitiator, callStatus, screenStatus }
 
-    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil, callID: String? = nil, callDuration: Double? = nil, callInitiator: String? = nil, callStatus: String? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil) {
+    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil, callID: String? = nil, callDuration: Double? = nil, callInitiator: String? = nil, callStatus: String? = nil, screenStatus: String? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil) {
         self.id = id
         self.role = role
         self.content = content
@@ -43,6 +44,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         self.callDuration = callDuration
         self.callInitiator = callInitiator
         self.callStatus = callStatus
+        self.screenStatus = screenStatus
     }
 
     init(from decoder: Decoder) throws {
@@ -65,6 +67,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         callDuration = try container.decodeIfPresent(Double.self, forKey: .callDuration)
         callInitiator = try container.decodeIfPresent(String.self, forKey: .callInitiator)
         callStatus = try container.decodeIfPresent(String.self, forKey: .callStatus)
+        screenStatus = try container.decodeIfPresent(String.self, forKey: .screenStatus)
     }
 }
 
@@ -255,15 +258,6 @@ struct ActivityState: Codable {
     var nextDreamAt: String?
     var dreamCycle: Int?
     var sleepStage: String?
-    var nightmare: NightmareState?
-}
-
-struct NightmareState: Codable {
-    var status: String
-    var cycle: Int?
-    var content: String
-    var options: [String]
-    var createdAt: String?
 }
 
 struct SubscriptionUsage: Decodable {

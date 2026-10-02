@@ -35,7 +35,7 @@ final class ChatViewModel: ObservableObject {
     func load(waitForRemote: Bool = true) async {
         let localMessages = loadLocalConversation().map(restoreMedia)
         if messages.isEmpty, !localMessages.isEmpty {
-            messages = Self.deduplicateHTMLCards(localMessages)
+            messages = Self.deduplicateMessages(localMessages)
         }
 
         // When local history exists, the UI can open immediately while a later call refreshes the server copy.
@@ -72,16 +72,16 @@ final class ChatViewModel: ObservableObject {
                     }
                     return true
                 }
-                messages = Self.deduplicateHTMLCards((remoteMessages + localOnly).sorted { $0.createdAt < $1.createdAt })
+                messages = Self.deduplicateMessages((remoteMessages + localOnly).sorted { $0.createdAt < $1.createdAt })
             } else {
-                messages = Self.deduplicateHTMLCards(localMessages.isEmpty ? remoteMessages : localMessages)
+                messages = Self.deduplicateMessages(localMessages.isEmpty ? remoteMessages : localMessages)
             }
             saveLocalConversation()
             nextHistoryBefore = thread.nextBefore
             historyFullyLoaded = thread.hasMore != true
         }
         catch {
-            if !localMessages.isEmpty { messages = Self.deduplicateHTMLCards(localMessages) }
+            if !localMessages.isEmpty { messages = Self.deduplicateMessages(localMessages) }
             else if messages.isEmpty { errorMessage = friendlyError(error) }
         }
     }
@@ -102,7 +102,7 @@ final class ChatViewModel: ObservableObject {
             let present = Set(messages.map(\.id))
             let missing = restored.filter { !present.contains($0.id) }
             if !missing.isEmpty {
-                messages = Self.deduplicateHTMLCards((messages + missing).sorted { $0.createdAt < $1.createdAt })
+                messages = Self.deduplicateMessages((messages + missing).sorted { $0.createdAt < $1.createdAt })
                 saveLocalConversation()
             }
             nextHistoryBefore = page.nextBefore
@@ -205,6 +205,16 @@ final class ChatViewModel: ObservableObject {
         saveLocalConversation()
     }
 
+    func rejectScreenShare(_ request: ChatMessage) async {
+        guard request.contentType == "screen_request" else { return }
+        let status = ChatMessage(id: UUID(), role: .assistant, content: "已拒绝", createdAt: .now, contentType: "screen_status", screenStatus: "rejected")
+        if !messages.contains(where: { $0.contentType == "screen_status" && $0.createdAt.timeIntervalSince(request.createdAt) >= 0 }) {
+            messages.append(status)
+            saveLocalConversation()
+        }
+        try? await api.updateScreenShareDecision("rejected")
+    }
+
     private func loadLocalConversation() -> [ChatMessage] {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -244,6 +254,7 @@ final class ChatViewModel: ObservableObject {
 
     private func assistantBubbles(from message: ChatMessage) -> [ChatMessage] {
         if message.contentType == "call_record" { return [message] }
+        if message.contentType == "screen_request" || message.contentType == "screen_status" { return [message] }
         // Gallery collection cards are server-persisted messages. Never run
         // their JSON payload through the ordinary text-bubble splitter, or a
         // restart would turn the card into plain text and make it disappear.
@@ -372,6 +383,19 @@ final class ChatViewModel: ObservableObject {
             guard !keptCards.contains(where: { sameHTMLCard(candidate, $0) }) else { return false }
             keptCards.append(candidate)
             return true
+        }
+    }
+
+    private static func deduplicateMessages(_ messages: [ChatMessage]) -> [ChatMessage] {
+        var seen = Set<String>()
+        return messages.filter { message in
+            let normalized = message.content
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let timeBucket = Int(message.createdAt.timeIntervalSince1970.rounded() / 5)
+            let contentType = message.contentType ?? ""
+            let key = "\(message.role.rawValue)|\(contentType)|\(normalized)|\(timeBucket)"
+            return seen.insert(key).inserted
         }
     }
 

@@ -355,6 +355,8 @@ struct ChatDetailView: View {
         let isCallRecord = message.contentType == "call_record"
         let isCallStatus = message.contentType == "call_status"
         let isGalleryCollection = message.contentType == "gallery_collected"
+        let isScreenRequest = message.contentType == "screen_request"
+        let isScreenStatus = message.contentType == "screen_status"
         let isUserSide = message.callInitiator == "user" || (message.callInitiator == nil && message.role == .user)
         VStack(alignment: isUserSide ? .trailing : .leading, spacing: 5) {
             if !isGalleryCollection,
@@ -384,7 +386,29 @@ struct ChatDetailView: View {
                 }
                 if isUserSide { Spacer(minLength: 48) }
                 VStack(alignment: .leading, spacing: 7) {
-                if isGalleryCollection,
+                if isScreenRequest {
+                    VStack(spacing: 8) {
+                        Text("———沈屿想看你的屏幕———")
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .foregroundStyle(LumiPalette.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        HStack(spacing: 14) {
+                            BroadcastPickerView(preferredExtension: "com.cai5232.Lumi.BroadcastUpload")
+                                .frame(width: 52, height: 34)
+                            Button("拒绝") {
+                                Task { await model.rejectScreenShare(message) }
+                            }
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(LumiPalette.textSecondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                } else if isScreenStatus {
+                    Text("———已拒绝———")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundStyle(LumiPalette.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                } else if isGalleryCollection,
                    let notice = try? JSONDecoder().decode(GalleryCollectionNotice.self, from: Data(message.content.utf8)) {
                     GalleryCollectionCard(notice: notice, localImageName: message.localImageFileName)
                 } else if isCallRecord {
@@ -474,10 +498,10 @@ struct ChatDetailView: View {
                 }
                 }
                 .foregroundStyle(LumiPalette.textPrimary)
-                .padding(.horizontal, isGalleryCollection ? 0 : (isHTMLCard ? 8 : (isCallStatus ? 10 : 13)))
-                .padding(.vertical, isGalleryCollection ? 0 : (isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3))))
-                .frame(width: isGalleryCollection ? 244 : (message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8))), alignment: .leading)
-                .background(isGalleryCollection ? .clear : (isUserSide ? LumiPalette.userBubble : .white))
+                .padding(.horizontal, isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 8 : (isCallStatus ? 10 : 13)))
+                .padding(.vertical, isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3))))
+                .frame(width: isGalleryCollection ? 244 : ((isScreenRequest || isScreenStatus) ? nil : (message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8)))), alignment: .leading)
+                .background(isGalleryCollection || isScreenRequest || isScreenStatus ? .clear : (isUserSide ? LumiPalette.userBubble : .white))
                 .clipShape(RoundedRectangle(cornerRadius: isGalleryCollection ? 0 : 21))
                 if !isUserSide { Spacer(minLength: 48) }
                 if isUserSide {
@@ -1418,20 +1442,6 @@ private struct SettingsView: View {
                     if activityState?.mode == "sleeping" {
                         Button("结束睡眠，切回自主活动") {
                             Task { await updateActivity("sleep_abort") }
-                        }
-                    }
-                    if let nightmare = activityState?.nightmare, nightmare.status == "awake" {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("噩梦惊醒")
-                                .font(.headline)
-                            Text(nightmare.content)
-                                .font(.system(size: 13))
-                                .foregroundStyle(.secondary)
-                            HStack {
-                                Button("发消息") { Task { await updateActivity("nightmare_message") } }
-                                Button("继续睡") { Task { await updateActivity("nightmare_continue") } }
-                                Button("切哨兵") { Task { await updateActivity("nightmare_sentinel") } }
-                            }
                         }
                     }
                     Text("说“晚安”等告别词后，连续一小时没有新消息会进入睡眠；睡眠期间会生成连续梦境，异常醒来后可切回哨兵模式。")

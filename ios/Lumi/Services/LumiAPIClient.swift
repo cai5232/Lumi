@@ -211,6 +211,14 @@ final class LumiAPIClient {
         return try await perform(request)
     }
 
+    func updateScreenShareDecision(_ status: String, for id: String = "default") async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/screen-share/decision"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["status": status])
+        let _: ScreenShareDecisionResponse = try await perform(request)
+    }
+
     func registerPushToken(_ token: String, environment: String) async throws {
         var request = URLRequest(url: baseURL.appending(path: "/v1/push/register"))
         request.httpMethod = "POST"
@@ -260,6 +268,10 @@ final class LumiAPIClient {
         guard case LumiAPIError.server(let message) = error else { return false }
         return message.contains("HTTP 4")
     }
+}
+
+private struct ScreenShareDecisionResponse: Decodable {
+    let status: String
 }
 
 private struct PushTokenRegistration: Encodable {
