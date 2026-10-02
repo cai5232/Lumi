@@ -65,7 +65,7 @@ struct ChatDetailView: View {
                     }
                     .animation(.easeOut(duration: 0.24), value: model.messages.count)
                     .padding(.horizontal, 16)
-                    .padding(.top, 92)
+                    .padding(.top, 112)
                     .padding(.bottom, keyboardVisible ? 24 : 180)
                     Color.clear
                         .frame(height: 1)
@@ -135,9 +135,23 @@ struct ChatDetailView: View {
                                 }
             }
             GeometryReader { geometry in
-                topBar
-                    .padding(.top, max(geometry.safeAreaInsets.top, 54) + 8)
-                    .frame(width: geometry.size.width, alignment: .top)
+                ZStack(alignment: .top) {
+                    VStack(spacing: 0) {
+                        Color.white
+                            .frame(height: max(geometry.safeAreaInsets.top, 54) + 8 + 44)
+                            .overlay(alignment: .bottom) {
+                                Rectangle()
+                                    .fill(Color.black.opacity(0.08))
+                                    .frame(height: 1)
+                            }
+                        Spacer(minLength: 0)
+                    }
+                    .ignoresSafeArea(edges: .top)
+
+                    topBar
+                        .padding(.top, max(geometry.safeAreaInsets.top, 54) + 8)
+                        .frame(width: geometry.size.width, alignment: .top)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -271,10 +285,6 @@ struct ChatDetailView: View {
                 TogetherMark()
                     .frame(width: 44, height: 44)
                     .foregroundStyle(.gray.opacity(0.78))
-            .background(Color(red: 1.0, green: 0.982, blue: 0.988).opacity(0.42), in: Circle())
-            .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().stroke(.white.opacity(0.42), lineWidth: 1))
-                    .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
             }
             .buttonStyle(.plain)
             Spacer()
@@ -295,10 +305,7 @@ struct ChatDetailView: View {
                 .buttonStyle(.plain)
             }
             .foregroundStyle(.gray.opacity(0.78))
-            .background(Color(red: 1.0, green: 0.982, blue: 0.988).opacity(0.42), in: Capsule())
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.42), lineWidth: 1))
-            .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
+
         }
         .padding(.horizontal, 16)
     }
@@ -342,10 +349,6 @@ struct ChatDetailView: View {
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(.gray.opacity(0.78))
                 .frame(width: 44, height: 44)
-                .background(Color(red: 1.0, green: 0.982, blue: 0.988).opacity(0.42), in: Circle())
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(Circle().stroke(.white.opacity(0.42), lineWidth: 1))
-                .shadow(color: Color(red: 0.55, green: 0.38, blue: 0.45).opacity(0.10), radius: 8, x: 0, y: 4)
         }
         .buttonStyle(.plain)
     }
