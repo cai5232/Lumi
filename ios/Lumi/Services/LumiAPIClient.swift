@@ -28,6 +28,37 @@ final class LumiAPIClient {
 
     init(session: URLSession = .shared) { self.session = session }
 
+    func fetchWorldBooks() async throws -> LumiWorldBookSettings {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/world-books"))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        addPushAuthorization(to: &request)
+        return try await perform(request)
+    }
+
+    func saveWorldBooks(_ settings: LumiWorldBookSettings) async throws -> LumiWorldBookSettings {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/world-books"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONEncoder().encode(settings)
+        return try await perform(request)
+    }
+
+    func fetchWorldBookSelection() async throws -> LumiWorldBookSelection {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/default/world-books"))
+        addPushAuthorization(to: &request)
+        return try await perform(request)
+    }
+
+    func saveWorldBookSelection(_ selection: LumiWorldBookSelection) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/default/world-books"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["bookIds": selection.bookIds as Any? ?? NSNull()])
+        let _: LumiWorldBookSelection = try await perform(request)
+    }
+
     func fetchModelProviders() async throws -> [ModelProvider] {
         let response: ModelProvidersResponse = try await perform(URLRequest(url: baseURL.appending(path: "/v1/providers")))
         return response.providers

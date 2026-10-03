@@ -5,6 +5,7 @@ import PhotosUI
 import AVFoundation
 import Speech
 import WebKit
+import UniformTypeIdentifiers
 
 private struct ChatHistoryTopOffsetKey: PreferenceKey {
     static var defaultValue: CGFloat = -.greatestFiniteMagnitude
@@ -1288,6 +1289,12 @@ private struct SettingsView: View {
                     .buttonStyle(.plain)
                     NavigationLink(destination: EmojiManagementView()) {
                         settingsCard(title: "颜文字管理", subtitle: "按心情整理，供沈屿自然选用", icon: "face.smiling")
+                    }
+                }
+
+                Section("世界书") {
+                    NavigationLink(destination: LumiWorldBookView()) {
+                        settingsCard(title: "世界书管理", subtitle: "添加设定、编辑触发规则、导入和导出", icon: "books.vertical")
                     }
                 }
 
@@ -2721,5 +2728,275 @@ private struct CallTypingDots: View {
         }
         .frame(width: 28, height: 20)
         .onAppear { animating = true }
+    }
+}
+
+struct LumiWorldBookSettings: Codable {
+    var books: [LumiWorldBook] = []
+    var activeBookIds: [String] = []
+    var revision: Int = 0
+}
+struct LumiWorldBookSelection: Codable { var bookIds: [String]? }
+struct LumiWorldBook: Codable, Identifiable {
+    var id = UUID().uuidString
+    var name = "新世界书"
+    var description = ""
+    var enabled = true
+    var entries: [LumiWorldBookEntry] = []
+}
+struct LumiWorldBookEntry: Codable, Identifiable {
+    var id = UUID().uuidString
+    var name = "新条目"
+    var enabled = true
+    var priority = 0
+    var position = "AFTER_SYSTEM_PROMPT"
+    var content = ""
+    var injectDepth = 4
+    var role = "USER"
+    var keywords: [String] = []
+    var useRegex = false
+    var caseSensitive = false
+    var scanDepth = 4
+    var constantActive = false
+    var sticky = 0
+    var cooldown = 0
+    var delay = 0
+}
+private struct LumiWorldBookDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    var data: Data
+    init(data: Data) { self.data = data }
+    init(configuration: ReadConfiguration) throws { data = configuration.file.regularFileContents ?? Data() }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
+}
+private struct LumiWorldBookView: View {
+    @State private var settings = LumiWorldBookSettings()
+    @State private var baseline = LumiWorldBookSettings()
+    @State private var baselineSelection = LumiWorldBookSelection(bookIds: nil)
+    @State private var selection = LumiWorldBookSelection(bookIds: nil)
+    @State private var loaded = false
+    @State private var busy = false
+    @State private var status = "正在读取世界书…"
+    @State private var importing = false
+    @State private var exporting = false
+    @State private var exportDocument = LumiWorldBookDocument(data: Data())
+    @State private var previewText = ""
+    @State private var confirmingRefresh = false
+    private let api = LumiAPIClient()
+    private var dirty: Bool { (try? JSONEncoder().encode(settings)) != (try? JSONEncoder().encode(baseline)) || selection.bookIds != baselineSelection.bookIds }
+    var body: some View {
+        List {
+            Section {
+                Text(status).font(.footnote).foregroundStyle(.secondary)
+                if loaded {
+                    Text(dirty ? "有未保存的修改；保存后同步到后端。" : "已与后端同步。")
+                        .font(.footnote).foregroundStyle(dirty ? Color.orange : Color.secondary)
+                }
+            }
+            if loaded {
+                Section("当前聊天") {
+                    Toggle("使用全局选择", isOn: Binding(get: { selection.bookIds == nil }, set: { selection.bookIds = $0 ? nil : settings.activeBookIds }))
+                    Text("全局选择适用于聊天和主动联系；关闭后可只为当前聊天选择世界书。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("世界书 · \(settings.books.count)") {
+                    ForEach($settings.books) { $book in
+                        VStack(alignment: .leading, spacing: 8) {
+                            NavigationLink { LumiWorldBookEditor(book: $book) } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(book.name.isEmpty ? "未命名世界书" : book.name)
+                                    Text("\(book.entries.filter { $0.enabled }.count)/\(book.entries.count) 个条目启用")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            Toggle("全局选用", isOn: activeBinding(book.id)).disabled(!book.enabled)
+                            if selection.bookIds != nil {
+                                Toggle("当前聊天选用", isOn: localBinding(book.id)).disabled(!book.enabled)
+                            }
+                        }
+                    }
+                    .onDelete { offsets in
+                        let ids = offsets.map { settings.books[$0].id }
+                        settings.books.remove(atOffsets: offsets)
+                        settings.activeBookIds.removeAll { ids.contains($0) }
+                        selection.bookIds?.removeAll { ids.contains($0) }
+                    }
+                    .onMove { settings.books.move(fromOffsets: $0, toOffset: $1) }
+                    Button { settings.books.append(LumiWorldBook()) } label: { Label("添加世界书", systemImage: "plus") }
+                }
+                Section("文件") {
+                    Button("导入 Kelivo 世界书 JSON") { importing = true }
+                    Button("导出全部世界书") {
+                        do {
+                            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                            exportDocument = LumiWorldBookDocument(data: try encoder.encode(settings.books)); exporting = true
+                        } catch { status = error.localizedDescription }
+                    }
+                }
+                Section("触发预览") {
+                    TextField("输入一段聊天内容", text: $previewText, axis: .vertical)
+                    ForEach(previewEntries) { entry in
+                        VStack(alignment: .leading) {
+                            Text(entry.name).font(.subheadline.bold())
+                            Text(entry.content).font(.caption).lineLimit(4)
+                        }
+                    }
+                    Text("预览检查关键词或常驻匹配；实际持续、冷却、延迟按服务器聊天记录计算。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("世界书")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { EditButton().disabled(!loaded || busy) }
+            ToolbarItem(placement: .bottomBar) {
+                Button(busy ? "同步中…" : "保存到后端") { Task { await save() } }.disabled(!loaded || busy)
+            }
+            ToolbarItem(placement: .bottomBar) {
+                Button("刷新") { if dirty { confirmingRefresh = true } else { Task { await load() } } }.disabled(busy)
+            }
+        }
+        .task { if !loaded { await load() } }
+        .confirmationDialog("放弃本页尚未保存的修改并刷新？", isPresented: $confirmingRefresh, titleVisibility: .visible) {
+            Button("放弃修改并刷新", role: .destructive) { Task { await load() } }
+        }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+            do {
+                let url = try result.get(), access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                try importBooks(Data(contentsOf: url)); status = "已导入；点击保存同步到后端。"
+            } catch { status = "导入失败：\(error.localizedDescription)" }
+        }
+        .fileExporter(isPresented: $exporting, document: exportDocument, contentType: .json, defaultFilename: "Lumi-世界书") { result in
+            if case .failure(let error) = result { status = error.localizedDescription }
+        }
+    }
+    private func activeBinding(_ id: String) -> Binding<Bool> {
+        Binding(get: { settings.activeBookIds.contains(id) }, set: { value in
+            settings.activeBookIds.removeAll { $0 == id }; if value { settings.activeBookIds.append(id) }
+        })
+    }
+    private func localBinding(_ id: String) -> Binding<Bool> {
+        Binding(get: { selection.bookIds?.contains(id) ?? false }, set: { value in
+            selection.bookIds?.removeAll { $0 == id }; if value { selection.bookIds?.append(id) }
+        })
+    }
+    private var previewEntries: [LumiWorldBookEntry] {
+        let ids = selection.bookIds ?? settings.activeBookIds
+        return settings.books.filter { $0.enabled && ids.contains($0.id) }.flatMap(\.entries).filter { e in
+            guard e.enabled && !e.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            if e.constantActive { return true }
+            return e.keywords.contains { keyword in
+                if e.useRegex { return previewText.range(of: keyword, options: e.caseSensitive ? [.regularExpression] : [.regularExpression, .caseInsensitive]) != nil }
+                return previewText.range(of: keyword, options: e.caseSensitive ? [] : [.caseInsensitive]) != nil
+            }
+        }.sorted { $0.priority > $1.priority }
+    }
+    @MainActor private func load() async {
+        busy = true; defer { busy = false }
+        do {
+            let remote = try await api.fetchWorldBooks()
+            let local = try await api.fetchWorldBookSelection()
+            settings = remote; baseline = remote; selection = local; baselineSelection = local; loaded = true; status = "可以自行添加和编辑世界书。"
+        } catch { status = "读取失败：\(error.localizedDescription)。请检查设置中的后端口令。" }
+    }
+    @MainActor private func save() async {
+        busy = true; defer { busy = false }
+        do {
+            settings.activeBookIds = settings.activeBookIds.filter { id in settings.books.contains { $0.id == id && $0.enabled } }
+            selection.bookIds = selection.bookIds.map { ids in ids.filter { id in settings.books.contains { $0.id == id && $0.enabled } } }
+            settings = try await api.saveWorldBooks(settings); baseline = settings
+            try await api.saveWorldBookSelection(selection)
+            baselineSelection = selection
+            status = "已保存，下一轮聊天开始生效。"
+        } catch { status = "保存失败：\(error.localizedDescription)。本页修改仍保留。" }
+    }
+    private func importBooks(_ data: Data) throws {
+        let raw = try JSONSerialization.jsonObject(with: data)
+        let books: [[String: Any]]
+        if let array = raw as? [[String: Any]] { books = array }
+        else if let object = raw as? [String: Any], let array = object["books"] as? [[String: Any]] { books = array }
+        else if let object = raw as? [String: Any], object["entries"] is [Any] { books = [object] }
+        else { throw LumiAPIError.server("需要 Kelivo 世界书 JSON") }
+        guard books.count + settings.books.count <= 200 else { throw LumiAPIError.server("最多 200 本世界书") }
+        let encoder = JSONEncoder(), decoder = JSONDecoder()
+        var imported: [LumiWorldBook] = []
+        for book in books {
+            var normalized = try JSONSerialization.jsonObject(with: encoder.encode(LumiWorldBook())) as! [String: Any]
+            normalized.merge(book) { _, new in new }; normalized["id"] = UUID().uuidString
+            guard let entries = book["entries"] as? [[String: Any]], entries.count <= 2000 else { throw LumiAPIError.server("条目格式无效或超过 2000 条") }
+            normalized["entries"] = try entries.map { entry in
+                var item = try JSONSerialization.jsonObject(with: encoder.encode(LumiWorldBookEntry())) as! [String: Any]
+                item.merge(entry) { _, new in new }; item["id"] = UUID().uuidString; return item
+            }
+            imported.append(try decoder.decode(LumiWorldBook.self, from: JSONSerialization.data(withJSONObject: normalized)))
+        }
+        settings.books.append(contentsOf: imported)
+    }
+}
+private struct LumiWorldBookEditor: View {
+    @Binding var book: LumiWorldBook
+    var body: some View {
+        List {
+            Section("基本信息") {
+                TextField("名称", text: $book.name)
+                TextField("简介", text: $book.description, axis: .vertical)
+                Toggle("启用世界书", isOn: $book.enabled)
+            }
+            Section("条目 · \(book.entries.count)") {
+                ForEach($book.entries) { $entry in
+                    NavigationLink { LumiWorldBookEntryEditor(entry: $entry) } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(entry.name.isEmpty ? "未命名条目" : entry.name)
+                            Text(entry.enabled ? (entry.constantActive ? "常驻 · 优先级 \(entry.priority)" : "\(entry.keywords.joined(separator: "、")) · 优先级 \(entry.priority)") : "已停用")
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                    }
+                }
+                .onDelete { book.entries.remove(atOffsets: $0) }
+                .onMove { book.entries.move(fromOffsets: $0, toOffset: $1) }
+                Button { book.entries.append(LumiWorldBookEntry()) } label: { Label("添加条目", systemImage: "plus") }
+            }
+            Text("编辑完成后返回世界书列表，点击「保存到后端」。").font(.footnote).foregroundStyle(.secondary)
+        }
+        .navigationTitle(book.name).toolbar { EditButton() }
+    }
+}
+private struct LumiWorldBookEntryEditor: View {
+    @Binding var entry: LumiWorldBookEntry
+    private let positions = [("BEFORE_SYSTEM_PROMPT", "系统提示词之前"), ("AFTER_SYSTEM_PROMPT", "系统提示词之后"), ("TOP_OF_CHAT", "聊天顶部"), ("BOTTOM_OF_CHAT", "最后一条消息之前"), ("AT_DEPTH", "指定消息深度")]
+    var body: some View {
+        Form {
+            Section("条目") {
+                TextField("名称", text: $entry.name)
+                Toggle("启用", isOn: $entry.enabled)
+                TextEditor(text: $entry.content).frame(minHeight: 180)
+                Text("在这里填写角色、背景、事件或其他希望模型遵循的设定。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("触发") {
+                Toggle("始终激活", isOn: $entry.constantActive)
+                TextField("关键词，每行一个", text: Binding(get: { entry.keywords.joined(separator: "\n") }, set: { entry.keywords = $0.components(separatedBy: .newlines).filter { !$0.isEmpty } }), axis: .vertical)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                Toggle("使用正则表达式", isOn: $entry.useRegex)
+                Toggle("区分大小写", isOn: $entry.caseSensitive)
+                Stepper("扫描最近 \(entry.scanDepth) 条消息", value: $entry.scanDepth, in: 1...200)
+            }
+            Section("插入位置") {
+                Picker("位置", selection: $entry.position) { ForEach(positions, id: \.0) { Text($0.1).tag($0.0) } }
+                Picker("消息角色", selection: $entry.role) { Text("用户").tag("USER"); Text("助手").tag("ASSISTANT") }
+                if entry.position == "AT_DEPTH" { Stepper("距结尾 \(entry.injectDepth) 条消息", value: $entry.injectDepth, in: 1...200) }
+                Stepper("优先级 \(entry.priority)", value: $entry.priority, in: -10000...10000)
+                Text("优先级越高越靠前；相同优先级遵循列表顺序。深度 1 表示最后一条消息之前。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section("时间规则") {
+                Stepper("持续 \(entry.sticky) 条消息", value: $entry.sticky, in: 0...10000)
+                Stepper("冷却 \(entry.cooldown) 条消息", value: $entry.cooldown, in: 0...10000)
+                Stepper("延迟 \(entry.delay) 条消息", value: $entry.delay, in: 0...10000)
+                Text("按真实聊天消息数计算，用户和助手消息各计一条；0 表示关闭该规则。")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }.navigationTitle("编辑条目")
     }
 }
