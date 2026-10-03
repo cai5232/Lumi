@@ -2846,6 +2846,7 @@ private struct LumiWorldBookView: View {
                 }
             }
         }
+        .modifier(LumiWorldBookPageStyle())
         .navigationTitle("世界书")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) { EditButton().disabled(!loaded || busy) }
@@ -2959,6 +2960,7 @@ private struct LumiWorldBookEditor: View {
             }
             Text("编辑完成后返回世界书列表，点击「保存到后端」。").font(.footnote).foregroundStyle(.secondary)
         }
+        .modifier(LumiWorldBookPageStyle())
         .navigationTitle(book.name).toolbar { EditButton() }
     }
 }
@@ -2970,7 +2972,9 @@ private struct LumiWorldBookEntryEditor: View {
             Section("条目") {
                 TextField("名称", text: $entry.name)
                 Toggle("启用", isOn: $entry.enabled)
-                TextEditor(text: $entry.content).frame(minHeight: 180)
+                TextEditor(text: $entry.content)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 180)
                 Text("在这里填写角色、背景、事件或其他希望模型遵循的设定。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
@@ -2983,8 +2987,8 @@ private struct LumiWorldBookEntryEditor: View {
                 Stepper("扫描最近 \(entry.scanDepth) 条消息", value: $entry.scanDepth, in: 1...200)
             }
             Section("插入位置") {
-                Picker("位置", selection: $entry.position) { ForEach(positions, id: \.0) { Text($0.1).tag($0.0) } }
-                Picker("消息角色", selection: $entry.role) { Text("用户").tag("USER"); Text("助手").tag("ASSISTANT") }
+                Picker("位置", selection: $entry.position) { ForEach(positions, id: \.0) { Text($0.1).tag($0.0) } }.pickerStyle(.menu)
+                Picker("消息角色", selection: $entry.role) { Text("用户").tag("USER"); Text("助手").tag("ASSISTANT") }.pickerStyle(.menu)
                 if entry.position == "AT_DEPTH" { Stepper("距结尾 \(entry.injectDepth) 条消息", value: $entry.injectDepth, in: 1...200) }
                 Stepper("优先级 \(entry.priority)", value: $entry.priority, in: -10000...10000)
                 Text("优先级越高越靠前；相同优先级遵循列表顺序。深度 1 表示最后一条消息之前。")
@@ -2997,6 +3001,21 @@ private struct LumiWorldBookEntryEditor: View {
                 Text("按真实聊天消息数计算，用户和助手消息各计一条；0 表示关闭该规则。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-        }.navigationTitle("编辑条目")
+        }
+        .modifier(LumiWorldBookPageStyle())
+        .navigationTitle("编辑条目")
+    }
+}
+
+private struct LumiWorldBookPageStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)
+            .background(LumiPalette.chatBackground)
+            .tint(Color(red: 0.66, green: 0.35, blue: 0.47))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(LumiPalette.chatBackground, for: .navigationBar, .bottomBar)
+            .toolbarBackground(.visible, for: .navigationBar, .bottomBar)
+            .preferredColorScheme(.light)
     }
 }
