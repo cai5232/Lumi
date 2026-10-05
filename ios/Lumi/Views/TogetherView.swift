@@ -515,7 +515,11 @@ private struct DiaryTimeline: View {
                                     Text(item.title)
                                         .font(.system(size: 12, weight: .medium))
                                         .foregroundStyle(.black.opacity(0.82))
-                                    Text(item.body).font(.custom("STKaiti", size: 15)).lineSpacing(4).lineLimit(3).multilineTextAlignment(.leading)
+                                    Text(item.body)
+                                        .font(.custom("STKaiti", size: 15))
+                                        .lineSpacing(4)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
                                         .foregroundStyle(.black.opacity(0.82))
                                 }
                                 .padding(16)
