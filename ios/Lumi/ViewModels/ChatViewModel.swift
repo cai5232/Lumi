@@ -5,6 +5,7 @@ import UIKit
 private struct MessageMediaRecord: Codable {
     var audio: String?
     var image: String?
+    var images: [String]?
     var duration: Double?
     var speechScript: String?
 }
@@ -21,9 +22,38 @@ final class ChatViewModel: ObservableObject {
     private let chatID: String
     private let api: LumiAPIClient
     private let shouldLoadFromServer: Bool
-    private let localConversationURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("lumi-conversation.json")
+    private var localConversationURL: URL {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        guard chatID != "default" else { return documents.appendingPathComponent("lumi-conversation.json") }
+        let safeID = chatID.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? String($0) : "-" }.joined()
+        return documents.appendingPathComponent("lumi-conversation-\(safeID).json")
+    }
     private var nextHistoryBefore: Date?
     private var historyFullyLoaded = false
+
+    static func currentModelRoute(defaults: UserDefaults = .standard) throws -> (provider: String, model: String, customProvider: LumiCustomAPIRequestConfig?) {
+        var activeCustomID = defaults.string(forKey: "lumi.activeAPIProviderID") ?? ""
+        let profiles = defaults.data(forKey: "lumi.apiProviderProfiles")
+            .flatMap { try? JSONDecoder().decode([LumiAPIProviderProfile].self, from: $0) } ?? []
+        let savedRoute = defaults.string(forKey: "lumi.modelProvider") ?? "zenmux"
+        let activeIDIsStale = !activeCustomID.isEmpty && !profiles.contains(where: { $0.id == activeCustomID })
+        let shouldRecoverSavedPreset = profiles.count == 1 &&
+            (activeIDIsStale || (activeCustomID.isEmpty && (savedRoute == "custom" || !defaults.bool(forKey: "lumi.apiProviderRouteExplicitlySelected"))))
+        if shouldRecoverSavedPreset, let onlyProfile = profiles.first {
+            activeCustomID = onlyProfile.id
+            defaults.set(activeCustomID, forKey: "lumi.activeAPIProviderID")
+            defaults.set("custom", forKey: "lumi.modelProvider")
+        }
+        let customProfile = profiles.first(where: { $0.id == activeCustomID })
+        let configuredProvider = defaults.string(forKey: "lumi.modelProvider") ?? "zenmux"
+        if customProfile == nil && configuredProvider == "custom" {
+            throw NSError(domain: "LumiAPIProvider", code: 1, userInfo: [NSLocalizedDescriptionKey: "自定义 API 预设未选中，请到设置里的「API 预设与线路」点选要使用的预设。"])
+        }
+        let provider = customProfile == nil ? configuredProvider : "custom"
+        let model = customProfile?.model ?? defaults.string(forKey: "lumi.modelName.\(provider)")
+            ?? (provider == "zenmux" ? (defaults.string(forKey: "lumi.modelName") ?? "") : "")
+        return (provider, model, customProfile?.requestConfig)
+    }
 
     init(chatID: String = "default", api: LumiAPIClient = LumiAPIClient(), initialMessages: [ChatMessage] = [], shouldLoadFromServer: Bool = true) {
         self.chatID = chatID
@@ -112,14 +142,16 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    func send(imageBase64: String? = nil, imageFileName: String? = nil, galleryImageIDs: [String] = [], tts: TTSRequestSettings? = nil, emojiCatalog: [String: [String]] = [:]) async {
+    func send(imageBase64: String? = nil, imageFileName: String? = nil, imagesBase64: [String] = [], imageFileNames: [String] = [], galleryImageIDs: [String] = [], tts: TTSRequestSettings? = nil, emojiCatalog: [String: [String]] = [:], contentType: String? = nil) async {
         let typedContent = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!typedContent.isEmpty || imageBase64 != nil || !galleryImageIDs.isEmpty), !isSending else { return }
-        let content = typedContent.isEmpty ? (imageBase64 != nil ? "请描述这张图片。" : "想和你聊聊这张照片。") : typedContent
+        let encodedImages = imagesBase64.isEmpty ? imageBase64.map { [$0] } ?? [] : imagesBase64
+        let localImages = imageFileNames.isEmpty ? imageFileName.map { [$0] } ?? [] : imageFileNames
+        guard (!typedContent.isEmpty || !encodedImages.isEmpty || !galleryImageIDs.isEmpty), !isSending else { return }
+        let content = typedContent.isEmpty ? (encodedImages.isEmpty ? "想和你聊聊这张照片。" : (encodedImages.count > 1 ? "看看这些照片。" : "请描述这张图片。")) : typedContent
         draft = ""
         let optimisticID = UUID()
-        messages.append(ChatMessage(id: optimisticID, role: .user, content: content, createdAt: .now, localImageFileName: imageFileName))
-        if let imageFileName { saveMedia(for: optimisticID, record: MessageMediaRecord(audio: nil, image: imageFileName, duration: nil, speechScript: nil)) }
+        messages.append(ChatMessage(id: optimisticID, role: .user, content: content, createdAt: .now, localImageFileName: localImages.first, localImageFileNames: localImages, contentType: contentType))
+        if let first = localImages.first { saveMedia(for: optimisticID, record: MessageMediaRecord(audio: nil, image: first, images: localImages, duration: nil, speechScript: nil)) }
         saveLocalConversation()
         isSending = true
         let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Lumi response generation")
@@ -130,18 +162,17 @@ final class ChatViewModel: ObservableObject {
             }
         }
         do {
-            let provider = UserDefaults.standard.string(forKey: "lumi.modelProvider") ?? "zenmux"
-            let model = UserDefaults.standard.string(forKey: "lumi.modelName.\(provider)")
-                ?? (provider == "zenmux" ? (UserDefaults.standard.string(forKey: "lumi.modelName") ?? "") : "")
-            let response = try await api.sendMessage(content, to: chatID, images: imageBase64.map { [$0] } ?? [], galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: provider, model: model)
+            let route = try Self.currentModelRoute(defaults: .standard)
+            let response = try await api.sendMessage(content, to: chatID, images: encodedImages, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: route.provider, model: route.model, customProvider: route.customProvider, contentType: contentType)
             var confirmedUserMessage = response.userMessage
-            confirmedUserMessage.localImageFileName = imageFileName
+            confirmedUserMessage.localImageFileName = localImages.first
+            confirmedUserMessage.localImageFileNames = localImages
             if let optimisticIndex = messages.firstIndex(where: { $0.id == optimisticID }) {
                 messages[optimisticIndex] = confirmedUserMessage
             } else if !messages.contains(where: { $0.id == confirmedUserMessage.id }) {
                 messages.append(confirmedUserMessage)
             }
-            if let imageFileName { saveMedia(for: confirmedUserMessage.id, record: MessageMediaRecord(audio: nil, image: imageFileName, duration: nil, speechScript: nil)) }
+            if let first = localImages.first { saveMedia(for: confirmedUserMessage.id, record: MessageMediaRecord(audio: nil, image: first, images: localImages, duration: nil, speechScript: nil)) }
             saveLocalConversation()
             if response.memorySaved == true {
                 memoryNotice = "-------沈屿记下了这一刻-------"
@@ -154,11 +185,18 @@ final class ChatViewModel: ObservableObject {
             if let encoded = response.speechAudioBase64, let audio = Data(base64Encoded: encoded) {
                 let name = "speech-\(assistantMessage.id.uuidString).mp3"
                 let destination = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(name)
-                try? audio.write(to: destination, options: .atomic)
-                assistantMessage.audioFileName = name
-                assistantMessage.speechDuration = response.speechDuration
-                assistantMessage.speechScript = response.speechScript
-                saveMedia(for: assistantMessage.id, record: MessageMediaRecord(audio: name, image: nil, duration: response.speechDuration, speechScript: response.speechScript))
+                do {
+                    try audio.write(to: destination, options: .atomic)
+                    assistantMessage.audioFileName = name
+                    assistantMessage.speechDuration = response.speechDuration
+                    assistantMessage.speechScript = response.speechScript
+                    saveMedia(for: assistantMessage.id, record: MessageMediaRecord(audio: name, image: nil, duration: response.speechDuration, speechScript: response.speechScript))
+                } catch {
+                    errorMessage = "语音已生成，但保存到聊天失败：\(error.localizedDescription)"
+                }
+            }
+            if let speechError = response.speechError {
+                errorMessage = "AI 回复了，但语音没有生成：\(speechError)"
             }
             let bubbles = assistantBubbles(from: assistantMessage)
             for (index, bubble) in bubbles.enumerated() {
@@ -187,6 +225,18 @@ final class ChatViewModel: ObservableObject {
                 }
             }
         } catch { errorMessage = friendlyError(error); saveLocalConversation() }
+    }
+
+    func sendWatchMessage(_ text: String, imageBase64: String) async -> String? {
+        let existingAssistantIDs = Set(messages.lazy.filter { $0.role == .assistant }.map(\.id))
+        draft = text
+        await send(imageBase64: imageBase64, contentType: "together_watch")
+        let replyLines = messages.filter {
+            $0.role == .assistant && !existingAssistantIDs.contains($0.id) &&
+            $0.contentType != "gallery_collected" && $0.contentType != "html" && !$0.content.isEmpty
+        }
+        guard !replyLines.isEmpty else { return nil }
+        return replyLines.map(\.content).joined(separator: "\n")
     }
 
     func receiveCallOutcome(_ message: ChatMessage, statusMessage: ChatMessage? = nil) {
@@ -247,12 +297,17 @@ final class ChatViewModel: ObservableObject {
         var restored = message
         restored.audioFileName = media.audio
         restored.localImageFileName = media.image
+        restored.localImageFileNames = media.images ?? media.image.map { [$0] } ?? []
         restored.speechDuration = media.duration
         restored.speechScript = media.speechScript
         return restored
     }
 
     private func assistantBubbles(from message: ChatMessage) -> [ChatMessage] {
+        // Keep co-watch replies intact as one hidden-in-main-chat turn. They stay
+        // in the same model thread for memory, while the co-watch screen renders
+        // its own local conversation transcript.
+        if message.contentType == "together_watch" || message.contentType == "together_music" { return [message] }
         if message.contentType == "call_record" { return [message] }
         if message.contentType == "screen_request" || message.contentType == "screen_status" { return [message] }
         // Gallery collection cards are server-persisted messages. Never run

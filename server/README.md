@@ -34,7 +34,40 @@ Zeabur 环境变量：
 
 `PORT` 由 Zeabur 自动注入，不需要手动填写。
 
+## MCP 工具
+
+MCP 服务器在后端配置，iPhone Lumi「设置 → MCP 服务器」只显示服务器、工具数量与 HTTP/SSE 类型，并允许逐台启用或停用。配置服务器后，先调用 `POST /v1/mcp/servers/:id/connect` 读取工具。聊天会按需调用已启用的只读工具；可能发送、写入或修改数据的工具需要用户确认。支持 Streamable HTTP 与传统 SSE，不支持 Kelivo 桌面版 STDIO 传输。
+
+配置和服务器凭证保存在 `LUMI_DATA_DIR/mcp-clients.json`，建议挂载持久化卷。在该文件中维护服务器条目（`id`、`name`、`url`、`transport`、`headers`、`enabled`）；`transport` 可设为 `streamable-http` 或 `sse`。示例：
+
+```json
+{
+  "servers": [
+    {
+      "id": "my-mcp",
+      "name": "My MCP",
+      "enabled": true,
+      "url": "https://example.com/sse",
+      "transport": "sse",
+      "headers": {},
+      "tools": []
+    }
+  ],
+  "revision": 0
+}
+```
+
+连接后后端会缓存工具清单。接口使用现有 `LUMI_PUSH_API_TOKEN` 鉴权：`GET /v1/mcp/servers`、`PATCH /v1/mcp/servers/:id`（只改 `enabled`）、`POST /v1/mcp/servers/:id/connect`、`POST /v1/mcp/servers/:id/tools/:tool/call`。服务器地址限公开 HTTPS，并禁止自动跟随重定向。Kelivo 来源和 AGPL-3.0 许可见 `THIRD_PARTY_NOTICES.md`。
+
 ## API
+
+### 一起听（Duetto）
+
+Lumi 内置 Duetto 的完整听歌房页面与服务：在 iOS 首页打开“一起听”即可进入；公网地址也可通过 `/together-listen` 或 `/pkg/index.html` 打开。Duetto 的 `/api/*`、静态资源 `/pkg/*` 和实时同步 WebSocket `/ws` 由 Lumi 主服务转发到仅监听本机的内置服务。
+
+包含网易云歌单/搜索/每日推荐/私人 FM/歌词与翻译/歌手主页/评论/红心与歌单编辑、播放器队列与循环/随机模式、同步房间和聊天、歌词引用与提问、歌曲听后分析和回忆档案、AI DJ、模型与提示词设置、五套主题及自定义外观。详细操作见 `duetto/GUIDE.md`。
+
+该内置服务使用 Node.js `node:sqlite`，生产 Node 版本需为 22.5 或更高。SQLite 档案、独立 PIN 和网易云凭据保存在 `${LUMI_DATA_DIR}/duetto`（未设置时为 `data/duetto`）。Duetto 源码与 MIT 许可保存在 `duetto/`。
 
 - `GET /health`
 - `GET /v1/chats/:id`
@@ -42,6 +75,13 @@ Zeabur 环境变量：
 - `POST /v1/memories`，JSON body：`{"content":"要记住的内容","threadId":"可选"}`
 - `GET /v1/settings/proactive` / `PUT /v1/settings/proactive`：配置首次哨兵唤醒等待时间和主动消息
 - `GET /v1/chats/:id/activity` / `POST /v1/chats/:id/activity`：查看或控制哨兵、睡眠、噩梦惊醒状态
+- `GET /v1/music/netease/status|qr|qr/check?key=...`：网易云账号状态与二维码登录
+- `GET /v1/music/netease/search?q=...`、`GET /v1/music/netease/song-url?id=...`：搜索歌曲、获取当前可用音源
+- `GET /v1/music/room/state?room=main` / `PUT /v1/music/room/state`：读取或更新听歌房播放状态；状态保存在 `LUMI_DATA_DIR/music-room-state.json`
+- `GET /v1/music/room/messages?room=main` / `POST /v1/music/room/messages`：读取或发送听歌房消息
+- `POST /v1/music/netease/logout`：退出已连接账号
+
+所有 `/v1/music/*` 接口使用 `LUMI_PUSH_API_TOKEN` Bearer 鉴权。网易云扫码会话保存在持久化目录的 `ncm-cookie.txt`，文件权限限制为当前服务用户；请为 `LUMI_DATA_DIR` 配置持久化卷。依赖由 `npm install` 安装。
 
 当窗口估算 Token 达到 `LUMI_CONTEXT_LIMIT × LUMI_COMPACT_AT` 时，后端会自动把较早历史蒸馏为
 `<context_summary>`（用户画像、关系动态、关键事实、当前话题），保留最近对话继续发送给模型；摘要会在后续压缩时增量合并。

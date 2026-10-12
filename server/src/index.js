@@ -1,10 +1,18 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
-import { createServer } from "node:http";
+import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createServer, request as httpRequest } from "node:http";
+import { connect as connectSocket } from "node:net";
+import ncm from "NeteaseCloudMusicApi";
+import { duettoReady, duettoServer } from "../duetto/server/index.mjs";
+import { foodTools, executeFoodTool, foodContext, getFoodBook, mutateFood } from "./food.js";
+import { McpClientStore, callMcpTool, connectMcpServer } from "./mcp-clients.js";
 
 const port = Number(process.env.PORT || 8787);
 const dataDir = process.env.LUMI_DATA_DIR || join(process.cwd(), "data");
+await duettoReady;
+const duettoPort = duettoServer.address().port;
+const mcpClientStore = new McpClientStore(join(dataDir, "mcp-clients.json"));
 const threadPath = join(dataDir, "threads.json");
 const contextLimit = Number(process.env.LUMI_CONTEXT_LIMIT || 200000);
 const compactAt = Number(process.env.LUMI_COMPACT_AT || 0.86);
@@ -17,6 +25,83 @@ const sleepHours = Number(process.env.LUMI_SLEEP_HOURS || 5.5);
 const sleepCycles = Number(process.env.LUMI_SLEEP_CYCLES || 3);
 const sleepInsomniaProbability = Number(process.env.LUMI_SLEEP_INSOMNIA_PROBABILITY || 0.15);
 const screenShareDir = join(dataDir, "screen-share");
+const musicRoomStatePath = join(dataDir, "music-room-state.json");
+const musicRoomMessagesPath = join(dataDir, "music-room-messages.json");
+const ncmCookiePath = join(dataDir, "ncm-cookie.txt");
+let ncmCookie = "";
+try { ncmCookie = await readFile(ncmCookiePath, "utf8"); } catch {}
+
+function saveNcmCookie(cookie) {
+  ncmCookie = String(cookie || "");
+  return mkdir(dataDir, { recursive: true })
+    .then(() => writeFile(ncmCookiePath, ncmCookie, { mode: 0o600 }))
+    .then(() => chmod(ncmCookiePath, 0o600));
+}
+
+function normalizeMusicSong(song) {
+  return {
+    id: String(song.id),
+    title: song.name || "未知歌曲",
+    artist: (song.ar || song.artists || []).map((artist) => artist.name).join(" / "),
+    album: (song.al || song.album || {}).name || "",
+    cover: String((song.al || song.album || {}).picUrl || "").replace(/^http:/, "https:"),
+    durationSeconds: Math.round((song.dt || song.duration || 0) / 1000)
+  };
+}
+
+async function readMusicRoomState(room) {
+  try {
+    const all = JSON.parse(await readFile(musicRoomStatePath, "utf8"));
+    const state = all[room];
+    if (!state) return null;
+    const positionSeconds = Math.max(0, Number(state.positionSeconds) || 0) + (state.isPlaying ? Math.max(0, Date.now() - Number(state.updatedAt || 0)) / 1000 : 0);
+    return { ...state, positionSeconds };
+  } catch { return null; }
+}
+
+let musicRoomWriteQueue = Promise.resolve();
+function writeMusicRoomState(room, state) {
+  const operation = musicRoomWriteQueue.then(async () => {
+    let all = {};
+    try { all = JSON.parse(await readFile(musicRoomStatePath, "utf8")); } catch {}
+    all[room] = state;
+    await mkdir(dataDir, { recursive: true });
+    const tempPath = `${musicRoomStatePath}.tmp`;
+    await writeFile(tempPath, JSON.stringify(all), { mode: 0o600 });
+    await rename(tempPath, musicRoomStatePath);
+  });
+  musicRoomWriteQueue = operation.catch(() => {});
+  return operation;
+}
+
+async function readMusicRoomMessages(room) {
+  try {
+    const all = JSON.parse(await readFile(musicRoomMessagesPath, "utf8"));
+    return Array.isArray(all[room]) ? all[room].slice(-100) : [];
+  } catch { return []; }
+}
+
+let musicMessageWriteQueue = Promise.resolve();
+function appendMusicRoomMessage(room, message) {
+  const operation = musicMessageWriteQueue.then(async () => {
+    let all = {};
+    try { all = JSON.parse(await readFile(musicRoomMessagesPath, "utf8")); } catch {}
+    all[room] = [...(Array.isArray(all[room]) ? all[room] : []), message].slice(-500);
+    await mkdir(dataDir, { recursive: true });
+    const tempPath = musicRoomMessagesPath + ".tmp";
+    await writeFile(tempPath, JSON.stringify(all), { mode: 0o600 });
+    await chmod(tempPath, 0o600);
+    await rename(tempPath, musicRoomMessagesPath);
+  });
+  musicMessageWriteQueue = operation.catch(() => {});
+  return operation;
+}
+
+async function ncmProfile() {
+  if (!ncmCookie) return null;
+  try { return (await ncm.login_status({ cookie: ncmCookie })).body?.data?.profile || null; }
+  catch { return null; }
+}
 
 const SLEEP_STAGE_PROMPTS = {
   n1_drift: {
@@ -302,24 +387,86 @@ async function saveThreads(threads) { await writeFile(threadPath, JSON.stringify
 function estimateTokens(text) { return Math.ceil(String(text || "").length / 4); }
 function messageTokens(messages) { return messages.reduce((total, message) => total + estimateTokens(message.content) + 8, 0); }
 
-async function callModel({ messages, temperature = 0.8 }) {
-  const apiURL = process.env.LUMI_MODEL_API_URL;
-  const apiKey = process.env.LUMI_MODEL_API_KEY;
-  const model = process.env.LUMI_MODEL_NAME;
+function anthropicMessages(messages) {
+  const system = [];
+  const converted = [];
+  const append = message => {
+    const previous = converted.at(-1);
+    if (previous?.role === message.role) {
+      const priorContent = Array.isArray(previous.content) ? previous.content : [{ type: "text", text: String(previous.content || "") }];
+      const nextContent = Array.isArray(message.content) ? message.content : [{ type: "text", text: String(message.content || "") }];
+      previous.content = [...priorContent, ...nextContent];
+    } else converted.push(message);
+  };
+  for (const message of messages) {
+    if (message.role === "system") { system.push(String(message.content || "")); continue; }
+    if (message.role === "tool") {
+      append({ role: "user", content: [{ type: "tool_result", tool_use_id: message.tool_call_id, content: String(message.content || "") }] });
+      continue;
+    }
+    if (message.role === "assistant" && Array.isArray(message.tool_calls)) {
+      const content = [];
+      if (message.content) content.push({ type: "text", text: String(message.content) });
+      for (const call of message.tool_calls) {
+        let input = {};
+        try { input = JSON.parse(call.function?.arguments || "{}"); } catch {}
+        content.push({ type: "tool_use", id: call.id, name: call.function?.name, input });
+      }
+      append({ role: "assistant", content });
+      continue;
+    }
+    append({ role: message.role === "assistant" ? "assistant" : "user", content: String(message.content || "") });
+  }
+  return { system: system.join("\n\n"), messages: converted };
+}
+
+async function callModel({ messages, temperature = 0.8, tools = undefined, tool_choice = undefined, customProvider = undefined, modelOverride = "" }) {
+  const apiURL = customProvider
+    ? `${String(customProvider.baseURL || "").replace(/\/+$/, "")}/${String(customProvider.chatPath || (customProvider.apiFormat === "anthropic" ? "/messages" : "/chat/completions")).replace(/^\/+/, "")}`
+    : process.env.LUMI_MODEL_API_URL;
+  const apiKey = customProvider?.apiKey || process.env.LUMI_MODEL_API_KEY;
+  const model = customProvider ? modelOverride : process.env.LUMI_MODEL_NAME;
   if (!apiURL || !apiKey || !model) {
+    if (customProvider) throw new Error("中转站配置不完整：请检查 API Key、基址和模型名称");
     throw new Error("模型服务尚未配置：请在 Zeabur 设置 LUMI_MODEL_API_URL、LUMI_MODEL_API_KEY、LUMI_MODEL_NAME");
   }
 
+  const anthropic = customProvider?.apiFormat === "anthropic";
+  const headers = { "content-type": "application/json" };
+  if (anthropic) {
+    headers["x-api-key"] = apiKey;
+    headers["anthropic-version"] = "2023-06-01";
+  } else {
+    headers.authorization = `Bearer ${apiKey}`;
+  }
+  const anthropicInput = anthropic ? anthropicMessages(messages) : null;
+  const requestMessages = anthropic ? anthropicInput.messages : messages;
+  const requestTools = tools?.map(tool => anthropic
+    ? { name: tool.function.name, description: tool.function.description || "", input_schema: tool.function.parameters || { type: "object", properties: {} } }
+    : tool);
+  const payload = anthropic
+    ? { model, max_tokens: 4096, temperature, messages: requestMessages, ...(anthropicInput.system ? { system: anthropicInput.system } : {}), ...(requestTools?.length ? { tools: requestTools, tool_choice: tool_choice === "auto" ? { type: "auto" } : undefined } : {}) }
+    : { model, messages, temperature, ...(requestTools?.length ? { tools: requestTools, tool_choice } : {}) };
   const response = await fetch(apiURL, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages, temperature })
+    headers,
+    body: JSON.stringify(payload)
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data?.error?.message || data?.error || `模型服务返回 ${response.status}`);
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || !content.trim()) throw new Error("模型没有返回内容");
-  return content.trim();
+  let message;
+  if (anthropic) {
+    const blocks = Array.isArray(data?.content) ? data.content : [];
+    const text = blocks.filter(block => block.type === "text").map(block => block.text || "").join("");
+    const toolCalls = blocks.filter(block => block.type === "tool_use").map(block => ({
+      id: block.id, type: "function", function: { name: block.name, arguments: JSON.stringify(block.input || {}) }
+    }));
+    message = { role: "assistant", content: text, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) };
+  } else {
+    message = data?.choices?.[0]?.message;
+  }
+  if (!message || (typeof message.content !== "string" && !message.tool_calls?.length)) throw new Error("模型没有返回内容");
+  return tools ? message : message.content.trim();
 }
 
 async function memoryRequest(path, payload) {
@@ -429,7 +576,7 @@ ${older.map((message) => `${message.role}: ${message.content}`).join("\n")}`;
   return true;
 }
 
-async function generateReply({ input, systemPrompt, thread }) {
+async function generateReply({ input, systemPrompt, thread, model = "", provider = "", customProvider = undefined, context = "" }) {
   await compactThread(thread);
   const system = process.env.LUMI_SYSTEM_PROMPT || systemPrompt || "使用中文回复。";
   const summary = thread.contextSummary ? `\n\n<context_summary>\n${thread.contextSummary}\n</context_summary>` : "";
@@ -438,9 +585,78 @@ async function generateReply({ input, systemPrompt, thread }) {
     ? `\n\n<retrieved_memories>\n${memories.map((memory) => `- ${memory}`).join("\n")}\n</retrieved_memories>`
     : "";
   const history = (thread.messages || []).slice(-20).map((message) => ({ role: message.role, content: message.content }));
-  const raw = await callModel({
-    messages: [{ role: "system", content: `${system}${summary}${retrieved}\n\n如果这条对话包含值得长期保留的新事实、偏好或约定，你可以在回复末尾添加 <memory>要记住的内容</memory>；不值得记忆时不要添加。不要向用户解释这个标签。` }, ...history, { role: "user", content: input }]
-  });
+  const liveContext = typeof context === "string" && context.trim() ? `\n\n<live_context>\n${context.trim().slice(0, 6000)}\n</live_context>` : "";
+  const messages = [{ role: "system", content: `${system}${summary}${retrieved}${liveContext}\n\nLumi 有可选的饮食本功能。用户提到记饮食、查询饮食记录、口味忌口、评价菜品、推荐吃什么或打开饮食本时，先调用 discover_food_notebook 获取相关功能；其他对话不要调用。MCP 工具只在任务相关时使用；可能发送、写入或修改数据的工具由用户在设置页手动执行。\n\n如果这条对话包含值得长期保留的新事实、偏好或约定，你可以在回复末尾添加 <memory>要记住的内容</memory>；不值得记忆时不要添加。不要向用户解释这个标签。` }, ...history, { role: "user", content: input }];
+  const discoveryTool = { type: "function", function: { name: "discover_food_notebook", description: "按需发现并启用 Lumi 饮食本工具。用户要记录/查询饮食、更新口味、评价菜品、获取饮食推荐或打开饮食本时调用；否则不调用。", parameters: { type: "object", properties: {}, additionalProperties: false } } };
+  const mcpSettings = await mcpClientStore.read();
+  let refreshedMcpServers = false;
+  for (const server of mcpSettings.servers) {
+    if (!server.enabled || server.connectedAt) continue;
+    try {
+      const connection = await connectMcpServer(server);
+      server.tools = connection.tools;
+      server.connectedAt = new Date().toISOString();
+      server.error = '';
+      refreshedMcpServers = true;
+    } catch (error) {
+      server.error = String(error.message || error).slice(0, 500);
+      refreshedMcpServers = true;
+    }
+  }
+  if (refreshedMcpServers) await mcpClientStore.save(mcpSettings);
+  const mcpServers = mcpSettings.servers.filter(server => server.enabled);
+  const mcpToolMap = new Map();
+  const mcpTools = [];
+  for (const [serverIndex, server] of mcpServers.entries()) {
+    for (const [toolIndex, tool] of (Array.isArray(server.tools) ? server.tools : []).entries()) {
+      if (!tool?.name || tool.disabled === true) continue;
+      const name = `mcp_${serverIndex}_${toolIndex}_${String(tool.name).replace(/[^A-Za-z0-9_-]/g, "_")}`.slice(0, 64);
+      mcpToolMap.set(name, { server, tool });
+      mcpTools.push({ type: "function", function: { name, description: `${server.name}: ${String(tool.description || "").slice(0, 500)}`, parameters: tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : { type: "object", properties: {} } } });
+    }
+  }
+  let activeTools = [discoveryTool, ...mcpTools];
+  let foodToolsEnabled = false;
+  let foodActionCompleted = false;
+  let answer;
+  for (let turn = 0; turn < 5; turn += 1) {
+    const message = await callModel({ messages, tools: activeTools, tool_choice: "auto", customProvider: provider === "custom" ? customProvider : undefined, modelOverride: model });
+    if (!message.tool_calls?.length) { answer = String(message.content || "").trim(); break; }
+    messages.push(message);
+    for (const call of message.tool_calls) {
+      if (call.function?.name === "discover_food_notebook") {
+        if (!foodToolsEnabled) {
+          const food = await foodContext();
+          messages.push({ role: "tool", tool_call_id: call.id, content: `已启用饮食本功能。当前信息：\n${food}` });
+          activeTools = [...foodTools, ...mcpTools];
+          foodToolsEnabled = true;
+        } else {
+          messages.push({ role: "tool", tool_call_id: call.id, content: "饮食本功能已经启用，请直接选择合适的饮食工具。" });
+        }
+        continue;
+      }
+      let args = {}; try { args = JSON.parse(call.function?.arguments || "{}"); } catch {}
+      const mcpEntry = mcpToolMap.get(call.function?.name);
+      if (mcpEntry) {
+        if (/(send|delete|remove|write|create|update|edit|run|exec|purchase|payment|publish|commit|transfer|post|message|email|mail)/i.test(mcpEntry.tool.name)) {
+          messages.push({ role: "tool", tool_call_id: call.id, content: "此工具可能修改或发送数据；请在 Lumi 设置 → MCP 工具中手动执行。" });
+        } else {
+          try {
+            const result = await callMcpTool(mcpEntry.server, mcpEntry.tool.name, args);
+            messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result).slice(0, 30000) });
+          } catch (error) {
+            messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: String(error.message || error).slice(0, 1000) }) });
+          }
+        }
+        continue;
+      }
+      const result = await executeFoodTool(call.function?.name, args);
+      messages.push({ role: "tool", tool_call_id: call.id, content: String(result || "完成") });
+      foodActionCompleted = true;
+    }
+  }
+  if (!answer && !foodActionCompleted) throw new Error("模型没有返回有效内容");
+  const raw = answer || "我已经把这件事记进饮食本了。";
   const memoryMatch = raw.match(/<memory>([\s\S]*?)<\/memory>/i);
   const memoryContent = memoryMatch?.[1]?.trim();
   const content = raw.replace(/<memory>[\s\S]*?<\/memory>/gi, "").trim();
@@ -453,17 +669,233 @@ function send(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
+function mcpRequestAuthorized(req) {
+  const expected = String(process.env.LUMI_PUSH_API_TOKEN || "");
+  const supplied = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (!expected || !supplied) return false;
+  const expectedBytes = Buffer.from(expected), suppliedBytes = Buffer.from(supplied);
+  return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes);
+}
+
 async function body(req) {
   let raw = "";
   for await (const chunk of req) raw += chunk;
   return raw ? JSON.parse(raw) : {};
 }
 
+function proxyDuetto(req, res) {
+  const headers = { ...req.headers, host: `127.0.0.1:${duettoPort}` };
+  if (req.url?.split("?")[0] === "/api/auth/session") {
+    if (!pushRequestAuthorized(req)) return send(res, 401, { ok: false, error: "unauthorized" });
+    headers["x-lumi-native-auth"] = "1";
+  }
+  const upstream = httpRequest({
+    hostname: "127.0.0.1", port: duettoPort, method: req.method, path: req.url,
+    headers
+  }, (response) => {
+    res.writeHead(response.statusCode || 502, response.headers);
+    response.pipe(res);
+  });
+  upstream.on("error", () => {
+    if (!res.headersSent) send(res, 502, { error: "together_listen_unavailable" });
+    else res.destroy();
+  });
+  req.pipe(upstream);
+}
+
 const server = createServer(async (req, res) => {
+  if (req.url?.startsWith("/api/") || req.url?.startsWith("/pkg/")) return proxyDuetto(req, res);
+  if (req.method === "GET" && req.url?.split("?")[0] === "/together-listen") {
+    res.writeHead(302, { location: "/pkg/index.html" });
+    return res.end();
+  }
   if (req.method === "OPTIONS") return send(res, 204, {});
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (req.method === "GET" && url.pathname === "/health") return send(res, 200, { ok: true });
+    if (url.pathname.startsWith("/v1/music/")) {
+      if (!mcpRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+      const route = url.pathname.slice("/v1/music/".length);
+      if (route === "room/state" && req.method === "GET") {
+        const room = String(url.searchParams.get("room") || "main").slice(0, 64);
+        return send(res, 200, { state: await readMusicRoomState(room) });
+      }
+      if (route === "room/state" && req.method === "PUT") {
+        const input = await body(req);
+        const room = String(input.room || "main").slice(0, 64);
+        const songID = String(input.songID || "").slice(0, 32);
+        const title = String(input.title || "").slice(0, 200);
+        if (!songID || !title) return send(res, 400, { error: "song_required" });
+        const previous = await readMusicRoomState(room);
+        const state = {
+          room, songID, title, artist: String(input.artist || "").slice(0, 200),
+          cover: String(input.cover || "").replace(/^http:/, "https:").slice(0, 2000),
+          durationSeconds: Math.max(0, Math.min(86400, Number(input.durationSeconds) || 0)),
+          positionSeconds: Math.max(0, Math.min(86400, Number(input.positionSeconds) || 0)),
+          isPlaying: Boolean(input.isPlaying), actorID: String(input.actorID || "").slice(0, 80),
+          revision: (Number(previous?.revision) || 0) + 1, updatedAt: Date.now()
+        };
+        await writeMusicRoomState(room, state);
+        return send(res, 200, { state });
+      }
+      if (route === "room/messages" && req.method === "GET") {
+        const room = String(url.searchParams.get("room") || "main").slice(0, 64);
+        return send(res, 200, { messages: await readMusicRoomMessages(room) });
+      }
+      if (route === "room/messages" && req.method === "POST") {
+        const input = await body(req);
+        const room = String(input.room || "main").slice(0, 64);
+        const text = String(input.text || "").trim().slice(0, 2000);
+        if (!text) return send(res, 400, { error: "message_required" });
+        const message = {
+          id: randomUUID(), actorID: String(input.actorID || "").slice(0, 80),
+          sender: String(input.sender || "我").slice(0, 80), text, createdAt: Date.now()
+        };
+        await appendMusicRoomMessage(room, message);
+        return send(res, 201, { message });
+      }
+      if (route === "netease/status" && req.method === "GET") {
+        const profile = await ncmProfile();
+        return send(res, 200, { logged: Boolean(profile), nickname: profile?.nickname || "" });
+      }
+      if (route === "netease/qr" && req.method === "GET") {
+        try {
+          const keyResult = await ncm.login_qr_key({});
+          const key = keyResult.body?.data?.unikey;
+          const qrResult = await ncm.login_qr_create({ key, qrimg: true });
+          return send(res, 200, { key, image: qrResult.body?.data?.qrimg || "" });
+        } catch (error) { return send(res, 502, { error: error.message || "qr_unavailable" }); }
+      }
+      if (route === "netease/qr/check" && req.method === "GET") {
+        try {
+          const result = await ncm.login_qr_check({ key: String(url.searchParams.get("key") || "") });
+          const code = Number(result.body?.code || 0);
+          if (code === 803 && result.body?.cookie) {
+            await saveNcmCookie(result.body.cookie);
+            const profile = await ncmProfile();
+            return send(res, 200, { code, logged: true, nickname: profile?.nickname || "" });
+          }
+          return send(res, 200, { code, message: String(result.body?.message || "") });
+        } catch (error) { return send(res, 502, { error: error.message || "qr_check_failed" }); }
+      }
+      if (route === "netease/search" && req.method === "GET") {
+        const keywords = String(url.searchParams.get("q") || "").trim().slice(0, 100);
+        if (!keywords) return send(res, 200, { songs: [] });
+        try {
+          const result = await ncm.cloudsearch({ keywords, limit: 30, cookie: ncmCookie });
+          return send(res, 200, { songs: (result.body?.result?.songs || []).map(normalizeMusicSong) });
+        } catch (error) { return send(res, 502, { error: error.message || "search_failed" }); }
+      }
+      if (route === "netease/song-url" && req.method === "GET") {
+        try {
+          const result = await ncm.song_url_v1({ id: String(url.searchParams.get("id") || ""), level: "standard", cookie: ncmCookie });
+          const streamURL = result.body?.data?.[0]?.url || "";
+          return send(res, 200, { url: String(streamURL).replace(/^http:/, "https:") });
+        } catch (error) { return send(res, 502, { error: error.message || "stream_unavailable" }); }
+      }
+      if (route === "netease/logout" && req.method === "POST") {
+        await saveNcmCookie("");
+        return send(res, 200, { ok: true });
+      }
+      return send(res, 404, { error: "not_found" });
+    }
+    if (url.pathname === "/v1/mcp/servers") {
+      if (!mcpRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+      if (req.method === "GET") {
+        const settings = await mcpClientStore.read();
+        return send(res, 200, { ...settings, servers: settings.servers.map(server => ({ ...server, headers: Object.fromEntries(Object.keys(server.headers).map(key => [key, "••••••"])) })) });
+      }
+      if (req.method === "PUT") {
+        try {
+          const settings = await mcpClientStore.save(await body(req));
+          return send(res, 200, { ...settings, servers: settings.servers.map(server => ({ ...server, headers: Object.fromEntries(Object.keys(server.headers).map(key => [key, "••••••"])) })) });
+        }
+        catch (error) { return send(res, error.status || 400, { error: error.message }); }
+      }
+      return send(res, 405, { error: "method_not_allowed" });
+    }
+    const mcpServerToggle = url.pathname.match(/^\/v1\/mcp\/servers\/([^/]+)$/);
+    if (mcpServerToggle) {
+      if (!mcpRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+      if (req.method !== "PATCH") return send(res, 405, { error: "method_not_allowed" });
+      const input = await body(req);
+      if (typeof input.enabled !== "boolean") return send(res, 400, { error: "enabled_must_be_boolean" });
+      const settings = await mcpClientStore.read();
+      const id = decodeURIComponent(mcpServerToggle[1]);
+      if (!settings.servers.some(server => server.id === id)) return send(res, 404, { error: "mcp_server_not_found" });
+      const saved = await mcpClientStore.save({ servers: settings.servers.map(server => server.id === id ? { ...server, enabled: input.enabled } : server) });
+      return send(res, 200, { ...saved, servers: saved.servers.map(server => ({ ...server, headers: Object.fromEntries(Object.keys(server.headers).map(key => [key, "••••••"])) })) });
+    }
+    const mcpAction = url.pathname.match(/^\/v1\/mcp\/servers\/([^/]+)\/(connect|tools\/([^/]+)\/call)$/);
+    if (mcpAction) {
+      if (!mcpRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+      if (req.method !== "POST") return send(res, 405, { error: "method_not_allowed" });
+      const { servers } = await mcpClientStore.read();
+      const selected = servers.find(server => server.id === decodeURIComponent(mcpAction[1]));
+      if (!selected) return send(res, 404, { error: "mcp_server_not_found" });
+      try {
+        if (mcpAction[2] === "connect") {
+          const connection = await connectMcpServer(selected);
+          const saved = await mcpClientStore.save({ servers: servers.map(server => server.id === selected.id ? { ...server, tools: connection.tools, connectedAt: new Date().toISOString(), error: "" } : server) });
+          await connection.session?.close?.();
+          return send(res, 200, { tools: saved.servers.find(server => server.id === selected.id).tools, serverInfo: connection.serverInfo });
+        }
+        const input = await body(req);
+        return send(res, 200, await callMcpTool(selected, decodeURIComponent(mcpAction[3]), input.arguments || {}));
+      } catch (error) { return send(res, 502, { error: error.message || "mcp_request_failed" }); }
+    }
+    if (url.pathname === "/v1/food" || url.pathname === "/v1/food/") {
+      res.writeHead(302, { location: "/v1/food/index.html" }); return res.end();
+    }
+    if (url.pathname.startsWith("/v1/food/uploads/")) {
+      const name = url.pathname.split("/").at(-1).replace(/[^a-zA-Z0-9._-]/g, "");
+      try { const data = await readFile(join(dataDir, name)); res.writeHead(200, { "content-type": name.endsWith(".png") ? "image/png" : name.endsWith(".webp") ? "image/webp" : "image/jpeg", "cache-control": "private, max-age=86400" }); res.end(data); } catch { return send(res, 404, { error: "not_found" }); }
+      return;
+    }
+    if (url.pathname.startsWith("/v1/food/")) {
+      const path = url.pathname.slice("/v1/food".length);
+      if (req.method === "GET" && ["/index.html", "/app.js", "/icon.svg", "/dishes.txt", "/UPSTREAM-LICENSE"].includes(path)) {
+        const name = path === "/index.html" ? "index.html" : path.slice(1);
+        try { const data = await readFile(join(process.cwd(), "public/food", name)); const type = name.endsWith(".js") ? "text/javascript; charset=utf-8" : name.endsWith(".svg") ? "image/svg+xml" : name.endsWith(".txt") || name.endsWith("LICENSE") ? "text/plain; charset=utf-8" : "text/html; charset=utf-8"; res.writeHead(200, { "content-type": type, "cache-control": "no-cache" }); res.end(data); } catch { return send(res, 404, { error: "not_found" }); } return;
+      }
+      if (req.method === "GET" && path === "/food/tools") return send(res, 200, { tools: foodTools });
+      if (req.method === "GET" && path === "/food/context") return send(res, 200, { context: await foodContext() });
+      if (req.method === "GET" && path === "/api/food") return send(res, 200, await getFoodBook());
+      if (req.method === "POST" && path === "/food/ai") { const input = await body(req); return send(res, 200, { text: await executeFoodTool(input.tool, input.input || {}) }); }
+      if (req.method === "POST") { const input = await body(req); return send(res, 200, await mutateFood(path, input)); }
+      return send(res, 405, { error: "method_not_allowed" });
+    }
+    const lettersMapPath = url.pathname.match(/^\/v1\/letters-map(?:\/(.*))?$/);
+    if (lettersMapPath) {
+      if (!pushRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+      const mapPassword = String(process.env.LETTERS_MAP_PASSWORD || "").trim();
+      if (!mapPassword) return send(res, 503, { error: "letters_map_not_configured" });
+      const suffix = lettersMapPath[1] || "";
+      let upstreamPath = "";
+      if (!suffix && req.method === "GET") upstreamPath = "/api/travel-map";
+      else if (suffix === "marks" && req.method === "POST") upstreamPath = "/api/travel-map/marks";
+      else if (suffix === "location" && req.method === "POST") upstreamPath = "/api/location";
+      else {
+        const openLetter = suffix.match(/^letters\/([^/]+)\/open$/);
+        if (openLetter && req.method === "POST") upstreamPath = `/api/travel-map/letters/${encodeURIComponent(decodeURIComponent(openLetter[1]))}/open`;
+      }
+      if (!upstreamPath) return send(res, 404, { error: "not_found" });
+      const mapBaseURL = (process.env.LETTERS_MAP_BASE_URL || "https://lumi-hidden-letters.zeabur.app").replace(/\/$/, "");
+      try {
+        const upstream = await fetch(`${mapBaseURL}${upstreamPath}`, {
+          method: req.method,
+          headers: { authorization: `Bearer ${mapPassword}`, ...(req.method === "POST" ? { "content-type": "application/json" } : {}) },
+          ...(req.method === "POST" ? { body: JSON.stringify(await body(req)) } : {}),
+          signal: AbortSignal.timeout(20_000),
+          redirect: "error"
+        });
+        const payload = await upstream.json().catch(() => ({ error: "letters_map_invalid_response" }));
+        return send(res, upstream.status, payload);
+      } catch (error) {
+        console.warn(`[letters-map] upstream request failed: ${String(error.message || error).slice(0, 200)}`);
+        return send(res, 502, { error: "letters_map_unavailable" });
+      }
+    }
     if (req.method === "POST" && url.pathname === "/v1/memories") {
       const input = await body(req);
       if (typeof input.content !== "string" || !input.content.trim()) return send(res, 400, { error: "content_required" });
@@ -551,13 +983,15 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && match[2]) {
       const input = await body(req);
       if (typeof input.content !== "string" || !input.content.trim()) return send(res, 400, { error: "content_required" });
+      if (input.provider === "custom" && !mcpRequestAuthorized(req)) return send(res, 401, { error: "custom_provider_unauthorized" });
       markUserActivity(threads[id], input.content);
-      const userMessage = { id: randomUUID(), role: "user", content: input.content.trim(), createdAt: new Date().toISOString() };
-      const generated = await generateReply({ input: userMessage.content, systemPrompt: input.systemPrompt, thread: threads[id] });
+      const userMessage = { id: randomUUID(), role: "user", content: input.content.trim(), contentType: typeof input.contentType === "string" ? input.contentType : undefined, createdAt: new Date().toISOString() };
+      const generated = await generateReply({ input: userMessage.content, systemPrompt: input.systemPrompt, thread: threads[id], provider: input.provider, model: input.model, customProvider: input.customProvider, context: input.context });
       const assistantMessage = {
         id: randomUUID(),
         role: "assistant",
         content: generated.content,
+        contentType: typeof input.contentType === "string" ? input.contentType : undefined,
         createdAt: new Date().toISOString()
       };
       threads[id].messages.push(userMessage, assistantMessage);
@@ -566,6 +1000,27 @@ const server = createServer(async (req, res) => {
     }
     return send(res, 405, { error: "method_not_allowed" });
   } catch (error) { return send(res, 500, { error: error.message }); }
+});
+
+server.on("upgrade", (req, socket, head) => {
+  let url;
+  try { url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`); }
+  catch { socket.destroy(); return; }
+  if (url.pathname !== "/ws") { socket.destroy(); return; }
+  const upstream = connectSocket(duettoPort, "127.0.0.1");
+  upstream.once("connect", () => {
+    const headers = [];
+    for (let i = 0; i < req.rawHeaders.length; i += 2) {
+      if (req.rawHeaders[i].toLowerCase() !== "host") headers.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+    }
+    headers.push(`Host: 127.0.0.1:${duettoPort}`);
+    upstream.write(`${req.method} ${req.url} HTTP/${req.httpVersion}\r\n${headers.join("\r\n")}\r\n\r\n`);
+    if (head.length) upstream.write(head);
+    socket.pipe(upstream).pipe(socket);
+  });
+  upstream.on("error", () => socket.destroy());
+  socket.on("error", () => upstream.destroy());
+  socket.on("close", () => upstream.destroy());
 });
 
 server.listen(port, () => console.log(`Lumi server listening on :${port}`));

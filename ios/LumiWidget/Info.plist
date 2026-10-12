@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
+<key>LUMI_PUSH_API_TOKEN</key><string>$(LUMI_PUSH_API_TOKEN)</string>
+<key>UIAppFonts</key><array><string>Caveat-Medium.ttf</string><string>InstrumentSerif-Regular.ttf</string><string>LXGWWenKai-Regular.ttf</string><string>SpaceMono-Bold.ttf</string><string>SpaceMono-Regular.ttf</string></array>
 <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
 <key>CFBundleDisplayName</key><string>Lumi</string>

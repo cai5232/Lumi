@@ -20,6 +20,7 @@ struct TogetherView: View {
     @State private var gallery: [RemoteGalleryItem] = []
     @State private var pickerItem: PhotosPickerItem?
     @State private var selectedItem: RemoteGalleryItem?
+    @State private var focusedGalleryItemID: String?
     @State private var pendingImageData: Data?
     @State private var showingAddDetails = false
     @State private var showingStartDate = false
@@ -31,12 +32,18 @@ struct TogetherView: View {
     @State private var diaryToUnlock: RemoteDiaryItem?
     @State private var diaryToOpen: RemoteDiaryItem?
     @State private var diarySelectedDate = Date()
+    @State private var showingTogetherWatch = false
     private let api = LumiAPIClient()
+    private let onAskAboutVideo: (String, String, String) async -> String?
 
     private static let anniversaryStartDate = Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 7, day: 23))!
 
-    init(onUseInChat: @escaping (RemoteGalleryItem) -> Void = { _ in }) {
+    init(
+        onUseInChat: @escaping (RemoteGalleryItem) -> Void = { _ in },
+        onAskAboutVideo: @escaping (String, String, String) async -> String? = { _, _, _ in nil }
+    ) {
         self.onUseInChat = onUseInChat
+        self.onAskAboutVideo = onAskAboutVideo
     }
 
     private var startDate: Date { storedStartAt > 0 ? Date(timeIntervalSince1970: storedStartAt) : Self.anniversaryStartDate }
@@ -57,17 +64,16 @@ struct TogetherView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 14) {
-                    relationshipCard
-                    tabPicker
-                    tabContent
-                }
+                watchTogetherEntry
+                    .padding(.horizontal, 20)
+                    .padding(.top, 14)
+                galleryContent
                 .padding(.horizontal, 20)
-                .padding(.top, 12)
+                .padding(.top, 18)
                 .padding(.bottom, 40)
             }
             .background(TogetherColors.background.ignoresSafeArea())
-            .navigationTitle("我们")
+            .navigationTitle("我们的相册")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -84,10 +90,8 @@ struct TogetherView: View {
                 storedStartAt = Self.anniversaryStartDate.timeIntervalSince1970
                 didApplyAnniversary = true
             }
-            if diaries.isEmpty { diaries = loadCachedDiaries() }
-            Task { await loadGallery(); await loadDiaries() }
+            Task { await loadGallery() }
         }
-        .onChange(of: tab) { _, selected in if selected == .diary { Task { await loadDiaries() } } }
         .onChange(of: pickerItem) { _, item in importPhoto(item) }
         .sheet(item: $selectedItem) { item in
             RemoteGalleryDetailView(
@@ -132,6 +136,31 @@ struct TogetherView: View {
                 Task { await deleteDiary(item) }
             }
         }
+        .fullScreenCover(isPresented: $showingTogetherWatch) {
+            TogetherWatchView(onAskAboutVideo: onAskAboutVideo)
+        }
+    }
+
+    private var watchTogetherEntry: some View {
+        Button { showingTogetherWatch = true } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "play.rectangle.fill")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(TogetherColors.heart)
+                    .frame(width: 46, height: 46)
+                    .background(TogetherColors.pulse.opacity(0.18), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("一起看").font(.system(size: 16, weight: .semibold)).foregroundStyle(TogetherColors.plumBrown)
+                    Text("在 Lumi 里播放视频，随时聊聊画面").font(.system(size: 12)).foregroundStyle(.black.opacity(0.48))
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(.black.opacity(0.28))
+            }
+            .padding(14)
+            .background(TogetherColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.88), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     private var relationshipCard: some View {
@@ -218,10 +247,7 @@ struct TogetherView: View {
     private var galleryContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("我们的相册").font(.system(size: 18, weight: .bold))
-                    Text("\(gallery.count) 张照片").font(.system(size: 12)).foregroundStyle(.black.opacity(0.42))
-                }
+                Text("\(gallery.count) 张照片").font(.system(size: 13, weight: .medium)).foregroundStyle(.black.opacity(0.42))
                 Spacer()
                 PhotosPicker(selection: $pickerItem, matching: .images) {
                     Label("添加", systemImage: "plus")
@@ -235,21 +261,113 @@ struct TogetherView: View {
                 VStack(spacing: 9) { Image(systemName: "photo.on.rectangle.angled").font(.system(size: 26)).foregroundStyle(.black.opacity(0.34)); Text(isLoadingGallery ? "正在打开我们的相册…" : "第一张照片，留给我们。\n聊天里发出的图片也会自动收藏在这里。").multilineTextAlignment(.center).font(.system(size: 14)).foregroundStyle(.black.opacity(0.48)) }
                     .frame(maxWidth: .infinity).padding(.vertical, 62).background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             } else {
-                LazyVGrid(
-                    columns: [GridItem(.flexible(maximum: 190), spacing: 10), GridItem(.flexible(maximum: 190), spacing: 10)],
-                    alignment: .leading,
-                    spacing: 14
-                ) {
-                    ForEach(gallery) { item in
-                        Button { selectedItem = item } label: {
-                            RemoteGalleryTile(item: item, imageURL: api.galleryImageURL(for: item, in: "default"))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                galleryCarousel
+                if let item = focusedGalleryItem { galleryMemoryPopup(item) }
             }
         }
+    }
+
+    private var galleryCarousel: some View {
+        GeometryReader { geometry in
+            let cardWidth = min(geometry.size.width * 0.70, 258)
+            let selectedIndex = gallery.firstIndex(where: { $0.id == focusedGalleryItemID }) ?? 0
+            ZStack {
+                ForEach(Array(gallery.enumerated()), id: \.element.id) { index, item in
+                    let rawOffset = index - selectedIndex
+                    let ringOffset = rawOffset > gallery.count / 2 ? rawOffset - gallery.count : (rawOffset < -(gallery.count / 2) ? rawOffset + gallery.count : rawOffset)
+                    let angle = Double(ringOffset) * 52
+                    let radians = angle * .pi / 180
+                    let depth = cos(radians)
+                    if abs(ringOffset) <= 1 {
+                        Gallery3DCard(
+                            item: item,
+                            imageURL: api.galleryImageURL(for: item, in: "default"),
+                            width: cardWidth,
+                            isSelected: focusedGalleryItemID == item.id,
+                            action: {
+                                withAnimation(.spring(response: 0.58, dampingFraction: 0.82)) { focusedGalleryItemID = item.id }
+                            }
+                        )
+                        // Rotate each side card toward the front center of the ring.
+                        .rotation3DEffect(.degrees(angle), axis: (x: 0, y: 1, z: 0), perspective: 0.58)
+                        .scaleEffect(0.78 + max(0, depth) * 0.22)
+                        .offset(x: sin(radians) * geometry.size.width * 0.42, y: (1 - depth) * 7)
+                        .opacity(ringOffset == 0 ? 1 : 0.92)
+                        .zIndex(depth)
+                        .animation(.spring(response: 0.58, dampingFraction: 0.82), value: focusedGalleryItemID)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 24).onEnded { value in
+                guard abs(value.translation.width) > 42, !gallery.isEmpty else { return }
+                let step = value.translation.width < 0 ? 1 : -1
+                let nextIndex = (selectedIndex + step + gallery.count) % gallery.count
+                withAnimation(.spring(response: 0.58, dampingFraction: 0.82)) { focusedGalleryItemID = gallery[nextIndex].id }
+            })
+            .clipped()
+            .overlay {
+                HStack {
+                    galleryArrow("chevron.left", label: "上一张") {
+                        let previousIndex = (selectedIndex - 1 + gallery.count) % gallery.count
+                        withAnimation(.spring(response: 0.58, dampingFraction: 0.82)) { focusedGalleryItemID = gallery[previousIndex].id }
+                    }
+                    Spacer(minLength: 0)
+                    galleryArrow("chevron.right", label: "下一张") {
+                        let nextIndex = (selectedIndex + 1) % gallery.count
+                        withAnimation(.spring(response: 0.58, dampingFraction: 0.82)) { focusedGalleryItemID = gallery[nextIndex].id }
+                    }
+                }
+                .padding(.horizontal, 5)
+                .frame(maxHeight: .infinity)
+            }
+        }
+        .frame(height: 368)
+    }
+
+    @ViewBuilder
+    private func galleryArrow(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        let button = Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
+        }
+        if #available(iOS 26.0, *) {
+            button
+                .buttonStyle(.glass)
+                .tint(TogetherColors.heart)
+                .accessibilityLabel(label)
+                .disabled(gallery.count < 2)
+        } else {
+            button
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.circle)
+                .tint(TogetherColors.heart)
+                .accessibilityLabel(label)
+                .disabled(gallery.count < 2)
+        }
+    }
+
+    private var focusedGalleryItem: RemoteGalleryItem? {
+        gallery.first(where: { $0.id == focusedGalleryItemID }) ?? gallery.first
+    }
+
+    private func galleryMemoryPopup(_ item: RemoteGalleryItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("第一次看见").foregroundStyle(TogetherColors.heart)
+                Spacer()
+                Button("编辑") { selectedItem = item }
+            }
+            Text(item.visualDescription.isEmpty ? "还没有写下第一眼看到的画面" : item.visualDescription)
+            Text("当时留下的印象").foregroundStyle(TogetherColors.heart)
+            Text(item.firstImpression.isEmpty ? "还没有留下那一刻的感受" : item.firstImpression)
+        }
+        .font(.system(size: 13))
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 22))
     }
 
     private func placeholder(icon: String, text: String) -> some View { VStack(spacing: 11) { Image(systemName: icon).font(.system(size: 25)).foregroundStyle(TogetherColors.heart); Text(text).font(.system(size: 14)).foregroundStyle(.black.opacity(0.48)) }.frame(maxWidth: .infinity).padding(.vertical, 74).background(.white.opacity(0.45), in: RoundedRectangle(cornerRadius: 22, style: .continuous)) }
@@ -302,7 +420,11 @@ struct TogetherView: View {
     private func loadGallery() async {
         isLoadingGallery = true
         defer { isLoadingGallery = false }
-        do { gallery = try await api.fetchGallery(for: "default"); galleryError = nil }
+        do {
+            gallery = try await api.fetchGallery(for: "default")
+            if !gallery.contains(where: { $0.id == focusedGalleryItemID }) { focusedGalleryItemID = gallery.first?.id }
+            galleryError = nil
+        }
         catch { galleryError = error.localizedDescription }
     }
 
@@ -406,7 +528,7 @@ struct TogetherView: View {
     }
 }
 
-private enum TogetherColors {
+enum TogetherColors {
     static let background = Color(red: 0.984, green: 0.949, blue: 0.957)
     static let heart = Color(red: 0.73, green: 0.36, blue: 0.45)
     static let pulse = Color(red: 0.95, green: 0.56, blue: 0.67)
@@ -703,6 +825,38 @@ private struct RemoteGalleryTile: View {
     }
 }
 
+private struct Gallery3DCard: View {
+    let item: RemoteGalleryItem
+    let imageURL: URL
+    let width: CGFloat
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack(alignment: .bottomLeading) {
+                CachedGalleryImage(url: imageURL, placeholderHeight: 344, maxPixelSize: 1200, contentMode: .fill)
+                    .frame(width: width, height: 344)
+                    .clipped()
+                LinearGradient(colors: [.clear, .black.opacity(0.48)], startPoint: .center, endPoint: .bottom)
+                Text(item.title.isEmpty ? "那一刻" : item.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+            }
+            .frame(width: width, height: 344)
+            .clipShape(RoundedRectangle(cornerRadius: 27, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 27, style: .continuous).stroke(.white.opacity(0.9), lineWidth: 1))
+        }
+        .scaleEffect(isSelected ? 1 : 0.93)
+        .opacity(isSelected ? 1 : 0.84)
+        .buttonStyle(.plain)
+        .frame(width: width, height: 360)
+    }
+}
+
 @MainActor
 private final class GalleryImageLoader: ObservableObject {
     private static let cache = NSCache<NSURL, UIImage>()
@@ -754,10 +908,12 @@ private final class GalleryImageLoader: ObservableObject {
 private struct CachedGalleryImage: View {
     @StateObject private var loader: GalleryImageLoader
     let placeholderHeight: CGFloat
+    let contentMode: ContentMode
 
-    init(url: URL, placeholderHeight: CGFloat = 124, maxPixelSize: Int = 900) {
+    init(url: URL, placeholderHeight: CGFloat = 124, maxPixelSize: Int = 900, contentMode: ContentMode = .fit) {
         _loader = StateObject(wrappedValue: GalleryImageLoader(url: url, maxPixelSize: maxPixelSize))
         self.placeholderHeight = placeholderHeight
+        self.contentMode = contentMode
     }
 
     var body: some View {
@@ -765,7 +921,7 @@ private struct CachedGalleryImage: View {
             if let image = loader.image {
                 Image(uiImage: image)
                     .resizable()
-                    .scaledToFit()
+                    .aspectRatio(contentMode: contentMode)
                     .frame(maxWidth: .infinity)
             } else if loader.failed {
                 Color.clear

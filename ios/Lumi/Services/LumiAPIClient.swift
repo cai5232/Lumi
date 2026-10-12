@@ -17,7 +17,7 @@ final class LumiAPIClient {
     // Zeabur 公网 API；真机和模拟器都可以直接访问。
     var baseURL = URL(string: "https://lumi-tokyo-api.zeabur.app")!
     private let session: URLSession
-    private var pushAPIToken: String? {
+    var pushAPIToken: String? {
         let stored = LumiKeychain.read(account: "push-api-token")
         if !stored.isEmpty { return stored }
         guard let token = Bundle.main.object(forInfoDictionaryKey: "LUMI_PUSH_API_TOKEN") as? String,
@@ -28,9 +28,235 @@ final class LumiAPIClient {
 
     init(session: URLSession = .shared) { self.session = session }
 
+    func fetchMusicLoginStatus() async throws -> NeteaseLoginStatus {
+        try await musicRequest(path: "/v1/music/netease/status")
+    }
+
+    func fetchMusicLoginQR() async throws -> NeteaseLoginQR {
+        try await musicRequest(path: "/v1/music/netease/qr")
+    }
+
+    func checkMusicLoginQR(key: String) async throws -> NeteaseLoginQRStatus {
+        try await musicRequest(path: "/v1/music/netease/qr/check", query: [URLQueryItem(name: "key", value: key)])
+    }
+
+    func searchMusic(_ query: String) async throws -> [NeteaseSong] {
+        let response: NeteaseSongList = try await musicRequest(path: "/v1/music/netease/search", query: [URLQueryItem(name: "q", value: query)])
+        return response.songs
+    }
+
+    func resolveMusicStream(songID: String) async throws -> URL {
+        let response: NeteaseSongStream = try await musicRequest(path: "/v1/music/netease/song-url", query: [URLQueryItem(name: "id", value: songID)])
+        guard let url = URL(string: response.url), url.scheme == "https" else {
+            throw LumiAPIError.server("这首歌暂时没有可播放的音源。")
+        }
+        return url
+    }
+
+    func fetchMusicRoomState(room: String) async throws -> MusicRoomSnapshot? {
+        let response: MusicRoomEnvelope = try await musicRequest(path: "/v1/music/room/state", query: [URLQueryItem(name: "room", value: room)])
+        return response.state
+    }
+
+    func fetchMusicRoomMessages(room: String) async throws -> [MusicRoomMessage] {
+        let response: MusicRoomMessagesEnvelope = try await musicRequest(path: "/v1/music/room/messages", query: [URLQueryItem(name: "room", value: room)])
+        return response.messages
+    }
+
+    func sendMusicRoomMessage(_ text: String, room: String, actorID: String, sender: String) async throws -> MusicRoomMessage {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/music/room/messages"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "room": room, "actorID": actorID, "sender": sender, "text": text
+        ])
+        let response: MusicRoomMessageEnvelope = try await perform(request)
+        return response.message
+    }
+
+    func updateMusicRoomState(_ state: MusicRoomSnapshot) async throws -> MusicRoomSnapshot {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/music/room/state"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONEncoder.api.encode(state)
+        let response: MusicRoomEnvelope = try await perform(request)
+        guard let state = response.state else { throw LumiAPIError.invalidResponse }
+        return state
+    }
+
+    func logoutMusicAccount() async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/music/netease/logout"))
+        request.httpMethod = "POST"
+        addPushAuthorization(to: &request)
+        let _: EmptyResponse = try await perform(request)
+    }
+
+    private func musicRequest<T: Decodable>(path: String, query: [URLQueryItem] = []) async throws -> T {
+        var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)!
+        components.queryItems = query.isEmpty ? nil : query
+        var request = URLRequest(url: components.url!)
+        addPushAuthorization(to: &request)
+        return try await perform(request)
+    }
+
+    func fetchWorldBooks() async throws -> LumiWorldBookSettings {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/world-books"))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        addPushAuthorization(to: &request)
+        return try await perform(request)
+    }
+
+    func saveWorldBooks(_ settings: LumiWorldBookSettings) async throws -> LumiWorldBookSettings {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/world-books"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONEncoder().encode(settings)
+        return try await perform(request)
+    }
+
+    func fetchWorldBookSelection() async throws -> LumiWorldBookSelection {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/default/world-books"))
+        addPushAuthorization(to: &request)
+        return try await perform(request)
+    }
+
+    func saveWorldBookSelection(_ selection: LumiWorldBookSelection) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats/default/world-books"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["bookIds": selection.bookIds as Any? ?? NSNull()])
+        let _: LumiWorldBookSelection = try await perform(request)
+    }
+
     func fetchModelProviders() async throws -> [ModelProvider] {
         let response: ModelProvidersResponse = try await perform(URLRequest(url: baseURL.appending(path: "/v1/providers")))
         return response.providers
+    }
+
+    func fetchWatchAnalysisConfig() async throws -> LumiWatchAnalysisConfig {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/watch/analysis-config"))
+        addPushAuthorization(to: &request)
+        return try await perform(request)
+    }
+
+    func analyzeWatchFrame(imageBase64: String, title: String, playheadMS: Int, analysisBaseURL: String, model: String, apiKey: String) async throws -> LumiWatchAnalysisResponse {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/watch/analyze"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 180
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONEncoder.api.encode(WatchFrameAnalysisRequest(
+            image: "data:image/jpeg;base64,\(imageBase64)",
+            title: title,
+            playheadMS: playheadMS,
+            analysisConfig: WatchAnalysisProviderConfig(baseURL: analysisBaseURL, model: model, apiKey: apiKey)
+        ))
+        return try await perform(request)
+    }
+
+    func createWatchRuntimeSession(clientID: String, sessionID: String, viewingID: String, mediaID: String, title: String, durationMS: Int, playheadMS: Int) async throws -> [WatchRuntimeTicket] {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/watch/sessions"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "clientID": clientID, "sessionID": sessionID, "viewingID": viewingID,
+            "mediaID": mediaID, "title": title, "durationMS": durationMS, "playheadMS": playheadMS
+        ])
+        let response: WatchRuntimeSessionEnvelope = try await perform(request)
+        return response.session.tickets ?? []
+    }
+
+    func heartbeatWatchRuntimeSession(clientID: String, sessionID: String) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/watch/sessions/\(sessionID)/heartbeat"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["clientID": clientID])
+        let _: WatchRuntimeSessionEnvelope = try await perform(request)
+    }
+
+    func updateWatchRuntimePlayback(clientID: String, sessionID: String, playheadMS: Int, durationMS: Int, isPlaying: Bool, timelineEpoch: Int, snapshotSeq: Int, playbackRate: Double) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/watch/sessions/\(sessionID)/playback"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "clientID": clientID,
+            "snapshot": ["playheadMS": playheadMS, "durationMS": durationMS,
+                         "isPlaying": isPlaying, "timelineEpoch": timelineEpoch,
+                         "snapshotSeq": snapshotSeq, "playbackRate": playbackRate]
+        ])
+        let _: WatchRuntimeSessionEnvelope = try await perform(request)
+    }
+
+    func recordWatchAnalysis(clientID: String, sessionID: String, momentID: String, timelineEpoch: Int, snapshotSeq: Int, playheadMS: Int, summary: String, risk: Bool, model: String) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/watch/sessions/\(sessionID)/analysis"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "clientID": clientID,
+            "moment": ["id": momentID, "timelineEpoch": timelineEpoch,
+                       "snapshotSeq": snapshotSeq, "playheadMS": playheadMS,
+                       "summary": summary, "risk": risk, "model": model]
+        ])
+        let _: WatchAnalysisMomentEnvelope = try await perform(request)
+    }
+
+    func replaceWatchRuntimeTickets(clientID: String, sessionID: String, tickets: [WatchRuntimeTicket]) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/watch/sessions/\(sessionID)/tickets"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONEncoder.api.encode(WatchRuntimeTicketsRequest(clientID: clientID, tickets: tickets))
+        let _: WatchRuntimeTicketsEnvelope = try await perform(request)
+    }
+
+    func endWatchRuntimeSession(clientID: String, sessionID: String, action: String) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/watch/sessions/\(sessionID)"))
+        request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["clientID": clientID, "action": action])
+        let _: WatchRuntimeSessionEnvelope = try await perform(request)
+    }
+
+    func fetchMcpServers() async throws -> McpServerSettings {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/mcp/servers"))
+        addPushAuthorization(to: &request)
+        return try await perform(request)
+    }
+
+    func setMcpServerEnabled(_ id: String, enabled: Bool) async throws -> McpServerSettings {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/mcp/servers/\(id)"))
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["enabled": enabled])
+        return try await perform(request)
+    }
+
+    func connectMcpServer(_ id: String) async throws -> McpConnectResponse {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/mcp/servers/\(id)/connect"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = Data("{}".utf8)
+        return try await perform(request)
+    }
+
+    func callMcpTool(serverID: String, name: String, arguments: [String: Any]) async throws -> McpToolResult {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/mcp/servers/\(serverID)/tools/\(name)/call"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["arguments": arguments])
+        return try await perform(request)
     }
 
     func fetchThread(id: String, limit: Int = 100, before: Date? = nil) async throws -> ChatThread {
@@ -74,13 +300,15 @@ final class LumiAPIClient {
         _ = try await perform(request) as EmptyResponse
     }
 
-    func sendMessage(_ content: String, to id: String, images: [String] = [], galleryImageIDs: [String] = [], emojiCatalog: [String: [String]] = [:], tts: TTSRequestSettings? = nil, provider: String = "zenmux", model: String = "") async throws -> SendMessageResponse {
+    func sendMessage(_ content: String, to id: String, images: [String] = [], galleryImageIDs: [String] = [], emojiCatalog: [String: [String]] = [:], tts: TTSRequestSettings? = nil, provider: String = "zenmux", model: String = "", customProvider: LumiCustomAPIRequestConfig? = nil, contentType: String? = nil, context: String? = nil) async throws -> SendMessageResponse {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/messages"))
         request.httpMethod = "POST"
+        request.timeoutInterval = 180
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
+        addPushAuthorization(to: &request)
         request.httpBody = try JSONEncoder.api.encode(
-            SendMessageRequest(content: content, systemPrompt: LumiSystemPrompt.main, images: images, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: provider, model: model)
+            SendMessageRequest(content: content, systemPrompt: LumiSystemPrompt.main, context: context, contentType: contentType, images: images, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: provider, model: model, customProvider: customProvider)
         )
         // A model reply can outlive the foreground network timeout. Retrying
         // the *same* idempotency key asks the server for that in-flight or
@@ -100,6 +328,7 @@ final class LumiAPIClient {
         }
         return response
     }
+
 
     func fetchGallery(for id: String) async throws -> [RemoteGalleryItem] {
         // The gallery can change while the chat stays open. Do not reuse an old
@@ -228,6 +457,24 @@ final class LumiAPIClient {
         let _: PushTokenRegistrationResponse = try await perform(request)
     }
 
+    func registerVoIPToken(_ token: String, environment: String) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/push/voip/register"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONEncoder.api.encode(PushTokenRegistration(token: token, environment: environment, threadId: "default"))
+        let _: PushTokenRegistrationResponse = try await perform(request)
+    }
+
+    func updateForegroundPresence(_ foreground: Bool) async throws {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/push/presence"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["threadId": "default", "foreground": foreground])
+        let _: ForegroundPresenceResponse = try await perform(request)
+    }
+
     private func request<T: Decodable>(path: String) async throws -> T {
         try await perform(URLRequest(url: baseURL.appending(path: path)))
     }
@@ -270,6 +517,36 @@ final class LumiAPIClient {
     }
 }
 
+private struct WatchFrameAnalysisRequest: Encodable {
+    let image: String
+    let title: String
+    let playheadMS: Int
+    let analysisConfig: WatchAnalysisProviderConfig
+}
+
+private struct WatchAnalysisMomentEnvelope: Decodable {
+    let moment: WatchAnalysisMomentResponse
+}
+
+private struct WatchAnalysisMomentResponse: Decodable {
+    let id: String
+}
+
+private struct WatchRuntimeTicketsRequest: Encodable {
+    let clientID: String
+    let tickets: [WatchRuntimeTicket]
+}
+
+private struct WatchRuntimeTicketsEnvelope: Decodable {
+    let tickets: [WatchRuntimeTicket]
+}
+
+private struct WatchAnalysisProviderConfig: Encodable {
+    let baseURL: String
+    let model: String
+    let apiKey: String
+}
+
 private struct ScreenShareDecisionResponse: Decodable {
     let status: String
 }
@@ -296,6 +573,10 @@ private struct GalleryDeleteResponse: Decodable { let deleted: Bool }
 
 private struct PushTokenRegistrationResponse: Decodable {
     let registered: Bool
+}
+
+private struct ForegroundPresenceResponse: Decodable {
+    let foreground: Bool
 }
 
 private enum LumiSystemPrompt {

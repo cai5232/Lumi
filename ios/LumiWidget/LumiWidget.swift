@@ -88,8 +88,7 @@ struct LumiWidgetView: View {
     }
 }
 
-@main
-struct LumiWidget: Widget {
+struct LumiWakeWidget: Widget {
     let kind = "LumiWidget"
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: WakeProvider()) { entry in
@@ -98,5 +97,13 @@ struct LumiWidget: Widget {
         .configurationDisplayName("沈屿醒来时间")
         .description("显示真实的上次和下次自主唤醒时间")
         .supportedFamilies([.systemSmall, .accessoryRectangular])
+    }
+}
+
+@main
+struct LumiWidget: WidgetBundle {
+    var body: some Widget {
+        LumiWakeWidget()
+        CalendarMediumWidget()
     }
 }

@@ -6,7 +6,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     let id: UUID
     let role: Role
     let content: String
-    var contentType: String?
+    var contentType: String? = nil
     var htmlContent: String?
     var htmlTitle: String?
     let createdAt: Date
@@ -16,6 +16,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var speechDuration: Double?
     var speechScript: String?
     var localImageFileName: String?
+    var localImageFileNames: [String] = []
     var imageAttachmentCount: Int?
     var callID: String?
     var callDuration: Double?
@@ -23,9 +24,9 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var callStatus: String?
     var screenStatus: String?
 
-    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, thinking, audioFileName, speechDuration, speechScript, localImageFileName, imageAttachmentCount, callID, callDuration, callInitiator, callStatus, screenStatus }
+    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, thinking, audioFileName, speechDuration, speechScript, localImageFileName, localImageFileNames, imageAttachmentCount, callID, callDuration, callInitiator, callStatus, screenStatus }
 
-    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, imageAttachmentCount: Int? = nil, callID: String? = nil, callDuration: Double? = nil, callInitiator: String? = nil, callStatus: String? = nil, screenStatus: String? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil) {
+    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, localImageFileNames: [String] = [], imageAttachmentCount: Int? = nil, callID: String? = nil, callDuration: Double? = nil, callInitiator: String? = nil, callStatus: String? = nil, screenStatus: String? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil) {
         self.id = id
         self.role = role
         self.content = content
@@ -39,6 +40,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         self.speechDuration = speechDuration
         self.speechScript = speechScript
         self.localImageFileName = localImageFileName
+        self.localImageFileNames = localImageFileNames
         self.imageAttachmentCount = imageAttachmentCount
         self.callID = callID
         self.callDuration = callDuration
@@ -62,6 +64,7 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         speechDuration = try container.decodeIfPresent(Double.self, forKey: .speechDuration)
         speechScript = try container.decodeIfPresent(String.self, forKey: .speechScript)
         localImageFileName = try container.decodeIfPresent(String.self, forKey: .localImageFileName)
+        localImageFileNames = try container.decodeIfPresent([String].self, forKey: .localImageFileNames) ?? []
         imageAttachmentCount = try container.decodeIfPresent(Int.self, forKey: .imageAttachmentCount)
         callID = try container.decodeIfPresent(String.self, forKey: .callID)
         callDuration = try container.decodeIfPresent(Double.self, forKey: .callDuration)
@@ -105,15 +108,215 @@ struct ModelProvider: Decodable, Identifiable {
 }
 struct ModelProvidersResponse: Decodable { let providers: [ModelProvider] }
 
+struct LumiWatchAnalysisConfig: Decodable {
+    let configured: Bool
+    let model: String?
+}
+
+struct LumiWatchAnalysisResponse: Decodable {
+    let summary: String
+    let risk: Bool
+    let model: String?
+
+    private enum CodingKeys: String, CodingKey { case summary, risk, model }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        summary = try values.decode(String.self, forKey: .summary)
+        risk = try values.decodeIfPresent(Bool.self, forKey: .risk) ?? false
+        model = try values.decodeIfPresent(String.self, forKey: .model)
+    }
+}
+
+struct WatchRuntimeSessionEnvelope: Decodable {
+    let session: WatchRuntimeSession
+}
+
+struct WatchRuntimeSession: Decodable {
+    let id: String
+    let tickets: [WatchRuntimeTicket]?
+}
+
+struct WatchRuntimeTicket: Codable, Identifiable {
+    let id: String
+    let playheadMS: Int
+    let title: String
+    let note: String
+    let episodeIndex: Int?
+}
+
+struct McpServerSettings: Codable {
+    var servers: [McpRemoteServer]
+    var revision: Int
+}
+
+struct McpRemoteServer: Codable, Identifiable {
+    var id: String
+    var name: String
+    var enabled: Bool
+    var url: String
+    var transport: String?
+    var headers: [String: String]
+    var tools: [McpToolDefinition]
+    var connectedAt: String?
+    var error: String?
+
+    static func empty(name: String = "新 MCP 服务器") -> McpRemoteServer {
+        McpRemoteServer(id: UUID().uuidString, name: name, enabled: true, url: "", transport: "streamable-http", headers: [:], tools: [], connectedAt: nil, error: nil)
+    }
+}
+
+struct McpToolDefinition: Codable, Identifiable {
+    var name: String
+    var description: String?
+    var inputSchema: JSONValue?
+    var disabled: Bool?
+    var id: String { name }
+}
+
+indirect enum JSONValue: Codable {
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case null
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if try container.decodeNil() { self = .null }
+        else if let value = try? container.decode(Bool.self) { self = .bool(value) }
+        else if let value = try? container.decode(Double.self) { self = .number(value) }
+        else if let value = try? container.decode(String.self) { self = .string(value) }
+        else if let value = try? container.decode([String: JSONValue].self) { self = .object(value) }
+        else if let value = try? container.decode([JSONValue].self) { self = .array(value) }
+        else { throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid JSON value") }
+    }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .object(let value): try container.encode(value)
+        case .array(let value): try container.encode(value)
+        case .string(let value): try container.encode(value)
+        case .number(let value): try container.encode(value)
+        case .bool(let value): try container.encode(value)
+        case .null: try container.encodeNil()
+        }
+    }
+}
+
+struct McpConnectResponse: Decodable { let tools: [McpToolDefinition]; let serverInfo: McpServerInfo? }
+struct McpServerInfo: Decodable { let name: String?; let version: String? }
+struct McpToolResult: Decodable { let content: [McpResultContent]?; let isError: Bool? }
+struct McpResultContent: Decodable { let type: String?; let text: String? }
+
+struct LumiAPIProviderProfile: Codable, Identifiable, Equatable {
+    var id: String
+    var name: String
+    var preset: String
+    var baseURL: String
+    var model: String
+    var models: [String]
+    var apiFormat: String
+    var chatPath: String
+
+    init(id: String, name: String, preset: String, baseURL: String, model: String, models: [String] = [], apiFormat: String, chatPath: String) {
+        self.id = id
+        self.name = name
+        self.preset = preset
+        self.baseURL = baseURL
+        self.model = model
+        self.models = models
+        self.apiFormat = apiFormat
+        self.chatPath = chatPath
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, preset, baseURL, model, models, apiFormat, chatPath }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        name = try values.decode(String.self, forKey: .name)
+        preset = try values.decode(String.self, forKey: .preset)
+        baseURL = try values.decode(String.self, forKey: .baseURL)
+        model = try values.decode(String.self, forKey: .model)
+        models = try values.decodeIfPresent([String].self, forKey: .models) ?? (model.isEmpty ? [] : [model])
+        apiFormat = try values.decode(String.self, forKey: .apiFormat)
+        chatPath = try values.decode(String.self, forKey: .chatPath)
+    }
+
+    var keychainAccount: String { "lumi-provider-key-\(id)" }
+    var requestConfig: LumiCustomAPIRequestConfig {
+        LumiCustomAPIRequestConfig(apiKey: LumiKeychain.read(account: keychainAccount), baseURL: baseURL, apiFormat: apiFormat, chatPath: chatPath)
+    }
+}
+
+struct LumiCustomAPIRequestConfig: Encodable {
+    let apiKey: String
+    let baseURL: String
+    let apiFormat: String
+    let chatPath: String
+}
+
+struct LumiAPIProviderPreset: Identifiable {
+    let name: String
+    let baseURL: String
+    let apiFormat: String
+    var id: String { name }
+
+    static let values: [LumiAPIProviderPreset] = [
+        .init(name: "OpenAI", baseURL: "https://api.openai.com/v1", apiFormat: "openai"),
+        .init(name: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", apiFormat: "openai"),
+        .init(name: "DeepSeek", baseURL: "https://api.deepseek.com/v1", apiFormat: "openai"),
+        .init(name: "SiliconFlow", baseURL: "https://api.siliconflow.cn/v1", apiFormat: "openai"),
+        .init(name: "Google Gemini", baseURL: "https://generativelanguage.googleapis.com/v1beta/openai", apiFormat: "openai"),
+        .init(name: "Moonshot", baseURL: "https://api.moonshot.cn/v1", apiFormat: "openai"),
+        .init(name: "通义千问", baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", apiFormat: "openai"),
+        .init(name: "智谱 AI", baseURL: "https://open.bigmodel.cn/api/paas/v4", apiFormat: "openai"),
+        .init(name: "Anthropic Claude", baseURL: "https://api.anthropic.com/v1", apiFormat: "anthropic"),
+        .init(name: "自定义 OpenAI 兼容", baseURL: "", apiFormat: "openai"),
+        .init(name: "自定义 Claude 兼容", baseURL: "", apiFormat: "anthropic")
+    ]
+}
+
+enum LumiAPIModelCatalog {
+    static func fetch(baseURL: String, apiKey: String, apiFormat: String) async throws -> [String] {
+        guard var components = URLComponents(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))) else {
+            throw URLError(.badURL)
+        }
+        let rootPath = "/" + components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        components.path = rootPath == "/" ? "/models" : rootPath + "/models"
+        guard let url = components.url else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if apiFormat == "anthropic" {
+            request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        } else {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw NSError(domain: "LumiAPIModelCatalog", code: (response as? HTTPURLResponse)?.statusCode ?? -1, userInfo: [NSLocalizedDescriptionKey: "获取模型失败，请检查 API Key、基址和服务商支持情况。"])
+        }
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return (json?["data"] as? [[String: Any]])?.compactMap { $0["id"] as? String }
+            ?? (json?["models"] as? [[String: Any]])?.compactMap { ($0["name"] as? String)?.replacingOccurrences(of: "models/", with: "") }
+            ?? []
+    }
+}
+
 struct SendMessageRequest: Encodable {
     let content: String
     let systemPrompt: String
+    var context: String?
+    var contentType: String?
     var images: [String] = []
     var galleryImageIDs: [String] = []
     var emojiCatalog: [String: [String]] = [:]
     var tts: TTSRequestSettings?
     var provider: String = "zenmux"
     var model: String = ""
+    var customProvider: LumiCustomAPIRequestConfig?
 }
 
 struct SendMessageResponse: Decodable {
@@ -125,6 +328,7 @@ struct SendMessageResponse: Decodable {
     let speechAudioBase64: String?
     let speechDuration: Double?
     let speechScript: String?
+    let speechError: String?
 }
 
 /// A local-only chat card shown after the AI elects to collect an image.
@@ -157,6 +361,7 @@ struct GalleryListResponse: Decodable {
 }
 
 struct TTSRequestSettings: Encodable {
+    let provider: String
     let apiKey: String
     let model: String
     let voiceID: String

@@ -20,6 +20,7 @@
 		A10000000000000000000011 /* TogetherView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000012 /* TogetherView.swift */; };
 		A10000000000000000000012 /* ClawdPetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000013 /* ClawdPetView.swift */; };
 		A10000000000000000000013 /* PetAssets in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000014 /* PetAssets */; };
+		A1000000000000000000001A /* McpSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000000000000000000001A /* McpSettingsView.swift */; };
 		A10000000000000000000014 /* top-icon-together.png in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000015 /* top-icon-together.png */; };
 		A10000000000000000000015 /* top-icon-phone.png in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000016 /* top-icon-phone.png */; };
 		A10000000000000000000016 /* top-icon-settings.png in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000017 /* top-icon-settings.png */; };
@@ -36,6 +37,44 @@
 		A10000000000000000000027 /* AssistantAvatar.jpg in Content Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000031 /* Content AssistantAvatar.jpg */; };
 		A10000000000000000000028 /* AppIcon.png in Content Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000032 /* Content AppIcon.png */; };
 		A10000000000000000000029 /* LumiNotificationContent.appex in Embed Notification Content */ = {isa = PBXBuildFile; fileRef = B10000000000000000000033 /* LumiNotificationContent.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A10000000000000000000030 /* FoodNotebook in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000034 /* FoodNotebook */; };
+		A10000000000000000000031 /* FoodNotebookNativeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000035 /* FoodNotebookNativeView.swift */; };
+		A10000000000000000000036 /* LettersMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000036 /* LettersMapView.swift */; };
+		A10000000000000000000037 /* TogetherWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000037 /* TogetherWatchView.swift */; };
+		A10000000000000000000038 /* TogetherListenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000038 /* TogetherListenView.swift */; };
+		A40000000000000000000001 /* CalendarAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000001 /* CalendarAPI.swift */; };
+		A40000000000000000000002 /* CalendarDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000002 /* CalendarDTO.swift */; };
+		A40000000000000000000003 /* CalendarData.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000003 /* CalendarData.swift */; };
+		A40000000000000000000004 /* CalendarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000004 /* CalendarStore.swift */; };
+		A40000000000000000000005 /* DayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000005 /* DayView.swift */; };
+		A40000000000000000000006 /* EmojiSticker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000006 /* EmojiSticker.swift */; };
+		A40000000000000000000007 /* EventEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000007 /* EventEditor.swift */; };
+		A40000000000000000000008 /* MonthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000008 /* MonthView.swift */; };
+		A40000000000000000000009 /* PageRender.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000009 /* PageRender.swift */; };
+		A4000000000000000000000A /* PinkToggle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4000000000000000000000A /* PinkToggle.swift */; };
+		A4000000000000000000000B /* PlacedItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4000000000000000000000B /* PlacedItem.swift */; };
+		A4000000000000000000000C /* PlacedLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4000000000000000000000C /* PlacedLayer.swift */; };
+		A4000000000000000000000D /* SpanEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4000000000000000000000D /* SpanEditor.swift */; };
+		A4000000000000000000000E /* StickerBaker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4000000000000000000000E /* StickerBaker.swift */; };
+		A4000000000000000000000F /* StickerKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4000000000000000000000F /* StickerKit.swift */; };
+		A40000000000000000000010 /* StickerLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000010 /* StickerLibrary.swift */; };
+		A40000000000000000000011 /* StickerStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000011 /* StickerStrip.swift */; };
+		A40000000000000000000012 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000012 /* Theme.swift */; };
+		A40000000000000000000013 /* CalendarSecrets.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000013 /* CalendarSecrets.swift */; };
+		A40000000000000000000014 /* SharedCalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000014 /* SharedCalendarView.swift */; };
+		A40000000000000000000028 /* Caveat-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000028 /* Caveat-Medium.ttf */; };
+		A40000000000000000000029 /* InstrumentSerif-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000029 /* InstrumentSerif-Regular.ttf */; };
+		A4000000000000000000002A /* LXGWWenKai-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B4000000000000000000002A /* LXGWWenKai-Regular.ttf */; };
+		A4000000000000000000002B /* SpaceMono-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B4000000000000000000002B /* SpaceMono-Bold.ttf */; };
+		A4000000000000000000002C /* SpaceMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B4000000000000000000002C /* SpaceMono-Regular.ttf */; };
+		A500000000000000000000001 /* WidgetShared.swift in Lumi Sources */ = {isa = PBXBuildFile; fileRef = B500000000000000000000001 /* WidgetShared.swift */; };
+		A500000000000000000000002 /* WidgetShared.swift in Widget Sources */ = {isa = PBXBuildFile; fileRef = B500000000000000000000001 /* WidgetShared.swift */; };
+		A500000000000000000000003 /* CalendarWidget.swift in Widget Sources */ = {isa = PBXBuildFile; fileRef = B500000000000000000000002 /* CalendarWidget.swift */; };
+		A50000000000000000000000A /* Caveat-Medium.ttf in Widget Resources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000000A /* Caveat-Medium.ttf */; };
+		A50000000000000000000000B /* InstrumentSerif-Regular.ttf in Widget Resources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000000B /* InstrumentSerif-Regular.ttf */; };
+		A50000000000000000000000C /* LXGWWenKai-Regular.ttf in Widget Resources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000000C /* LXGWWenKai-Regular.ttf */; };
+		A50000000000000000000000D /* SpaceMono-Bold.ttf in Widget Resources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000000D /* SpaceMono-Bold.ttf */; };
+		A50000000000000000000000E /* SpaceMono-Regular.ttf in Widget Resources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000000E /* SpaceMono-Regular.ttf */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +99,7 @@
 		B10000000000000000000012 /* TogetherView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TogetherView.swift; sourceTree = "<group>"; };
 		B10000000000000000000013 /* ClawdPetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClawdPetView.swift; sourceTree = "<group>"; };
 		B10000000000000000000014 /* PetAssets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = PetAssets; sourceTree = "<group>"; };
+		B1000000000000000000001A /* McpSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = McpSettingsView.swift; sourceTree = "<group>"; };
 		B10000000000000000000015 /* top-icon-together.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "top-icon-together.png"; sourceTree = "<group>"; };
 		B10000000000000000000016 /* top-icon-phone.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "top-icon-phone.png"; sourceTree = "<group>"; };
 		B10000000000000000000017 /* top-icon-settings.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "top-icon-settings.png"; sourceTree = "<group>"; };
@@ -79,6 +119,43 @@
 		B10000000000000000000031 /* Content AssistantAvatar.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = AssistantAvatar.jpg; sourceTree = "<group>"; };
 		B10000000000000000000032 /* Content AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon.png; sourceTree = "<group>"; };
 		B10000000000000000000033 /* LumiNotificationContent.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = LumiNotificationContent.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000034 /* FoodNotebook */ = {isa = PBXFileReference; lastKnownFileType = folder; path = FoodNotebook; sourceTree = "<group>"; };
+		B10000000000000000000035 /* FoodNotebookNativeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodNotebookNativeView.swift; sourceTree = "<group>"; };
+		B10000000000000000000036 /* LettersMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LettersMapView.swift; sourceTree = "<group>"; };
+		B10000000000000000000037 /* TogetherWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TogetherWatchView.swift; sourceTree = "<group>"; };
+		B10000000000000000000038 /* TogetherListenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TogetherListenView.swift; sourceTree = "<group>"; };
+		B40000000000000000000001 /* CalendarAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarAPI.swift; sourceTree = "<group>"; };
+		B40000000000000000000002 /* CalendarDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarDTO.swift; sourceTree = "<group>"; };
+		B40000000000000000000003 /* CalendarData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarData.swift; sourceTree = "<group>"; };
+		B40000000000000000000004 /* CalendarStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarStore.swift; sourceTree = "<group>"; };
+		B40000000000000000000005 /* DayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayView.swift; sourceTree = "<group>"; };
+		B40000000000000000000006 /* EmojiSticker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmojiSticker.swift; sourceTree = "<group>"; };
+		B40000000000000000000007 /* EventEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventEditor.swift; sourceTree = "<group>"; };
+		B40000000000000000000008 /* MonthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonthView.swift; sourceTree = "<group>"; };
+		B40000000000000000000009 /* PageRender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageRender.swift; sourceTree = "<group>"; };
+		B4000000000000000000000A /* PinkToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinkToggle.swift; sourceTree = "<group>"; };
+		B4000000000000000000000B /* PlacedItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacedItem.swift; sourceTree = "<group>"; };
+		B4000000000000000000000C /* PlacedLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlacedLayer.swift; sourceTree = "<group>"; };
+		B4000000000000000000000D /* SpanEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpanEditor.swift; sourceTree = "<group>"; };
+		B4000000000000000000000E /* StickerBaker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StickerBaker.swift; sourceTree = "<group>"; };
+		B4000000000000000000000F /* StickerKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StickerKit.swift; sourceTree = "<group>"; };
+		B40000000000000000000010 /* StickerLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StickerLibrary.swift; sourceTree = "<group>"; };
+		B40000000000000000000011 /* StickerStrip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StickerStrip.swift; sourceTree = "<group>"; };
+		B40000000000000000000012 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		B40000000000000000000013 /* CalendarSecrets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSecrets.swift; sourceTree = "<group>"; };
+		B40000000000000000000014 /* SharedCalendarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedCalendarView.swift; sourceTree = "<group>"; };
+		B40000000000000000000028 /* Caveat-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Caveat-Medium.ttf"; sourceTree = "<group>"; };
+		B40000000000000000000029 /* InstrumentSerif-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "InstrumentSerif-Regular.ttf"; sourceTree = "<group>"; };
+		B4000000000000000000002A /* LXGWWenKai-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "LXGWWenKai-Regular.ttf"; sourceTree = "<group>"; };
+		B4000000000000000000002B /* SpaceMono-Bold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SpaceMono-Bold.ttf"; sourceTree = "<group>"; };
+		B4000000000000000000002C /* SpaceMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SpaceMono-Regular.ttf"; sourceTree = "<group>"; };
+		B500000000000000000000001 /* WidgetShared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../Lumi/SharedCalendar/WidgetShared.swift; sourceTree = "<group>"; };
+		B500000000000000000000002 /* CalendarWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarWidget.swift; sourceTree = "<group>"; };
+		B50000000000000000000000A /* Caveat-Medium.ttf in Widget */ = {isa = PBXFileReference; lastKnownFileType = file; path = ../Lumi/CalendarFonts/Caveat-Medium.ttf; sourceTree = "<group>"; };
+		B50000000000000000000000B /* InstrumentSerif-Regular.ttf in Widget */ = {isa = PBXFileReference; lastKnownFileType = file; path = ../Lumi/CalendarFonts/InstrumentSerif-Regular.ttf; sourceTree = "<group>"; };
+		B50000000000000000000000C /* LXGWWenKai-Regular.ttf in Widget */ = {isa = PBXFileReference; lastKnownFileType = file; path = ../Lumi/CalendarFonts/LXGWWenKai-Regular.ttf; sourceTree = "<group>"; };
+		B50000000000000000000000D /* SpaceMono-Bold.ttf in Widget */ = {isa = PBXFileReference; lastKnownFileType = file; path = ../Lumi/CalendarFonts/SpaceMono-Bold.ttf; sourceTree = "<group>"; };
+		B50000000000000000000000E /* SpaceMono-Regular.ttf in Widget */ = {isa = PBXFileReference; lastKnownFileType = file; path = ../Lumi/CalendarFonts/SpaceMono-Regular.ttf; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -99,7 +176,7 @@
 			path = Broadcast;
 			sourceTree = "<group>";
 		};
-		C10000000000000000000016 /* LumiWidget */ = { isa = PBXGroup; children = ( B10000000000000000000022 /* LumiWidget.swift */, B10000000000000000000023 /* LumiWidget Info.plist */, ); path = ../LumiWidget; sourceTree = "<group>"; };
+		C10000000000000000000016 /* LumiWidget */ = { isa = PBXGroup; children = ( B10000000000000000000022 /* LumiWidget.swift */, B10000000000000000000023 /* LumiWidget Info.plist */, B500000000000000000000002 /* CalendarWidget.swift */, B500000000000000000000001 /* WidgetShared.swift */, B50000000000000000000000A /* Caveat-Medium.ttf in Widget */, B50000000000000000000000B /* InstrumentSerif-Regular.ttf in Widget */, B50000000000000000000000C /* LXGWWenKai-Regular.ttf in Widget */, B50000000000000000000000D /* SpaceMono-Bold.ttf in Widget */, B50000000000000000000000E /* SpaceMono-Regular.ttf in Widget */ , ); path = ../LumiWidget; sourceTree = "<group>"; };
 		C10000000000000000000020 /* LumiNotificationService */ = { isa = PBXGroup; children = ( B10000000000000000000025 /* NotificationService.swift */, B10000000000000000000026 /* Notification Service Info.plist */, ); path = ../LumiNotificationService; sourceTree = "<group>"; };
 		C10000000000000000000026 /* LumiNotificationContent */ = { isa = PBXGroup; children = ( B10000000000000000000029 /* NotificationViewController.swift */, B10000000000000000000030 /* Notification Content Info.plist */, B10000000000000000000031 /* Content AssistantAvatar.jpg */, B10000000000000000000032 /* Content AppIcon.png */, ); path = ../../LumiNotificationContent; sourceTree = "<group>"; };
 /* End PBXFrameworksBuildPhase section */
@@ -144,6 +221,11 @@
 				B10000000000000000000006 /* ChatDetailView.swift */,
 				B10000000000000000000012 /* TogetherView.swift */,
 				B10000000000000000000013 /* ClawdPetView.swift */,
+				B1000000000000000000001A /* McpSettingsView.swift */,
+				B10000000000000000000035 /* FoodNotebookNativeView.swift */,
+				B10000000000000000000036 /* LettersMapView.swift */,
+				B10000000000000000000037 /* TogetherWatchView.swift */,
+				B10000000000000000000038 /* TogetherListenView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -170,11 +252,14 @@
 				B10000000000000000000015 /* top-icon-together.jpg */,
 				B10000000000000000000016 /* top-icon-phone.jpg */,
 				B10000000000000000000017 /* top-icon-settings.jpg */,
+				B10000000000000000000034 /* FoodNotebook */,
 				C10000000000000000000015 /* Broadcast */,
 				C10000000000000000000016 /* LumiWidget */,
 				C10000000000000000000020 /* LumiNotificationService */,
 				C10000000000000000000026 /* LumiNotificationContent */,
 				B10000000000000000000010 /* Assets.xcassets */,
+				400000000000000000000101 /* SharedCalendar */,
+				400000000000000000000102 /* CalendarFonts */,
 				B10000000000000000000014 /* PetAssets */,
 				C10000000000000000000003 /* Models */,
 				C10000000000000000000004 /* Services */,
@@ -184,6 +269,35 @@
 			path = Lumi;
 			sourceTree = "<group>";
 		};
+		400000000000000000000101 /* SharedCalendar */ = { isa = PBXGroup; children = (
+				B40000000000000000000001 /* CalendarAPI.swift */,
+				B40000000000000000000002 /* CalendarDTO.swift */,
+				B40000000000000000000003 /* CalendarData.swift */,
+				B40000000000000000000004 /* CalendarStore.swift */,
+				B40000000000000000000005 /* DayView.swift */,
+				B40000000000000000000006 /* EmojiSticker.swift */,
+				B40000000000000000000007 /* EventEditor.swift */,
+				B40000000000000000000008 /* MonthView.swift */,
+				B40000000000000000000009 /* PageRender.swift */,
+				B4000000000000000000000A /* PinkToggle.swift */,
+				B4000000000000000000000B /* PlacedItem.swift */,
+				B4000000000000000000000C /* PlacedLayer.swift */,
+				B4000000000000000000000D /* SpanEditor.swift */,
+				B4000000000000000000000E /* StickerBaker.swift */,
+				B4000000000000000000000F /* StickerKit.swift */,
+				B40000000000000000000010 /* StickerLibrary.swift */,
+				B40000000000000000000011 /* StickerStrip.swift */,
+				B40000000000000000000012 /* Theme.swift */,
+				B40000000000000000000013 /* CalendarSecrets.swift */,
+				B40000000000000000000014 /* SharedCalendarView.swift */,
+			); path = SharedCalendar; sourceTree = "<group>"; };
+		400000000000000000000102 /* CalendarFonts */ = { isa = PBXGroup; children = (
+				B40000000000000000000028 /* Caveat-Medium.ttf */,
+				B40000000000000000000029 /* InstrumentSerif-Regular.ttf */,
+				B4000000000000000000002A /* LXGWWenKai-Regular.ttf */,
+				B4000000000000000000002B /* SpaceMono-Bold.ttf */,
+				B4000000000000000000002C /* SpaceMono-Regular.ttf */,
+			); path = CalendarFonts; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -222,7 +336,7 @@
 			productReference = B10000000000000000000020 /* LumiBroadcastUpload.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
-		D10000000000000000000007 /* LumiWidget */ = { isa = PBXNativeTarget; buildConfigurationList = D10000000000000000000008 /* Build configuration list for LumiWidget */; buildPhases = ( C10000000000000000000017 /* Widget Sources */, C10000000000000000000018 /* Widget Frameworks */, C10000000000000000000019 /* Widget Resources */, ); buildRules = (); dependencies = (); name = LumiWidget; productName = LumiWidget; productReference = B10000000000000000000024 /* LumiWidget.appex */; productType = "com.apple.product-type.app-extension"; };
+		D10000000000000000000007 /* LumiWidget */ = { isa = PBXNativeTarget; buildConfigurationList = D10000000000000000000008 /* Build configuration list for LumiWidget */; buildPhases = ( C10000000000000000000017 /* Widget Sources */, C10000000000000000000018 /* Widget Frameworks */, C10000000000000000000019 /* Widget Resources */, C50000000000000000000001 /* Embed Calendar API Token */, ); buildRules = (); dependencies = (); name = LumiWidget; productName = LumiWidget; productReference = B10000000000000000000024 /* LumiWidget.appex */; productType = "com.apple.product-type.app-extension"; };
 		D10000000000000000000009 /* LumiNotificationService */ = { isa = PBXNativeTarget; buildConfigurationList = D10000000000000000000010 /* Build configuration list for NotificationService */; buildPhases = ( C10000000000000000000021 /* Notification Sources */, C10000000000000000000022 /* Notification Frameworks */, C10000000000000000000023 /* Notification Resources */, ); buildRules = (); dependencies = (); name = LumiNotificationService; productName = LumiNotificationService; productReference = B10000000000000000000027 /* LumiNotificationService.appex */; productType = "com.apple.product-type.app-extension"; };
 		D10000000000000000000011 /* LumiNotificationContent */ = { isa = PBXNativeTarget; buildConfigurationList = D10000000000000000000012 /* Build configuration list for NotificationContent */; buildPhases = ( C10000000000000000000027 /* Content Sources */, C10000000000000000000028 /* Content Frameworks */, C10000000000000000000029 /* Content Resources */, ); buildRules = (); dependencies = (); name = LumiNotificationContent; productName = LumiNotificationContent; productReference = B10000000000000000000033 /* LumiNotificationContent.appex */; productType = "com.apple.product-type.app-extension"; };
 /* End PBXNativeTarget section */
@@ -244,6 +358,9 @@
 						CreatedOnToolsVersion = 27.0;
 						SystemCapabilities = {
 							com.apple.Push = {
+								enabled = 1;
+							};
+							com.apple.CommunicationNotifications = {
 								enabled = 1;
 							};
 						};
@@ -287,7 +404,13 @@
 				A10000000000000000000015 /* top-icon-phone.png in Resources */,
 				A10000000000000000000016 /* top-icon-settings.png in Resources */,
 				A10000000000000000000009 /* Assets.xcassets in Resources */,
+				A40000000000000000000028 /* Caveat-Medium.ttf in Resources */,
+				A40000000000000000000029 /* InstrumentSerif-Regular.ttf in Resources */,
+				A4000000000000000000002A /* LXGWWenKai-Regular.ttf in Resources */,
+				A4000000000000000000002B /* SpaceMono-Bold.ttf in Resources */,
+				A4000000000000000000002C /* SpaceMono-Regular.ttf in Resources */,
 				A10000000000000000000013 /* PetAssets in Resources */,
+				A10000000000000000000030 /* FoodNotebook in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -307,6 +430,17 @@
 			shellPath = /bin/sh;
 			shellScript = "set -eu\nif [ -z \"${LUMI_PUSH_API_TOKEN:-}\" ]; then\n  echo \"LUMI_PUSH_API_TOKEN is not set; skipping push authorization token.\"\n  exit 0\nfi\nplist=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n/usr/libexec/PlistBuddy -c \"Set :LUMI_PUSH_API_TOKEN $LUMI_PUSH_API_TOKEN\" \"$plist\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Add :LUMI_PUSH_API_TOKEN string $LUMI_PUSH_API_TOKEN\" \"$plist\"\n";
 		};
+		C50000000000000000000001 /* Embed Calendar API Token */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ();
+			name = "Embed Calendar API Token";
+			outputPaths = ();
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nif [ -z \"${LUMI_PUSH_API_TOKEN:-}\" ]; then\n  echo \"LUMI_PUSH_API_TOKEN is not set; widget API access will be unavailable.\"\n  exit 0\nfi\nplist=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n/usr/libexec/PlistBuddy -c \"Set :LUMI_PUSH_API_TOKEN $LUMI_PUSH_API_TOKEN\" \"$plist\" 2>/dev/null || /usr/libexec/PlistBuddy -c \"Add :LUMI_PUSH_API_TOKEN string $LUMI_PUSH_API_TOKEN\" \"$plist\"\n";
+		};
 		C10000000000000000000012 /* Embed Broadcast Upload */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -320,9 +454,9 @@
 		C10000000000000000000024 /* Embed Notification Service */ = { isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = ( A10000000000000000000023 /* LumiNotificationService.appex in Embed Notification Service */, ); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000025 /* Embed Widget */ = { isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = ( A10000000000000000000024 /* LumiWidget.appex in Embed Widget */, ); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000030 /* Embed Notification Content */ = { isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = ( A10000000000000000000029 /* LumiNotificationContent.appex in Embed Notification Content */, ); runOnlyForDeploymentPostprocessing = 0; };
-		C10000000000000000000017 /* Widget Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000020 /* LumiWidget.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000017 /* Widget Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000020 /* LumiWidget.swift in Sources */, A500000000000000000000002 /* WidgetShared.swift in Widget Sources */, A500000000000000000000003 /* CalendarWidget.swift in Widget Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000018 /* Widget Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		C10000000000000000000019 /* Widget Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000019 /* Widget Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A50000000000000000000000A /* Caveat-Medium.ttf in Widget Resources */, A50000000000000000000000B /* InstrumentSerif-Regular.ttf in Widget Resources */, A50000000000000000000000C /* LXGWWenKai-Regular.ttf in Widget Resources */, A50000000000000000000000D /* SpaceMono-Bold.ttf in Widget Resources */, A50000000000000000000000E /* SpaceMono-Regular.ttf in Widget Resources */ , ); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000021 /* Notification Sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000021 /* NotificationService.swift in Sources */, ); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000022 /* Notification Frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000025 /* Intents.framework in Notification Frameworks */, ); runOnlyForDeploymentPostprocessing = 0; };
 		C10000000000000000000023 /* Notification Resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = ( A10000000000000000000022 /* AssistantAvatar.jpg in Notification Resources */, ); runOnlyForDeploymentPostprocessing = 0; };
@@ -342,10 +476,35 @@
 				A10000000000000000000004 /* LumiAPIClient.swift in Sources */,
 				A10000000000000000000005 /* ChatViewModel.swift in Sources */,
 				A10000000000000000000006 /* ChatDetailView.swift in Sources */,
+				A10000000000000000000031 /* FoodNotebookNativeView.swift in Sources */,
+				A10000000000000000000036 /* LettersMapView.swift in Sources */,
+				A10000000000000000000037 /* TogetherWatchView.swift in Sources */,
+				A10000000000000000000038 /* TogetherListenView.swift in Sources */,
 				A10000000000000000000010 /* TogetherGalleryStore.swift in Sources */,
 				A10000000000000000000011 /* TogetherView.swift in Sources */,
 				A10000000000000000000012 /* ClawdPetView.swift in Sources */,
-				A10000000000000000000017 /* BroadcastPickerView.swift in Sources */,
+				A1000000000000000000001A /* McpSettingsView.swift in Sources */,
+				A10000000000000000000017 /* BroadcastPickerView.swift in Sources */, A500000000000000000000001 /* WidgetShared.swift in Lumi Sources */,
+				A40000000000000000000001 /* CalendarAPI.swift in Sources */,
+				A40000000000000000000002 /* CalendarDTO.swift in Sources */,
+				A40000000000000000000003 /* CalendarData.swift in Sources */,
+				A40000000000000000000004 /* CalendarStore.swift in Sources */,
+				A40000000000000000000005 /* DayView.swift in Sources */,
+				A40000000000000000000006 /* EmojiSticker.swift in Sources */,
+				A40000000000000000000007 /* EventEditor.swift in Sources */,
+				A40000000000000000000008 /* MonthView.swift in Sources */,
+				A40000000000000000000009 /* PageRender.swift in Sources */,
+				A4000000000000000000000A /* PinkToggle.swift in Sources */,
+				A4000000000000000000000B /* PlacedItem.swift in Sources */,
+				A4000000000000000000000C /* PlacedLayer.swift in Sources */,
+				A4000000000000000000000D /* SpanEditor.swift in Sources */,
+				A4000000000000000000000E /* StickerBaker.swift in Sources */,
+				A4000000000000000000000F /* StickerKit.swift in Sources */,
+				A40000000000000000000010 /* StickerLibrary.swift in Sources */,
+				A40000000000000000000011 /* StickerStrip.swift in Sources */,
+				A40000000000000000000012 /* Theme.swift in Sources */,
+				A40000000000000000000013 /* CalendarSecrets.swift in Sources */,
+				A40000000000000000000014 /* SharedCalendarView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -363,7 +522,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = RWRB87B53S;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Lumi/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
 				INFOPLIST_KEY_LUMI_PUSH_API_TOKEN = "$(LUMI_PUSH_API_TOKEN)";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Lumi 使用麦克风把通话中的声音转换为文字发送给沈屿。";
@@ -394,7 +554,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = RWRB87B53S;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Lumi/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Lumi;
 				INFOPLIST_KEY_LUMI_PUSH_API_TOKEN = "$(LUMI_PUSH_API_TOKEN)";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Lumi 使用麦克风把通话中的声音转换为文字发送给沈屿。";
