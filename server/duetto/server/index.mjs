@@ -25,7 +25,7 @@ try { fs.chmodSync(dbFile, 0o600); } catch(e) {}
 db.exec(`
 CREATE TABLE IF NOT EXISTS plays(id TEXT, title TEXT, artist TEXT, dur INTEGER DEFAULT 0, cover TEXT DEFAULT '', bucket TEXT DEFAULT '', ts INTEGER);
 CREATE INDEX IF NOT EXISTS idx_plays_id ON plays(id);
-CREATE TABLE IF NOT EXISTS song_analysis(id TEXT PRIMARY KEY, title TEXT, artist TEXT, text TEXT, ts INTEGER);
+CREATE TABLE IF NOT EXISTS song_analysis(id TEXT PRIMARY KEY, title TEXT, artist TEXT, text TEXT, ts INTEGER, source TEXT NOT NULL DEFAULT 'unknown');
 CREATE TABLE IF NOT EXISTS song_notes(song_id TEXT, title TEXT, artist TEXT, passage TEXT, thought TEXT, reply TEXT, ts INTEGER);
 CREATE INDEX IF NOT EXISTS idx_notes_song ON song_notes(song_id, ts);
 CREATE TABLE IF NOT EXISTS song_impressions(song_id TEXT, text TEXT, n INTEGER, ts INTEGER);
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS room_events(room TEXT, msg TEXT, ts INTEGER);
 CREATE INDEX IF NOT EXISTS idx_events_room ON room_events(room, ts);
 CREATE TABLE IF NOT EXISTS songs(id TEXT PRIMARY KEY, title TEXT, artist TEXT DEFAULT '', cover TEXT DEFAULT '', lyrics TEXT DEFAULT '', listen_count INTEGER DEFAULT 0, notes_count INTEGER DEFAULT 0, first_listened_at INTEGER DEFAULT 0, last_listened_at INTEGER DEFAULT 0, mem_summary TEXT DEFAULT '', mem_summary_n INTEGER DEFAULT 0, mem_summary_at INTEGER DEFAULT 0, created_at INTEGER, updated_at INTEGER);
 `);
+try { if (!db.prepare('PRAGMA table_info(song_analysis)').all().some(column => column.name === 'source')) db.exec("ALTER TABLE song_analysis ADD COLUMN source TEXT NOT NULL DEFAULT 'unknown'"); } catch(e) { console.log('[song analysis migration]', e.message); }
 // songs 回填：已有流水/印象长出主表行（幂等：只补不存在的）
 try {
   db.exec("INSERT OR IGNORE INTO songs(id,title,artist,cover,listen_count,first_listened_at,last_listened_at,created_at,updated_at) SELECT id, MAX(title), MAX(artist), MAX(cover), COUNT(*), MIN(ts), MAX(ts), MIN(ts), MAX(ts) FROM plays WHERE id!='' GROUP BY id");
@@ -208,7 +209,7 @@ function logRoomNote(s, np, prompt, reply){
   } catch(e){}
 }
 app.get('/api/prompt-preview',async(q,r)=>{ try{ const s0=getSettings(); const s={...s0, ai:{...s0.ai}}; if(String(q.query.mode||'')==='stream') s.ai.reply_mode='stream'; const np={ id:String(q.query.id||'25906124'), title:String(q.query.title||'晴天'), artist:String(q.query.artist||'周杰伦'), pos:100, dur:270, cur_lyric:String(q.query.lyric||'从前从前 有个人爱你很久') }; try { np.plays=countPlays(np.id); const a=readAnalysis(np.id); if(a)np.analysis=a.text; const im=readImpression(np.id); if(im)np.impression=im.text; const ns=readNotes(np.id, IMPRESSION_EVERY); if(ns.length)np.notes=ns; } catch(e){} r.type('text/plain').send(sysPrompt(s, 'music', np, q.query.ctx?String(q.query.ctx):'') + '\n\n────────\n（以上是 system 提示词。每次请求还会附带：房间最近 12 条对话，作为标准 user/assistant 消息历史跟在 system 之后——所以不显示在这里。）'); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
-app.get('/api/song-analysis',(q,r)=>{ try{ const sid=String(q.query.id||''); const a=sid?readAnalysis(sid):null; const im=sid?readImpression(sid):null; r.json({ok:true, text:(a&&a.text)||'', impression:(im&&im.text)||'', impression_n:(im&&im.n)||0, analyzed:!!a, analyzed_at:(a&&a.ts)||0}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
+app.get('/api/song-analysis',(q,r)=>{ try{ const sid=String(q.query.id||''); const a=sid?readAnalysis(sid):null; const im=sid?readImpression(sid):null; r.json({ok:true, text:(a&&a.text)||'', source:(a&&a.source)||'', impression:(im&&im.text)||'', impression_n:(im&&im.n)||0, analyzed:!!a, analyzed_at:(a&&a.ts)||0}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
 app.get('/api/song-context',(q,r)=>{
   try{
     const sid=String(q.query.id||'');
@@ -229,7 +230,7 @@ app.get('/api/song-context',(q,r)=>{
     }).sort((x,y)=>x.t-y.t);
     const lyric=timed.filter(x=>x.t<=pos).at(-1);
     const notes=db.prepare("SELECT song_id,title,artist,'' AS cover,passage,thought,reply,ts FROM song_notes WHERE song_id=? ORDER BY ts DESC,rowid DESC LIMIT 12").all(sid).reverse();
-    r.json({ok:true,id:sid,plays:countPlays(sid),analysis:(a&&a.text)||'',impression:(im&&im.text)||'',impression_n:(im&&im.n)||0,cur_lyric:lyric?lyric.text:'',notes});
+    r.json({ok:true,id:sid,plays:countPlays(sid),analysis:(a&&a.text)||'',analysis_source:(a&&a.source)||'',impression:(im&&im.text)||'',impression_n:(im&&im.n)||0,cur_lyric:lyric?lyric.text:'',notes});
   }catch(e){ r.status(500).json({ok:false,error:e.message}); }
 });
 app.get('/api/song-notes',async(q,r)=>{ try{ const sid=String(q.query.id||''); const limit=Math.min(200, Number(q.query.limit)||60); const sql=`SELECT n.song_id, COALESCE(NULLIF(n.title,''),s.title,'') AS title, COALESCE(NULLIF(n.artist,''),s.artist,'') AS artist, COALESCE(s.cover,'') AS cover, n.passage,n.thought,n.reply,n.ts FROM song_notes n LEFT JOIN songs s ON s.id=n.song_id`; const rows = sid ? db.prepare(sql+' WHERE n.song_id=? ORDER BY n.ts DESC, n.rowid DESC LIMIT ?').all(sid, limit) : db.prepare(sql+' ORDER BY n.ts DESC, n.rowid DESC LIMIT ?').all(limit); await fillCovers(rows.map(x=>({id:x.song_id, cover:x.cover}))); const cache=loadCoverCache(); for(const x of rows){ if(!x.cover && x.song_id && cache[x.song_id]) x.cover=cache[x.song_id]; } r.json({ok:true, notes:rows}); }catch(e){ r.status(500).json({ok:false,error:e.message}); } });
@@ -257,6 +258,9 @@ async function enrichNp(s, np){
 // 已有分析则注入对话上下文 —— 让 AI 是"真听过这首歌"的状态
 const _anBusy = {};
 const _anFail = {}; // sid -> ts：失败退避，1 小时内不重试
+// Song downloads and audio-model calls each retain a full-track buffer. Run one
+// analysis at a time so consecutive track changes cannot multiply memory use.
+let _analysisTail = Promise.resolve();
 function ensureAnalysis(s, np){
   try {
     if(!np || !np.id || !/^\d+$/.test(String(np.id))) return null;
@@ -266,7 +270,7 @@ function ensureAnalysis(s, np){
     if (hit) return hit.text;
     if (_anBusy[sid]) return _anBusy[sid];
     if (_anFail[sid] && (Date.now() - _anFail[sid]) < 3600000) return null; // 近期失败过，先不重试
-    const _pr = (async () => {
+    const _pr = _analysisTail.then(async () => {
       try {
         let lrc = '';
         try { const sr = db.prepare('SELECT lyrics FROM songs WHERE id=?').get(sid); lrc = (sr && sr.lyrics) || ''; } catch(e){}
@@ -303,12 +307,13 @@ function ensureAnalysis(s, np){
             { role: 'user', content: '歌：' + (np.title || '') + (np.artist ? (' — ' + np.artist) : '') + (lrc ? ('\n完整歌词：\n' + String(lrc).slice(0, 6000)) : '') }
           ]);
         }
-        if (text) appendAnalysis({ id: sid, title: np.title || '', artist: np.artist || '', text, ts: Date.now() });
-        console.log('[analysis]', sid, 'by', s2.ai.model, usedAudio ? '(audio)' : '(text)', text ? 'ok' : 'empty');
+        if (text) appendAnalysis({ id: sid, title: np.title || '', artist: np.artist || '', text, source: usedAudio ? 'audio' : 'lyrics', ts: Date.now() });
+        console.log('[analysis]', sid, 'by', s2.ai.model, usedAudio ? '(audio)' : '(lyrics only)', text ? 'ok' : 'empty');
         if (!text) _anFail[sid] = Date.now();
         return text || null;
       } catch(e){ console.log('[analysis err]', sid, e.message); _anFail[sid] = Date.now(); return null; } finally { delete _anBusy[sid]; }
-    })();
+    });
+    _analysisTail = _pr.then(() => undefined, () => undefined);
     _anBusy[sid] = _pr;
     return _pr;
   } catch(e) { return null; }
@@ -343,9 +348,9 @@ async function fetchT(url,opts,ms){ const ac=new AbortController(); const t=setT
 async function callLLM(s,messages,over){ const base=String(s.ai.base_url||'').replace(/\/+$/,''); if(!s.ai.api_key)throw Object.assign(new Error('AI not configured'),{status:503}); const rr=await fetchT(base+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+s.ai.api_key},body:JSON.stringify({model:(over&&over.model)||s.ai.model,temperature:0.9,max_tokens:1024,messages})},(over&&over.timeout)||45000); if(!rr.ok){const t=await rr.text().catch(()=>'');throw Object.assign(new Error('LLM '+rr.status+': '+t.slice(0,200)),{status:502});} const d=await rr.json(); return (d.choices&&d.choices[0]&&d.choices[0].message&&d.choices[0].message.content||'').trim(); }
 app.post('/api/chat',async(q,r)=>{ try{ const s0=getSettings(); const bb=q.body||{}; const s={...s0, ai:mergeAi(s0.ai,bb.ai)}; if(!s.ai.api_key)return r.status(503).json({ok:false,error:'AI not set up: open the Model tab and add your endpoint + key'}); const {kind='music',prompt='',history=[],nowPlaying=null}=q.body||{}; const np=nowPlaying||(bb.ai&&bb.ai.nowPlaying)||null; const past=Array.isArray(history)?history.slice(-12).filter(m=>m&&m.role&&typeof m.content==='string'):[]; if(np){ if(bb.ai&&bb.ai.quote) np.quote=String(bb.ai.quote).slice(0,120); await enrichNp(s,np); } const ctx=await fetchContext(s, prompt, np); const raw=await callLLM(s,[{role:'system',content:sysPrompt(s,kind,np,ctx)},...past,{role:'user',content:String(prompt)}]); let reply, think=''; if(s.ai.reply_mode==='stream'){ const st=stripThinking(raw); reply=st.text; think=st.think; } else { reply=deStar(parseReplies(raw)).join('\n'); } if(!(bb.ai&&bb.ai.no_note)) logRoomNote(s, np, prompt, reply); r.json({ok:true,reply,think}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
 // —— Song analysis: cached per song id so each song is analyzed once ——
-function readAnalysis(sid){ try { return db.prepare("SELECT id,title,artist,text,ts FROM song_analysis WHERE id=? AND text!=''").get(String(sid)) || null; } catch(e){ return null; } }
-function appendAnalysis(e){ try { db.prepare('INSERT OR REPLACE INTO song_analysis(id,title,artist,text,ts) VALUES(?,?,?,?,?)').run(String(e.id||''), e.title||'', e.artist||'', e.text||'', e.ts||Date.now()); } catch(err){} }
-app.post('/api/song-analysis',async(q,r)=>{ try{ const b=q.body||{}; const sid=String(b.id||''); if(!sid||!/^[0-9]+$/.test(sid)) return r.status(400).json({ok:false,error:'valid song id required'}); const s0=getSettings(); const np={id:sid,title:String(b.title||''),artist:String(b.artist||''),url:String(b.audio_url||'')}; const text=await ensureAnalysis(s0,np); const hit=readAnalysis(sid); r.json({ok:true,text:text||'',cached:!!hit,analyzed:!!hit}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
+function readAnalysis(sid){ try { return db.prepare("SELECT id,title,artist,text,ts,source FROM song_analysis WHERE id=? AND text!=''").get(String(sid)) || null; } catch(e){ return null; } }
+function appendAnalysis(e){ try { db.prepare('INSERT OR REPLACE INTO song_analysis(id,title,artist,text,ts,source) VALUES(?,?,?,?,?,?)').run(String(e.id||''), e.title||'', e.artist||'', e.text||'', e.ts||Date.now(), e.source||'unknown'); } catch(err){} }
+app.post('/api/song-analysis',async(q,r)=>{ try{ const b=q.body||{}; const sid=String(b.id||''); if(!sid||!/^[0-9]+$/.test(sid)) return r.status(400).json({ok:false,error:'valid song id required'}); const s0=getSettings(); const np={id:sid,title:String(b.title||''),artist:String(b.artist||''),url:String(b.audio_url||'')}; const text=await ensureAnalysis(s0,np); const hit=readAnalysis(sid); r.json({ok:true,text:text||'',source:(hit&&hit.source)||'',cached:!!hit,analyzed:!!hit}); }catch(e){ r.status(e.status||500).json({ok:false,error:e.message}); } });
 // —— NetEase Cloud Music: real QR login ——
 const ncmCookieFile = path.join(dataDir, 'ncm-cookie.txt');
 let ncmCookie = '';
@@ -371,8 +376,8 @@ app.get('/api/ncm/lyric', async (q,r)=>{ try{ const ly=await ncm.lyric({ id:q.qu
 app.get('/api/ncm/comments', async (q,r)=>{ try{ const cm=await ncm.comment_music({ id:q.query.id, limit:20, offset:0, cookie:ncmCookie }); const b=cm.body||{}; const raw=(b.hotComments&&b.hotComments.length)?b.hotComments:(b.comments||[]); const comments=raw.map(c=>({ u:(c.user&&c.user.nickname)||'网易云用户', av:((c.user&&c.user.avatarUrl)||'').replace(/^http:/,'https:'), t:c.content||'', z:c.likedCount||0, time:c.timeStr||'' })); r.json({ok:true,comments,total:(b.total||0)}); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/record', async (_q,r)=>{ try{ const p=await ncmProfile(); if(!p) return r.json({ok:true,logged:false,songs:[]}); let arr=[]; try{ const rc=await ncm.user_record({ uid:p.userId, type:1, cookie:ncmCookie }); arr=(rc.body&&(rc.body.weekData||rc.body.allData))||[]; }catch(e){} if(!arr.length){ try{ const r0=await ncm.user_record({ uid:p.userId, type:0, cookie:ncmCookie }); arr=(r0.body&&(r0.body.weekData||r0.body.allData))||[]; }catch(e){} } const songs=arr.map(x=>x&&x.song).filter(Boolean).map(ncmMapSong); r.json({ ok:true, logged:true, songs }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/toplist', async (q,r)=>{ try{ if(q.query.id){ const tr=await ncm.playlist_track_all({ id:q.query.id, limit:300, cookie:ncmCookie }); const songs=((tr.body&&tr.body.songs)||[]).map(ncmMapSong); return r.json({ ok:true, songs }); } const t=await ncm.toplist({ cookie:ncmCookie }); const lists=((t.body&&t.body.list)||[]).map(x=>({ id:x.id, name:x.name, cover:x.coverImgUrl||x.coverImageUrl||'', updateFrequency:x.updateFrequency||'' })); r.json({ ok:true, lists }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
-app.post('/api/ncm/playlist-add', async (q,r)=>{ try{ await ncm.playlist_tracks({ op:'add', pid:q.query.pid, tracks:q.query.id, cookie:ncmCookie }); r.json({ ok:true }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
-app.post('/api/ncm/playlist-del', async (q,r)=>{ try{ await ncm.playlist_tracks({ op:'del', pid:q.query.pid, tracks:q.query.id, cookie:ncmCookie }); r.json({ ok:true }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
+app.post('/api/ncm/playlist-add', async (q,r)=>{ try{ const pid=String(q.query.pid||''), id=String(q.query.id||''); if(!/^\d+$/.test(pid)||!/^\d+$/.test(id)) return r.status(400).json({ok:false,error:'one playlist id and one song id are required'}); await ncm.playlist_tracks({ op:'add', pid, tracks:id, cookie:ncmCookie }); r.json({ ok:true, added:id }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
+app.post('/api/ncm/playlist-del', async (q,r)=>{ try{ const pid=String(q.query.pid||''), id=String(q.query.id||''); if(!/^\d+$/.test(pid)||!/^\d+$/.test(id)) return r.status(400).json({ok:false,error:'one playlist id and one song id are required'}); await ncm.playlist_tracks({ op:'del', pid, tracks:id, cookie:ncmCookie }); r.json({ ok:true, removed:id }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.post('/api/ncm/like', async (q,r)=>{ try{ await ncm.like({ id:q.query.id, like:(q.query.like==='1'||q.query.like==='true'), cookie:ncmCookie }); r.json({ ok:true }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 app.get('/api/ncm/likelist', async (_q,r)=>{ try{ const p=await ncmProfile(); if(!p) return r.json({ok:true,logged:false,ids:[]}); const ll=await ncm.likelist({ uid:p.userId, cookie:ncmCookie }); r.json({ ok:true, ids:(ll.body&&ll.body.ids)||[] }); }catch(e){ r.status(500).json({ok:false,error:String(e.message||e)}); } });
 // —— Room timeline persistence: append-only JSONL, zero deps ——

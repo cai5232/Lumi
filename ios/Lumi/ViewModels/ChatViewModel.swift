@@ -142,7 +142,7 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    func send(imageBase64: String? = nil, imageFileName: String? = nil, imagesBase64: [String] = [], imageFileNames: [String] = [], galleryImageIDs: [String] = [], tts: TTSRequestSettings? = nil, emojiCatalog: [String: [String]] = [:], contentType: String? = nil) async {
+    func send(imageBase64: String? = nil, imageFileName: String? = nil, imagesBase64: [String] = [], imageFileNames: [String] = [], galleryImageIDs: [String] = [], tts: TTSRequestSettings? = nil, emojiCatalog: [String: [String]] = [:], contentType: String? = nil, context: String? = nil) async {
         let typedContent = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let encodedImages = imagesBase64.isEmpty ? imageBase64.map { [$0] } ?? [] : imagesBase64
         let localImages = imageFileNames.isEmpty ? imageFileName.map { [$0] } ?? [] : imageFileNames
@@ -163,7 +163,7 @@ final class ChatViewModel: ObservableObject {
         }
         do {
             let route = try Self.currentModelRoute(defaults: .standard)
-            let response = try await api.sendMessage(content, to: chatID, images: encodedImages, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: route.provider, model: route.model, customProvider: route.customProvider, contentType: contentType)
+            let response = try await api.sendMessage(content, to: chatID, images: encodedImages, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: route.provider, model: route.model, customProvider: route.customProvider, contentType: contentType, context: context)
             var confirmedUserMessage = response.userMessage
             confirmedUserMessage.localImageFileName = localImages.first
             confirmedUserMessage.localImageFileNames = localImages
