@@ -34,6 +34,7 @@ private struct LumiRootView: View {
     @State private var showingSettings = false
     @State private var showingFood = false
     @State private var showingGallery = false
+    @State private var showingDiary = false
     @State private var showingTogetherWatch = false
     @State private var showingTogetherListen = false
     @State private var showingLettersMap = false
@@ -51,7 +52,7 @@ private struct LumiRootView: View {
     }
 
     var body: some View {
-        LumiHomeView(openChat: { showingChat = true }, openSettings: { showingSettings = true }, openFood: { showingFood = true }, openGallery: { showingGallery = true }, openTogetherWatch: { showingTogetherWatch = true }, openTogetherListen: { showingTogetherListen = true }, openLettersMap: { showingLettersMap = true }, openCalendar: { showingCalendar = true })
+        LumiHomeView(openChat: { showingChat = true }, openSettings: { showingSettings = true }, openFood: { showingFood = true }, openGallery: { showingGallery = true }, openDiary: { showingDiary = true }, openTogetherWatch: { showingTogetherWatch = true }, openTogetherListen: { showingTogetherListen = true }, openLettersMap: { showingLettersMap = true }, openCalendar: { showingCalendar = true })
             .fullScreenCover(isPresented: $showingChat) {
                 ZStack {
                     ChatDetailView(model: model, onClose: { showingChat = false })
@@ -66,6 +67,9 @@ private struct LumiRootView: View {
             }
             .fullScreenCover(isPresented: $showingGallery) {
                 TogetherView()
+            }
+            .fullScreenCover(isPresented: $showingDiary) {
+                TogetherView(startOnDiary: true)
             }
             .fullScreenCover(isPresented: $showingTogetherWatch) {
                 TogetherWatchView(onAskAboutVideo: { _, text, imageBase64 in
@@ -104,6 +108,7 @@ private struct LumiHomeView: View {
     let openSettings: () -> Void
     let openFood: () -> Void
     let openGallery: () -> Void
+    let openDiary: () -> Void
     let openTogetherWatch: () -> Void
     let openTogetherListen: () -> Void
     let openLettersMap: () -> Void
@@ -113,6 +118,7 @@ private struct LumiHomeView: View {
     private let apps: [LumiHomeApp] = [
         .init(title: "Chat", symbol: "bubble.left.and.bubble.right.fill", tint: Color(red: 0.40, green: 0.55, blue: 0.94), action: .chat),
         .init(title: "相册", symbol: "photo.on.rectangle.angled", tint: Color(red: 0.96, green: 0.53, blue: 0.48), action: .gallery),
+        .init(title: "日记", symbol: "book.closed.fill", tint: Color(red: 0.91, green: 0.56, blue: 0.67), action: .diary),
         .init(title: "日历", symbol: "calendar", tint: Color(red: 0.89, green: 0.36, blue: 0.38), action: .calendar),
         .init(title: "吃了么", symbol: "fork.knife", tint: Color(red: 0.96, green: 0.67, blue: 0.37), action: .food),
         .init(title: "一起听", symbol: "headphones", tint: Color(red: 0.95, green: 0.56, blue: 0.67), action: .togetherListen),
@@ -230,6 +236,7 @@ private struct LumiHomeView: View {
             case .settings: openSettings()
             case .food: openFood()
             case .gallery: openGallery()
+            case .diary: openDiary()
             case .togetherWatch: openTogetherWatch()
             case .togetherListen: openTogetherListen()
             case .lettersMap: openLettersMap()
@@ -277,7 +284,7 @@ private struct FoodNotebookView: View {
 }
 
 private struct LumiHomeApp: Identifiable {
-    enum Action { case chat, settings, food, gallery, togetherWatch, togetherListen, lettersMap, calendar }
+    enum Action { case chat, settings, food, gallery, diary, togetherWatch, togetherListen, lettersMap, calendar }
     let id = UUID()
     let title: String
     let symbol: String

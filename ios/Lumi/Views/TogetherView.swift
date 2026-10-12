@@ -4,18 +4,11 @@ import UIKit
 import ImageIO
 import UserNotifications
 
-private enum TogetherTab: String, CaseIterable, Identifiable {
-    case gallery = "相册"
-    case diary = "日记"
-    case achievements = "成就"
-    var id: String { rawValue }
-}
-
 struct TogetherView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("lumi.together.startAt") private var storedStartAt: Double = 0
     @AppStorage("lumi.together.didApplyAnniversary20260723") private var didApplyAnniversary = false
-    @State private var tab: TogetherTab = .gallery
+    private let startOnDiary: Bool
     let onUseInChat: (RemoteGalleryItem) -> Void
     @State private var gallery: [RemoteGalleryItem] = []
     @State private var pickerItem: PhotosPickerItem?
@@ -32,18 +25,17 @@ struct TogetherView: View {
     @State private var diaryToUnlock: RemoteDiaryItem?
     @State private var diaryToOpen: RemoteDiaryItem?
     @State private var diarySelectedDate = Date()
-    @State private var showingTogetherWatch = false
     private let api = LumiAPIClient()
-    private let onAskAboutVideo: (String, String, String) async -> String?
 
     private static let anniversaryStartDate = Calendar(identifier: .gregorian).date(from: DateComponents(year: 2026, month: 7, day: 23))!
 
     init(
+        startOnDiary: Bool = false,
         onUseInChat: @escaping (RemoteGalleryItem) -> Void = { _ in },
         onAskAboutVideo: @escaping (String, String, String) async -> String? = { _, _, _ in nil }
     ) {
+        self.startOnDiary = startOnDiary
         self.onUseInChat = onUseInChat
-        self.onAskAboutVideo = onAskAboutVideo
     }
 
     private var startDate: Date { storedStartAt > 0 ? Date(timeIntervalSince1970: storedStartAt) : Self.anniversaryStartDate }
@@ -64,16 +56,19 @@ struct TogetherView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                watchTogetherEntry
-                    .padding(.horizontal, 20)
-                    .padding(.top, 14)
-                galleryContent
+                Group {
+                    if startOnDiary {
+                        diaryContent
+                    } else {
+                        galleryContent
+                    }
+                }
                 .padding(.horizontal, 20)
-                .padding(.top, 18)
+                .padding(.top, 12)
                 .padding(.bottom, 40)
             }
             .background(TogetherColors.background.ignoresSafeArea())
-            .navigationTitle("我们的相册")
+            .navigationTitle(startOnDiary ? "日记" : "相册")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -90,7 +85,12 @@ struct TogetherView: View {
                 storedStartAt = Self.anniversaryStartDate.timeIntervalSince1970
                 didApplyAnniversary = true
             }
-            Task { await loadGallery() }
+            if startOnDiary {
+                if diaries.isEmpty { diaries = loadCachedDiaries() }
+                Task { await loadDiaries() }
+            } else {
+                Task { await loadGallery() }
+            }
         }
         .onChange(of: pickerItem) { _, item in importPhoto(item) }
         .sheet(item: $selectedItem) { item in
@@ -136,31 +136,6 @@ struct TogetherView: View {
                 Task { await deleteDiary(item) }
             }
         }
-        .fullScreenCover(isPresented: $showingTogetherWatch) {
-            TogetherWatchView(onAskAboutVideo: onAskAboutVideo)
-        }
-    }
-
-    private var watchTogetherEntry: some View {
-        Button { showingTogetherWatch = true } label: {
-            HStack(spacing: 14) {
-                Image(systemName: "play.rectangle.fill")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(TogetherColors.heart)
-                    .frame(width: 46, height: 46)
-                    .background(TogetherColors.pulse.opacity(0.18), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("一起看").font(.system(size: 16, weight: .semibold)).foregroundStyle(TogetherColors.plumBrown)
-                    Text("在 Lumi 里播放视频，随时聊聊画面").font(.system(size: 12)).foregroundStyle(.black.opacity(0.48))
-                }
-                Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(.black.opacity(0.28))
-            }
-            .padding(14)
-            .background(TogetherColors.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(.white.opacity(0.88), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
     }
 
     private var relationshipCard: some View {
@@ -189,29 +164,6 @@ struct TogetherView: View {
             .padding(.vertical, 24)
             .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(.white.opacity(0.85), lineWidth: 1))
-        }
-    }
-
-    private var tabPicker: some View {
-        HStack(spacing: 0) {
-            ForEach(TogetherTab.allCases) { item in
-                Button { withAnimation(.easeOut(duration: 0.2)) { tab = item } } label: {
-                    Text(item.rawValue).font(.system(size: 15, weight: tab == item ? .semibold : .regular)).frame(maxWidth: .infinity).padding(.vertical, 10)
-                        .foregroundStyle(tab == item ? .black.opacity(0.82) : .black.opacity(0.38))
-                        .background(tab == item ? .white.opacity(0.76) : .clear, in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(4)
-        .background(.black.opacity(0.045), in: Capsule())
-    }
-
-    @ViewBuilder private var tabContent: some View {
-        switch tab {
-        case .gallery: galleryContent
-        case .diary: diaryContent
-        case .achievements: placeholder(icon: "sparkles", text: "我们的每个小瞬间都会慢慢点亮。")
         }
     }
 
