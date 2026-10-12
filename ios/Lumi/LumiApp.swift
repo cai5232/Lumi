@@ -35,6 +35,7 @@ private struct LumiRootView: View {
     @State private var showingFood = false
     @State private var showingGallery = false
     @State private var showingDiary = false
+    @State private var showingHeartTrace = false
     @State private var showingTogetherWatch = false
     @State private var showingTogetherListen = false
     @State private var showingLettersMap = false
@@ -52,7 +53,7 @@ private struct LumiRootView: View {
     }
 
     var body: some View {
-        LumiHomeView(openChat: { showingChat = true }, openSettings: { showingSettings = true }, openFood: { showingFood = true }, openGallery: { showingGallery = true }, openDiary: { showingDiary = true }, openTogetherWatch: { showingTogetherWatch = true }, openTogetherListen: { showingTogetherListen = true }, openLettersMap: { showingLettersMap = true }, openCalendar: { showingCalendar = true })
+        LumiHomeView(openChat: { showingChat = true }, openSettings: { showingSettings = true }, openFood: { showingFood = true }, openGallery: { showingGallery = true }, openDiary: { showingDiary = true }, openHeartTrace: { showingHeartTrace = true }, openTogetherWatch: { showingTogetherWatch = true }, openTogetherListen: { showingTogetherListen = true }, openLettersMap: { showingLettersMap = true }, openCalendar: { showingCalendar = true })
             .fullScreenCover(isPresented: $showingChat) {
                 ZStack {
                     ChatDetailView(model: model, onClose: { showingChat = false })
@@ -70,6 +71,9 @@ private struct LumiRootView: View {
             }
             .fullScreenCover(isPresented: $showingDiary) {
                 TogetherView(startOnDiary: true)
+            }
+            .fullScreenCover(isPresented: $showingHeartTrace) {
+                HeartTraceView(onClose: { showingHeartTrace = false })
             }
             .fullScreenCover(isPresented: $showingTogetherWatch) {
                 TogetherWatchView(onAskAboutVideo: { _, text, imageBase64 in
@@ -109,6 +113,7 @@ private struct LumiHomeView: View {
     let openFood: () -> Void
     let openGallery: () -> Void
     let openDiary: () -> Void
+    let openHeartTrace: () -> Void
     let openTogetherWatch: () -> Void
     let openTogetherListen: () -> Void
     let openLettersMap: () -> Void
@@ -125,7 +130,7 @@ private struct LumiHomeView: View {
         .init(title: "共看", symbol: "play.rectangle.fill", tint: Color(red: 0.92, green: 0.48, blue: 0.57), action: .togetherWatch),
         .init(title: "设置", symbol: "gearshape.fill", tint: Color(red: 0.43, green: 0.49, blue: 0.61), action: .settings),
         .init(title: "行迹", symbol: "figure.walk", tint: Color(red: 0.43, green: 0.49, blue: 0.61)),
-        .init(title: "心迹", symbol: "heart.text.square", tint: Color(red: 0.43, green: 0.49, blue: 0.61)),
+        .init(title: "心迹", symbol: "heart.text.square", tint: Color(red: 0.43, green: 0.49, blue: 0.61), action: .heartTrace),
         .init(title: "藏宝地图", symbol: "map.fill", tint: Color(red: 0.91, green: 0.56, blue: 0.67), action: .lettersMap)
     ]
 
@@ -237,6 +242,7 @@ private struct LumiHomeView: View {
             case .food: openFood()
             case .gallery: openGallery()
             case .diary: openDiary()
+            case .heartTrace: openHeartTrace()
             case .togetherWatch: openTogetherWatch()
             case .togetherListen: openTogetherListen()
             case .lettersMap: openLettersMap()
@@ -284,7 +290,7 @@ private struct FoodNotebookView: View {
 }
 
 private struct LumiHomeApp: Identifiable {
-    enum Action { case chat, settings, food, gallery, diary, togetherWatch, togetherListen, lettersMap, calendar }
+    enum Action { case chat, settings, food, gallery, diary, heartTrace, togetherWatch, togetherListen, lettersMap, calendar }
     let id = UUID()
     let title: String
     let symbol: String

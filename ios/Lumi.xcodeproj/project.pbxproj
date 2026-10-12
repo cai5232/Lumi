@@ -42,6 +42,7 @@
 		A10000000000000000000036 /* LettersMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000036 /* LettersMapView.swift */; };
 		A10000000000000000000037 /* TogetherWatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000037 /* TogetherWatchView.swift */; };
 		A10000000000000000000038 /* TogetherListenView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000038 /* TogetherListenView.swift */; };
+		A10000000000000000000039 /* HeartTraceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000039 /* HeartTraceView.swift */; };
 		A40000000000000000000001 /* CalendarAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000001 /* CalendarAPI.swift */; };
 		A40000000000000000000002 /* CalendarDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000002 /* CalendarDTO.swift */; };
 		A40000000000000000000003 /* CalendarData.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40000000000000000000003 /* CalendarData.swift */; };
@@ -124,6 +125,7 @@
 		B10000000000000000000036 /* LettersMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LettersMapView.swift; sourceTree = "<group>"; };
 		B10000000000000000000037 /* TogetherWatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TogetherWatchView.swift; sourceTree = "<group>"; };
 		B10000000000000000000038 /* TogetherListenView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TogetherListenView.swift; sourceTree = "<group>"; };
+		B10000000000000000000039 /* HeartTraceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeartTraceView.swift; sourceTree = "<group>"; };
 		B40000000000000000000001 /* CalendarAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarAPI.swift; sourceTree = "<group>"; };
 		B40000000000000000000002 /* CalendarDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarDTO.swift; sourceTree = "<group>"; };
 		B40000000000000000000003 /* CalendarData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarData.swift; sourceTree = "<group>"; };
@@ -226,6 +228,7 @@
 				B10000000000000000000036 /* LettersMapView.swift */,
 				B10000000000000000000037 /* TogetherWatchView.swift */,
 				B10000000000000000000038 /* TogetherListenView.swift */,
+				B10000000000000000000039 /* HeartTraceView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -480,6 +483,7 @@
 				A10000000000000000000036 /* LettersMapView.swift in Sources */,
 				A10000000000000000000037 /* TogetherWatchView.swift in Sources */,
 				A10000000000000000000038 /* TogetherListenView.swift in Sources */,
+				A10000000000000000000039 /* HeartTraceView.swift in Sources */,
 				A10000000000000000000010 /* TogetherGalleryStore.swift in Sources */,
 				A10000000000000000000011 /* TogetherView.swift in Sources */,
 				A10000000000000000000012 /* ClawdPetView.swift in Sources */,
