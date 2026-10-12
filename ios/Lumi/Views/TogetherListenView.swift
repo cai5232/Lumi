@@ -599,14 +599,21 @@ private final class TogetherListenModel: ObservableObject {
         do {
             let result: NeteaseSongList = try await duetto("/api/ncm/recommend")
             let candidates = result.songs.filter { $0.id != current.id }
-            guard !candidates.isEmpty else { player?.seek(to: .zero); player?.play(); position = 0; return }
-            let next = playMode == 2 ? candidates.randomElement()! : candidates[0]
-            queue = [current] + candidates
+            let fallback = songs.filter { $0.id != current.id }
+            let continuousSongs = candidates.isEmpty ? fallback : candidates
+            guard !continuousSongs.isEmpty else { player?.seek(to: .zero); player?.play(); position = 0; isPlaying = true; return }
+            let next = playMode == 2 ? continuousSongs.randomElement()! : continuousSongs[0]
+            queue = [current] + continuousSongs
             hasExplicitPlaylistQueue = false
             await play(next)
         } catch {
-            // Keep music continuous even when recommendation service is temporarily unavailable.
-            player?.seek(to: .zero); player?.play(); position = 0; isPlaying = true
+            // If NCM recommendations are down, continue from songs already loaded in the library.
+            let fallback = songs.filter { $0.id != current.id }
+            guard !fallback.isEmpty else { player?.seek(to: .zero); player?.play(); position = 0; isPlaying = true; return }
+            let next = playMode == 2 ? fallback.randomElement()! : fallback[0]
+            queue = [current] + fallback
+            hasExplicitPlaylistQueue = false
+            await play(next)
         }
     }
 
@@ -620,7 +627,14 @@ private final class TogetherListenModel: ObservableObject {
             guard !nextSongs.isEmpty else { return }
             queue.append(contentsOf: nextSongs)
             prefetchNextStreams(after: song)
-        } catch { /* The end observer retries recommendations if this request fails. */ }
+        } catch {
+            guard current?.id == song.id else { return }
+            let known = Set(queue.map(\.id))
+            let fallback = songs.filter { !known.contains($0.id) }
+            guard !fallback.isEmpty else { return }
+            queue.append(contentsOf: fallback)
+            prefetchNextStreams(after: song)
+        }
     }
 
     private func prefetchNextStreams(after song: NeteaseSong) {
