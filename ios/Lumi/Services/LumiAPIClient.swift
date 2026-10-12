@@ -42,6 +42,13 @@ struct LumiEmotionArcEntry: Decodable, Identifiable {
     let type: String
 }
 
+struct LumiEmotionHistoryEntry: Decodable, Identifiable {
+    let id: String
+    let time: String
+    let drives: [String: Double]
+    let top: LumiEmotionTop
+}
+
 final class LumiAPIClient {
     // Zeabur 公网 API；真机和模拟器都可以直接访问。
     var baseURL = URL(string: "https://lumi-tokyo-api.zeabur.app")!
@@ -331,6 +338,13 @@ final class LumiAPIClient {
         try await emotionRequest(chatID: chatID, operation: "arc", query: [
             URLQueryItem(name: "type", value: "murmur"),
             URLQueryItem(name: "n", value: String(max(1, min(200, limit))))
+        ])
+    }
+
+    func fetchEmotionHistory(chatID: String = "default", limit: Int = 500) async throws -> [LumiEmotionHistoryEntry] {
+        try await emotionRequest(chatID: chatID, operation: "history", query: [
+            URLQueryItem(name: "hours", value: "24"),
+            URLQueryItem(name: "n", value: String(max(1, min(2_000, limit))))
         ])
     }
 
