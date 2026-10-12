@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 45625)
-Total output lines: 3749
-
 import SwiftUI
 import Translation
 import UIKit
@@ -1605,7 +1602,467 @@ struct SettingsView: View {
 
                     VStack(alignment: .leading, spacing: 0) {
                         Text("AI 醒来后可以做什么")
-                            .font(.system(size: 14, weight: .medium))…5625 tokens truncated…smiss() }
+                            .font(.system(size: 14, weight: .medium))
+                            .padding(.bottom, 8)
+                        Toggle("主动消息", isOn: $proactiveActionMessage)
+                            .padding(.vertical, 7)
+                        Divider()
+                        Toggle("主动电话", isOn: $proactiveActionPhone)
+                            .padding(.vertical, 7)
+                        Divider()
+                        Toggle("查看屏幕", isOn: $proactiveActionScreen)
+                            .padding(.vertical, 7)
+                        if proactiveActionScreen {
+                            Divider()
+                            HStack {
+                                Text("屏幕共享")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                BroadcastPickerView(preferredExtension: "com.cai5232.Lumi.BroadcastUpload")
+                                    .frame(width: 132, height: 36)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                    .tint(Color(red: 0.91, green: 0.58, blue: 0.68))
+
+                    Text("主动消息和电话会带上最近聊天、长期记忆和当前上下文；查看屏幕只在开启并开始系统直播后提供最新画面。每次触发会走正常聊天模型并产生一次模型调用。\(syncStatus)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("主动联系")
+                }
+
+                Section {
+                    HStack {
+                        Label("当前状态", systemImage: activityState?.mode == "sleeping" ? "moon.zzz" : "antenna.radiowaves.left.and.right")
+                        Spacer()
+                        Text(activityStateLabel)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("现在重新开始哨兵计时") {
+                        Task { await updateActivity("sentinel_start") }
+                    }
+                    if activityState?.mode == "sleeping" {
+                        Button("结束睡眠，切回自主活动") {
+                            Task { await updateActivity("sleep_abort") }
+                        }
+                    }
+                    Text("说“晚安”等告别词后，连续一小时没有新消息会进入睡眠；睡眠期间会生成连续梦境，异常醒来后可切回哨兵模式。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("自主活动与睡眠")
+                }
+
+                Section {
+                    Button {
+                        Task { await requestNotifications() }
+                    } label: {
+                        HStack {
+                            Label("消息通知", systemImage: "bell.badge")
+                            Spacer()
+                            Text(notificationStatusLabel)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                } header: {
+                    Text("通知")
+                } footer: {
+                    Text("允许通知后，后端会在设定的静默时间到达时生成一条主动消息，并通过 Apple 推送到手机。")
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color(red: 0.984, green: 0.949, blue: 0.957))
+            .navigationTitle("设置")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("返回") { dismiss() }
+                }
+            }
+        }
+        .task {
+            await refreshNotificationStatus()
+            await loadProactiveSettings()
+            await loadActivityState()
+        }
+        .onChange(of: proactiveNudgeEnabled) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveNudgeInterval) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveNudgeMessage) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveActionMessage) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveActionPhone) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveActionScreen) { _, _ in saveProactiveSettings() }
+        .background(Color(red: 0.984, green: 0.949, blue: 0.957))
+        .preferredColorScheme(.light)
+        .sheet(isPresented: $showingVoiceSettings) {
+            VoiceSettingsView()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(LumiPalette.chatBackground)
+        }
+    }
+
+    private func settingsCard(title: String, subtitle: String, icon: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon).font(.system(size: 18, weight: .medium)).foregroundStyle(Color(red: 0.66, green: 0.35, blue: 0.47)).frame(width: 34)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.system(size: 15, weight: .medium)).foregroundStyle(.primary)
+                Text(subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+    }
+
+    private var activeAPIProviderSummary: String {
+        let activeID = UserDefaults.standard.string(forKey: "lumi.activeAPIProviderID") ?? ""
+        let data = UserDefaults.standard.data(forKey: "lumi.apiProviderProfiles")
+        let profiles = data.flatMap { try? JSONDecoder().decode([LumiAPIProviderProfile].self, from: $0) } ?? []
+        if let profile = profiles.first(where: { $0.id == activeID }) {
+            return "当前使用：\(profile.name) · \(profile.model.isEmpty ? "未选模型" : profile.model)"
+        }
+        return "当前使用：ZenMux"
+    }
+
+    private var notificationStatusLabel: String {
+        switch notificationStatus {
+        case .authorized, .provisional, .ephemeral: return "已允许"
+        case .denied: return "去系统设置开启"
+        case .notDetermined: return "请求权限"
+        @unknown default: return "请求权限"
+        }
+    }
+
+    private func refreshNotificationStatus() async {
+        notificationStatus = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
+
+    private func requestNotifications() async {
+        let center = UNUserNotificationCenter.current()
+        let granted = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+        if granted == false {
+            await MainActor.run { notificationStatus = .denied }
+        } else {
+            await refreshNotificationStatus()
+            if notificationStatus == .authorized || notificationStatus == .provisional || notificationStatus == .ephemeral {
+                await MainActor.run { UIApplication.shared.registerForRemoteNotifications() }
+            }
+        }
+    }
+
+    private func loadProactiveSettings() async {
+        do {
+            let settings = try await api.fetchProactiveSettings()
+            proactiveNudgeEnabled = settings.enabled
+            proactiveNudgeInterval = settings.intervalMin
+            proactiveNudgeMessage = settings.message
+            proactiveActionMessage = settings.actions?.message ?? true
+            proactiveActionPhone = settings.actions?.phone ?? true
+            proactiveActionScreen = settings.actions?.screen ?? false
+            syncStatus = "已同步到后端"
+            let authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+            if authorization == .authorized || authorization == .provisional || authorization == .ephemeral {
+                UIApplication.shared.registerForRemoteNotifications()
+            }
+        } catch {
+            syncStatus = syncErrorMessage(error)
+        }
+        settingsLoaded = true
+    }
+
+    private var activityStateLabel: String {
+        switch activityState?.mode {
+        case "sleeping": return "睡眠中"
+        case "sentinel": return "哨兵模式"
+        default: return "未同步"
+        }
+    }
+
+    private func loadActivityState() async {
+        activityState = try? await api.fetchActivityState()
+    }
+
+    private func updateActivity(_ action: String) async {
+        activityState = try? await api.updateActivityState(action)
+    }
+
+    private func saveProactiveSettings() {
+        guard settingsLoaded else { return }
+        settingsSaveTask?.cancel()
+        syncStatus = "正在保存…"
+        settingsSaveTask = Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            do {
+                _ = try await api.updateProactiveSettings(ProactiveSettings(
+                    enabled: proactiveNudgeEnabled,
+                    threadId: "default",
+                    message: proactiveNudgeMessage,
+                    intervalMin: proactiveNudgeInterval,
+                    intervalMax: proactiveNudgeInterval,
+                    actions: ProactiveActions(message: proactiveActionMessage, phone: proactiveActionPhone, screen: proactiveActionScreen)
+                ))
+                syncStatus = "已同步到后端"
+            } catch {
+                syncStatus = syncErrorMessage(error)
+            }
+            settingsSaveTask = nil
+        }
+    }
+
+    private func syncErrorMessage(_ error: Error) -> String {
+        let details = error.localizedDescription
+        if details.contains("401") || details.localizedCaseInsensitiveContains("unauthorized") {
+            return "同步被拒绝：请检查上方的 LUMI_PUSH_API_TOKEN 是否与 Zeabur 一致"
+        }
+        if details.contains("404") || details.contains("not_found") {
+            return "线上后端版本过旧，缺少保活接口；需要部署 lumi-server 新版本"
+        }
+        return "同步失败：\(details)"
+    }
+}
+
+private struct VoiceSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
+    @AppStorage("lumi.ttsProvider") private var provider = "minimax"
+    @AppStorage("lumi.ttsModel") private var miniMaxModel = "speech-2.8-hd"
+    @AppStorage("lumi.ttsVoiceID") private var miniMaxVoiceID = "moss_audio_9b73ea77-9ada-11f1-b714-6a6575e57454"
+    @AppStorage("lumi.ttsHost") private var ttsHost = "https://api.minimaxi.com"
+    @AppStorage("lumi.elevenLabsModel") private var elevenLabsModel = "eleven_v4_turbo"
+    @AppStorage("lumi.elevenLabsVoiceID") private var elevenLabsVoiceID = ""
+    @State private var miniMaxAPIKey = LumiKeychain.read()
+    @State private var elevenLabsAPIKey = LumiKeychain.read(account: "elevenlabs-api-key")
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Toggle("允许 AI 自主选择是否发语音", isOn: $ttsEnabled).tint(Color(red: 0.72, green: 0.35, blue: 0.49))
+                    Picker("语音服务", selection: $provider) {
+                        Text("MiniMax").tag("minimax")
+                            Text("ElevenLabs").tag("elevenlabs")
+                    }
+                    .pickerStyle(.segmented)
+                    if provider == "elevenlabs" {
+                        SecureField("ElevenLabs API Key", text: $elevenLabsAPIKey).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        Picker("语音模型", selection: $elevenLabsModel) {
+                            ForEach(["eleven_v4", "eleven_v4_turbo", "eleven_multilingual_v2", "eleven_flash_v2_5", "eleven_turbo_v2_5"], id: \.self) { Text($0).tag($0) }
+                        }
+                        TextField("Voice ID", text: $elevenLabsVoiceID)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        Text("填写 ElevenLabs 音色库里的 Voice ID。")
+                            .font(.system(size: 13)).foregroundStyle(.secondary)
+                    } else {
+                        SecureField("MiniMax API Key", text: $miniMaxAPIKey).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        Picker("MiniMax 区域", selection: $ttsHost) {
+                            Text("中国大陆").tag("https://api.minimaxi.com")
+                            Text("国际版").tag("https://api.minimax.io")
+                        }
+                        Picker("语音模型", selection: $miniMaxModel) {
+                            ForEach(["speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo"], id: \.self) { Text($0).tag($0) }
+                        }
+                        TextField("Voice ID", text: $miniMaxVoiceID)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        Text("当前使用你提供的 moss_audio 音色 ID。")
+                            .font(.system(size: 13)).foregroundStyle(.secondary)
+                    }
+                } footer: {
+                    Text("两种服务的 Key 分别保存在 iPhone 钥匙串中。选择的服务同时用于聊天语音和电话语音。")
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(LumiPalette.chatBackground)
+            .navigationTitle("语音设置")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("保存") {
+                        LumiKeychain.write(miniMaxAPIKey.trimmingCharacters(in: .whitespacesAndNewlines))
+                        LumiKeychain.write(elevenLabsAPIKey.trimmingCharacters(in: .whitespacesAndNewlines), account: "elevenlabs-api-key")
+                        dismiss()
+                    }
+                }
+            }
+            .tint(Color(red: 0.66, green: 0.35, blue: 0.47))
+        }
+    }
+}
+
+private func makeTTSSettings(enabled: Bool) -> TTSRequestSettings? {
+    guard enabled else { return nil }
+    let defaults = UserDefaults.standard
+    let provider = defaults.string(forKey: "lumi.ttsProvider") == "elevenlabs" ? "elevenlabs" : "minimax"
+    let isElevenLabs = provider == "elevenlabs"
+    let apiKey = LumiKeychain.read(account: isElevenLabs ? "elevenlabs-api-key" : "minimax-api-key")
+    let model = defaults.string(forKey: isElevenLabs ? "lumi.elevenLabsModel" : "lumi.ttsModel")
+        ?? (isElevenLabs ? "eleven_v4_turbo" : "speech-2.8-hd")
+    let voiceID = defaults.string(forKey: isElevenLabs ? "lumi.elevenLabsVoiceID" : "lumi.ttsVoiceID") ?? ""
+    guard !apiKey.isEmpty, !voiceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+    let baseURL = isElevenLabs ? "https://api.elevenlabs.io" : (defaults.string(forKey: "lumi.ttsHost") ?? "https://api.minimaxi.com")
+    return TTSRequestSettings(provider: provider, apiKey: apiKey, model: model, voiceID: voiceID, baseURL: baseURL, enabled: true)
+}
+
+private struct EmojiManagementView: View {
+    @AppStorage("lumi.emojiCatalogJSON") private var catalogJSON = "{}"
+    @State private var entries: [EmojiEntry] = []
+    @State private var showingAdd = false
+
+    var body: some View {
+        List {
+            if entries.isEmpty {
+                Text("还没有颜文字。点右上角 +，添加颜文字和心情标签。")
+                    .font(.system(size: 14)).foregroundStyle(.secondary).padding(.vertical, 12)
+            } else {
+                ForEach(entries) { entry in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(entry.face).font(.system(size: 19))
+                        Text(entry.mood).font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }
+                .onDelete { offsets in entries.remove(atOffsets: offsets); persist() }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(LumiPalette.chatBackground)
+        .navigationTitle("颜文字管理")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { Button { showingAdd = true } label: { Image(systemName: "plus") } }
+        }
+        .tint(Color(red: 0.66, green: 0.35, blue: 0.47))
+        .preferredColorScheme(.light)
+        .onAppear { load() }
+        .sheet(isPresented: $showingAdd) {
+            AddEmojiSheet { entry in entries.append(entry); persist() }
+                .presentationDetents([.height(300)])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(LumiPalette.chatBackground)
+        }
+    }
+
+    private func load() {
+        guard let data = catalogJSON.data(using: .utf8), let decoded = try? JSONDecoder().decode([EmojiEntry].self, from: data) else { return }
+        entries = decoded
+    }
+
+    private func persist() {
+        if let data = try? JSONEncoder().encode(entries), let value = String(data: data, encoding: .utf8) { catalogJSON = value }
+    }
+}
+
+private struct EmojiEntry: Codable, Identifiable {
+    var id = UUID()
+    var face: String
+    var mood: String
+}
+
+private struct AddEmojiSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var face = ""
+    @State private var mood = ""
+    let onSave: (EmojiEntry) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("颜文字", text: $face)
+                TextField("心情标签（如：开心、害羞、难过）", text: $mood)
+            }
+            .scrollContentBackground(.hidden)
+            .background(LumiPalette.chatBackground)
+            .navigationTitle("添加颜文字")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("添加") {
+                        let value = face.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let tag = mood.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !value.isEmpty, !tag.isEmpty else { return }
+                        onSave(EmojiEntry(face: value, mood: tag)); dismiss()
+                    }.disabled(face.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || mood.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .tint(Color(red: 0.66, green: 0.35, blue: 0.47))
+            .preferredColorScheme(.light)
+        }
+    }
+}
+
+private struct LegacySettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("lumi.proactiveNudgeEnabled") private var proactiveNudgeEnabled = false
+    @AppStorage("lumi.proactiveNudgeInterval") private var proactiveNudgeInterval = 60
+    @AppStorage("lumi.proactiveNudgeMessage") private var proactiveNudgeMessage = "有一段时间没聊了，结合我们的上下文自然地来找我说句话。"
+    @State private var settingsLoaded = false
+    @State private var syncStatus = "正在连接后端…"
+    @State private var settingsSaveTask: Task<Void, Never>?
+    @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
+    private let api = LumiAPIClient()
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Toggle(isOn: $proactiveNudgeEnabled) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("保活")
+                                .font(.system(size: 16, weight: .medium))
+                            Text("长时间没有新消息时，允许沈屿主动发起一次对话")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .tint(Color(red: 0.72, green: 0.35, blue: 0.49))
+
+                    Stepper("静默 \(proactiveNudgeInterval) 分钟后触发", value: $proactiveNudgeInterval, in: 10...1440, step: 10)
+
+                    TextField("主动联系内容", text: $proactiveNudgeMessage, axis: .vertical)
+                        .lineLimit(2...5)
+
+                    Text("每次触发会走正常聊天模型并产生一次模型调用；保活默认关闭。\(syncStatus)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("主动联系")
+                }
+
+                Section {
+                    Button {
+                        Task { await requestNotifications() }
+                    } label: {
+                        HStack {
+                            Label("消息通知", systemImage: "bell.badge")
+                            Spacer()
+                            Text(notificationStatusLabel)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                } header: {
+                    Text("通知")
+                } footer: {
+                    Text("允许通知后会注册这台设备；锁屏推送还需要在后端安全配置 Apple APNs 密钥。")
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(Color(red: 0.984, green: 0.949, blue: 0.957))
+            .navigationTitle("设置")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("返回") { dismiss() }
                 }
             }
         }
