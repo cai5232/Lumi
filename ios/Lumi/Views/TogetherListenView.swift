@@ -115,6 +115,12 @@ private struct ListenComment: Decodable, Identifiable {
 private struct ListenCommentsResponse: Decodable { let comments: [ListenComment]; let total: Int }
 private struct ListenAnalysisResponse: Decodable { let text: String; let impression: String; let impression_n: Int }
 private struct GeneratedListenAnalysis: Decodable { let text: String }
+private struct AnalysisModelsResponse: Decodable { let models: [String] }
+private struct DuettoOKResponse: Decodable { let ok: Bool? }
+private struct ListenSongContext: Decodable {
+    let plays: Int?; let analysis: String?; let impression: String?; let curLyric: String?; let notes: [ListenSongNote]?
+    private enum CodingKeys: String, CodingKey { case plays, analysis, impression, curLyric = "cur_lyric", notes }
+}
 private struct ListenLikeListResponse: Decodable {
     let ids: [String]
     private enum CodingKeys: String, CodingKey { case ids }
@@ -144,7 +150,8 @@ private struct DuettoAppSettings: Decodable {
 }
 private struct DuettoAISettings: Decodable {
     let baseURL: String; let model: String; let persona: String; let style: String; let hasKey: Bool
-    private enum CodingKeys: String, CodingKey { case baseURL = "base_url", model, persona, style, hasKey = "has_key" }
+    let analysisBaseURL: String; let analysisModel: String; let hasAnalysisKey: Bool; let analysisKeyHint: String
+    private enum CodingKeys: String, CodingKey { case baseURL = "base_url", model, persona, style, hasKey = "has_key", analysisBaseURL = "a_base", analysisModel = "a_model", hasAnalysisKey = "has_a_key", analysisKeyHint = "a_key_hint" }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         baseURL = try values.decodeIfPresent(String.self, forKey: .baseURL) ?? ""
@@ -152,6 +159,10 @@ private struct DuettoAISettings: Decodable {
         persona = try values.decodeIfPresent(String.self, forKey: .persona) ?? ""
         style = try values.decodeIfPresent(String.self, forKey: .style) ?? ""
         hasKey = try values.decodeIfPresent(Bool.self, forKey: .hasKey) ?? false
+        analysisBaseURL = try values.decodeIfPresent(String.self, forKey: .analysisBaseURL) ?? ""
+        analysisModel = try values.decodeIfPresent(String.self, forKey: .analysisModel) ?? ""
+        hasAnalysisKey = try values.decodeIfPresent(Bool.self, forKey: .hasAnalysisKey) ?? false
+        analysisKeyHint = try values.decodeIfPresent(String.self, forKey: .analysisKeyHint) ?? ""
     }
 }
 struct MusicRoomEnvelope: Decodable { let state: MusicRoomSnapshot? }
@@ -235,6 +246,13 @@ private final class TogetherListenModel: ObservableObject {
     @Published var userName = ""
     @Published var roomName = ""
     @Published var roomSub = ""
+    @Published var analysisBaseURL = ""
+    @Published var analysisAPIKey = ""
+    @Published var analysisModel = ""
+    @Published var analysisKeyHint = ""
+    @Published var hasAnalysisKey = false
+    @Published var availableAnalysisModels: [String] = []
+    @Published var isLoadingAnalysisModels = false
     @Published var isSavingSettings = false
     @Published var player: AVPlayer?
     @Published var playMode = 0
@@ -256,6 +274,8 @@ private final class TogetherListenModel: ObservableObject {
     private var roomSocketTask: Task<Void, Never>?
     private var sleepTask: Task<Void, Never>?
     private var hasStarted = false
+    private var currentStreamURL = ""
+    private var currentStreamSongID = ""
 
     func start() {
         guard !hasStarted else { return }
@@ -316,6 +336,7 @@ private final class TogetherListenModel: ObservableObject {
         guard let url = components.url else { throw LumiAPIError.invalidResponse }
         var request = URLRequest(url: url)
         request.httpMethod = method
+        request.timeoutInterval = path == "/api/song-analysis" ? 125 : 60
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -455,6 +476,8 @@ private final class TogetherListenModel: ObservableObject {
         do {
             let stream: NeteaseSongStream = try await duetto(queryPath("/api/ncm/song-url", items: [URLQueryItem(name: "id", value: song.id)]))
             guard let url = URL(string: stream.url), url.scheme == "https" else { throw LumiAPIError.server("这首歌暂时没有可播放的音源。") }
+            currentStreamURL = stream.url
+            currentStreamSongID = song.id
             let nextPlayer = AVPlayer(url: url)
             if let ticker, let player { player.removeTimeObserver(ticker) }
             player?.pause(); player = nextPlayer; nextPlayer.play(); isPlaying = true
@@ -464,7 +487,7 @@ private final class TogetherListenModel: ObservableObject {
             }
             updateNowPlaying()
             Task { await self.publishRoomState() }
-            let _: [String: AnyCodableValue] = try await duetto("/api/listen-log", method: "POST", body: ["id": song.id, "title": song.title, "artist": song.artist, "cover": song.cover, "dur": song.durationSeconds])
+            let _: [String: AnyCodableValue] = try await duetto("/api/listen-log", method: "POST", body: ["id": song.id, "title": song.title, "artist": song.artist, "cover": song.cover, "dur": song.durationSeconds, "url": stream.url])
         } catch { self.error = error.localizedDescription; isPlaying = false }
     }
 
@@ -641,6 +664,10 @@ private final class TogetherListenModel: ObservableObject {
             let response: DuettoSettingsEnvelope = try await duetto("/api/settings")
             userName = response.settings.userName
             roomName = response.settings.roomName; roomSub = response.settings.roomSub
+            analysisBaseURL = response.settings.ai.analysisBaseURL
+            analysisModel = response.settings.ai.analysisModel
+            hasAnalysisKey = response.settings.ai.hasAnalysisKey
+            analysisKeyHint = response.settings.ai.analysisKeyHint
         } catch { self.error = error.localizedDescription }
     }
 
@@ -648,8 +675,11 @@ private final class TogetherListenModel: ObservableObject {
         isSavingSettings = true; defer { isSavingSettings = false }
         do {
             let _: [String: AnyCodableValue] = try await duetto("/api/settings", method: "POST", body: [
-                "user_name": userName, "room_name": roomName, "room_sub": roomSub
+                "user_name": userName, "room_name": roomName, "room_sub": roomSub,
+                "ai": ["a_base": analysisBaseURL, "a_model": analysisModel, "a_key": analysisAPIKey]
             ])
+            analysisAPIKey = ""
+            await loadSettings()
             let nextRoom = String(roomID.trimmingCharacters(in: .whitespacesAndNewlines).prefix(64))
             if !nextRoom.isEmpty, nextRoom != room {
                 room = nextRoom; UserDefaults.standard.set(nextRoom, forKey: "duetto-room")
@@ -683,10 +713,19 @@ private final class TogetherListenModel: ObservableObject {
     func generateSongAnalysis(_ song: NeteaseSong) async {
         do {
             let payload: [String: Any] = ["id": song.id, "title": song.title, "artist": song.artist,
-                "lyrics": lyrics.map { ["line": $0.text, "time": $0.time] }]
+                "audio_url": currentStreamSongID == song.id ? currentStreamURL : ""]
             let result: GeneratedListenAnalysis = try await duetto("/api/song-analysis", method: "POST", body: payload)
             songAnalysis = result.text
         } catch { self.error = error.localizedDescription }
+    }
+
+    func fetchAnalysisModels() async {
+        isLoadingAnalysisModels = true; defer { isLoadingAnalysisModels = false }
+        do {
+            let response: AnalysisModelsResponse = try await duetto("/api/analysis-models", method: "POST", body: ["base_url": analysisBaseURL, "api_key": analysisAPIKey])
+            availableAnalysisModels = response.models
+        }
+        catch { self.error = error.localizedDescription }
     }
 
     func refreshLikeStatus() async {
@@ -768,11 +807,24 @@ private final class TogetherListenModel: ObservableObject {
             let route = try ChatViewModel.currentModelRoute()
             var liveContext = ["场景：用户正在 Lumi「一起听」里和你听歌。回复要延续你们原有聊天关系和语气，不创建新的人设。"]
             if let current {
+                let generatedAnalysis: GeneratedListenAnalysis? = try? await duetto("/api/song-analysis", method: "POST", body: ["id": current.id, "title": current.title, "artist": current.artist, "audio_url": currentStreamSongID == current.id ? currentStreamURL : ""])
                 let elapsed = "\(Int(position) / 60):\(String(format: "%02d", Int(position) % 60))"
                 let duration = "\(current.durationSeconds / 60):\(String(format: "%02d", current.durationSeconds % 60))"
                 liveContext.append("当前歌曲：《\(current.title)》— \(current.artist)，播放进度 \(elapsed)/\(duration)。")
+                let songContext: ListenSongContext? = try? await duetto(queryPath("/api/song-context", items: [URLQueryItem(name: "id", value: current.id), URLQueryItem(name: "pos", value: String(position))]))
+                if let plays = songContext?.plays { liveContext.append("你们一起听过这首歌 \(plays) 次。") }
+                if let text = songContext?.analysis, !text.isEmpty { liveContext.append("这首歌的一次性完整听感分析（背景记忆）：\n\(text)") }
+                else if let text = generatedAnalysis?.text, !text.isEmpty { liveContext.append("这首歌的一次性完整听感分析（背景记忆）：\n\(text)") }
+                if let impression = songContext?.impression, !impression.isEmpty { liveContext.append("你们关于这首歌的长期回忆：\n\(impression)") }
+                if let notes = songContext?.notes, !notes.isEmpty {
+                    let history = notes.map { note in
+                        "\(note.passage.isEmpty ? "" : "歌词「\(note.passage)」")\(note.thought.isEmpty ? "" : "用户：\(note.thought)")\(note.reply.isEmpty ? "" : " 你：\(note.reply)")"
+                    }.joined(separator: "\n")
+                    liveContext.append("这首歌最近的共同聆听记录：\n\(history)")
+                }
+                if let lyric = songContext?.curLyric, !lyric.isEmpty { liveContext.append("当前歌词：\(lyric)") }
             }
-            if let lyric = lyrics.last(where: { $0.time <= position })?.text, !lyric.isEmpty {
+            if let lyric = lyrics.last(where: { $0.time <= position })?.text, !lyric.isEmpty, !liveContext.contains(where: { $0.hasPrefix("当前歌词：") }) {
                 liveContext.append("当前歌词：\(lyric)")
             }
             if !quoteDraft.isEmpty { liveContext.append("用户引用的歌词/内容：\(quoteDraft)") }
@@ -799,6 +851,13 @@ private final class TogetherListenModel: ObservableObject {
             messages.append(answer)
             await postRoomMessage(prompt, sender: sender, timestamp: userTime)
             await postRoomMessage(answerText, sender: "Lumi 聊天", timestamp: assistantTime)
+            if let current {
+                let _: DuettoOKResponse? = try? await duetto("/api/song-note", method: "POST", body: [
+                    "id": current.id, "title": current.title, "artist": current.artist, "cover": current.cover,
+                    "passage": quoteDraft.isEmpty ? (lyrics.last(where: { $0.time <= position })?.text ?? "") : quoteDraft,
+                    "thought": prompt, "reply": answerText
+                ])
+            }
             NotificationCenter.default.post(name: Notification.Name("LumiRemoteMessageReceived"), object: nil)
             quoteDraft = ""
             if response.memorySaved == true { qrHint = "这段听歌对话已记入 Lumi 记忆" }
@@ -1416,6 +1475,28 @@ private struct ListenSettingsView: View {
                 Section("聊天模型") {
                     Label("使用 Lumi 当前选择的聊天模型", systemImage: "bubble.left.and.bubble.right")
                     Text("一起听的对话会继续使用主聊天记录、上下文摘要和长期记忆。当前歌曲、歌词和播放进度会作为本次听歌场景提供给模型。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("听歌分析模型（多模态）") {
+                    TextField("兼容 OpenAI 的 HTTPS 服务地址", text: $model.analysisBaseURL)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    SecureField(model.hasAnalysisKey ? "API Key 已保存（输入可替换）" : "API Key", text: $model.analysisAPIKey)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    TextField("支持音频输入的模型名称", text: $model.analysisModel)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    HStack {
+                        if model.isLoadingAnalysisModels { ProgressView() }
+                        Button { Task { await model.fetchAnalysisModels() } } label: { Label("拉取模型列表", systemImage: "arrow.clockwise") }
+                            .disabled(model.isLoadingAnalysisModels || model.analysisBaseURL.isEmpty)
+                    }
+                    if !model.availableAnalysisModels.isEmpty {
+                        Menu("选择模型") {
+                            ForEach(model.availableAnalysisModels, id: \.self) { item in
+                                Button(item) { model.analysisModel = item }
+                            }
+                        }
+                    }
+                    Text(model.hasAnalysisKey ? "Key 已安全保存在服务端（\(model.analysisKeyHint)）。每首歌首次播放时，服务端会下载实际播放音流并完整分析一次；未填写的字段沿用服务端已有配置。" : "仅用于整首音频赏析与歌曲回忆。请填写支持音频输入的服务地址和 API Key；Key 仅保存到服务端。首次播放会分析实际音流并永久缓存，同一首歌不重复分析。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
