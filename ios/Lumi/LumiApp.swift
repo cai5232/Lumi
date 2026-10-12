@@ -134,8 +134,6 @@ private struct LumiHomeView: View {
         .init(title: "日记", symbol: "book.closed.fill", tint: Color(red: 0.91, green: 0.56, blue: 0.67), action: .diary),
         .init(title: "日历", symbol: "calendar", tint: Color(red: 0.89, green: 0.36, blue: 0.38), action: .calendar),
         .init(title: "吃了么", symbol: "fork.knife", tint: Color(red: 0.96, green: 0.67, blue: 0.37), action: .food),
-        .init(title: "一起听", symbol: "headphones", tint: Color(red: 0.95, green: 0.56, blue: 0.67), action: .togetherListen),
-        .init(title: "电台", symbol: "dot.radiowaves.left.and.right", tint: Color(red: 0.91, green: 0.56, blue: 0.67), action: .radio),
         .init(title: "共看", symbol: "play.rectangle.fill", tint: Color(red: 0.92, green: 0.48, blue: 0.57), action: .togetherWatch),
         .init(title: "设置", symbol: "gearshape.fill", tint: Color(red: 0.43, green: 0.49, blue: 0.61), action: .settings),
         .init(title: "行迹", symbol: "figure.walk", tint: Color(red: 0.43, green: 0.49, blue: 0.61)),
