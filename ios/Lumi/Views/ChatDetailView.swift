@@ -16,6 +16,7 @@ private struct ChatHistoryTopOffsetKey: PreferenceKey {
 @MainActor
 struct ChatDetailView: View {
     @StateObject private var model: ChatViewModel
+    @StateObject private var musicModel = TogetherListenChatPlayback.shared
     var onClose: (() -> Void)? = nil
     @StateObject private var glassPresentation = GlassComparisonPresentation()
     @State private var showingSettings = false
@@ -70,7 +71,7 @@ struct ChatDetailView: View {
                     }
                     .animation(.easeOut(duration: 0.24), value: model.messages.count)
                     .padding(.horizontal, 16)
-                    .padding(.top, 112)
+                    .padding(.top, 184)
                     .padding(.bottom, 20)
                     Color.clear
                         .frame(height: 1)
@@ -272,6 +273,38 @@ struct ChatDetailView: View {
     }
 
     private var topBar: some View {
+        VStack(spacing: 9) {
+            topBarButtons
+            if let song = musicModel.current, musicModel.isPlaying {
+                HStack(spacing: 10) {
+                    AsyncImage(url: URL(string: song.cover)) { phase in
+                        if let image = phase.image { image.resizable().scaledToFill() }
+                        else { Image(systemName: "music.note").foregroundStyle(LumiPalette.iconPink).frame(maxWidth: .infinity, maxHeight: .infinity).background(.white.opacity(0.72)) }
+                    }
+                    .frame(width: 38, height: 38).clipShape(RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 4) {
+                            Text(song.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                            Text("· \(song.artist)").font(.system(size: 10)).foregroundStyle(LumiPalette.textSecondary).lineLimit(1)
+                        }
+                        Text(musicModel.currentLyricText.isEmpty ? "正在一起听" : musicModel.currentLyricText)
+                            .font(.system(size: 10)).foregroundStyle(LumiPalette.textSecondary).lineLimit(1)
+                        Slider(value: Binding(get: { musicModel.position }, set: { musicModel.seek($0) }), in: 0...max(1, Double(song.durationSeconds)))
+                            .tint(LumiPalette.iconPink)
+                    }
+                    Button { musicModel.togglePlayback() } label: {
+                        Image(systemName: "pause.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(LumiPalette.iconPink)
+                    }.buttonStyle(.plain).padding(.horizontal, 4)
+                }
+                .padding(.horizontal, 11).padding(.vertical, 7)
+                .background(LumiLiquidGlass(shape: RoundedRectangle(cornerRadius: 15, style: .continuous)))
+                .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(.white.opacity(0.65), lineWidth: 1))
+                .padding(.horizontal, 18)
+            }
+        }
+    }
+
+    private var topBarButtons: some View {
         HStack(spacing: 0) {
             if let onClose {
                 Button(action: onClose) {
@@ -700,7 +733,8 @@ struct ChatDetailView: View {
         let catalogData = UserDefaults.standard.string(forKey: "lumi.emojiCatalogJSON")?.data(using: .utf8) ?? Data("[]".utf8)
         let entries = (try? JSONDecoder().decode([EmojiEntry].self, from: catalogData)) ?? []
         let catalog = Dictionary(grouping: entries, by: \.mood).mapValues { $0.map(\.face) }
-        await model.send(imagesBase64: imagesBase64, imageFileNames: selectedImageNames, galleryImageIDs: selectedGalleryItem.map { [$0.id] } ?? [], tts: tts, emojiCatalog: catalog)
+        let musicContext = await musicModel.chatContext()
+        await model.send(imagesBase64: imagesBase64, imageFileNames: selectedImageNames, galleryImageIDs: selectedGalleryItem.map { [$0.id] } ?? [], tts: tts, emojiCatalog: catalog, context: musicContext)
         selectedImageData = []
         selectedImageNames = []
         selectedGalleryItem = nil
