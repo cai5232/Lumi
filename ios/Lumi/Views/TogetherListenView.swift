@@ -1,5 +1,6 @@
 import AVFoundation
 import AVKit
+import Combine
 import MediaPlayer
 import SwiftUI
 
@@ -113,13 +114,13 @@ private struct ListenComment: Decodable, Identifiable {
     }
 }
 private struct ListenCommentsResponse: Decodable { let comments: [ListenComment]; let total: Int }
-private struct ListenAnalysisResponse: Decodable { let text: String; let impression: String; let impression_n: Int }
-private struct GeneratedListenAnalysis: Decodable { let text: String }
+private struct ListenAnalysisResponse: Decodable { let text: String; let source: String?; let impression: String; let impression_n: Int }
+private struct GeneratedListenAnalysis: Decodable { let text: String; let source: String? }
 private struct AnalysisModelsResponse: Decodable { let models: [String] }
 private struct DuettoOKResponse: Decodable { let ok: Bool? }
 private struct ListenSongContext: Decodable {
-    let plays: Int?; let analysis: String?; let impression: String?; let curLyric: String?; let notes: [ListenSongNote]?
-    private enum CodingKeys: String, CodingKey { case plays, analysis, impression, curLyric = "cur_lyric", notes }
+    let plays: Int?; let analysis: String?; let analysisSource: String?; let impression: String?; let curLyric: String?; let notes: [ListenSongNote]?
+    private enum CodingKeys: String, CodingKey { case plays, analysis, analysisSource = "analysis_source", impression, curLyric = "cur_lyric", notes }
 }
 private struct ListenLikeListResponse: Decodable {
     let ids: [String]
@@ -239,6 +240,7 @@ private final class TogetherListenModel: ObservableObject {
     @Published var songComments: [ListenComment] = []
     @Published var commentsTotal = 0
     @Published var songAnalysis = ""
+    @Published var songAnalysisSource = ""
     @Published var songImpression = ""
     @Published var isLiked = false
     @Published var likedSongIDs: Set<String> = []
@@ -264,6 +266,7 @@ private final class TogetherListenModel: ObservableObject {
     @Published var room = UserDefaults.standard.string(forKey: "duetto-room") ?? "main"
     private var roomRevision = 0
     private var pollTask: Task<Void, Never>?
+    private var pollCycle = 0
     private var qrTask: Task<Void, Never>?
     private var ticker: Any?
     private var endObserver: NSObjectProtocol?
@@ -276,6 +279,11 @@ private final class TogetherListenModel: ObservableObject {
     private var hasStarted = false
     private var currentStreamURL = ""
     private var currentStreamSongID = ""
+    private var hasExplicitPlaylistQueue = false
+    private var prefetchedStreamURLs: [String: URL] = [:]
+    private var prefetchTask: Task<Void, Never>?
+
+    var currentLyricText: String { lyrics.last(where: { $0.time <= position })?.text ?? "" }
 
     func start() {
         guard !hasStarted else { return }
@@ -295,10 +303,13 @@ private final class TogetherListenModel: ObservableObject {
         pollTask?.cancel()
         pollTask = Task {
             while !Task.isCancelled {
-                await refreshRoom()
-                await refreshMessages()
-                if isPlaying && !isRemotePlayback { await publishRoomState() }
-                try? await Task.sleep(for: .seconds(3))
+                pollCycle += 1
+                if !roomConnected || pollCycle % 3 == 0 {
+                    await refreshRoom()
+                    await refreshMessages()
+                }
+                if isPlaying && !isRemotePlayback && pollCycle % 2 == 0 { await publishRoomState() }
+                try? await Task.sleep(for: .seconds(4))
             }
         }
     }
@@ -336,23 +347,32 @@ private final class TogetherListenModel: ObservableObject {
         guard let url = components.url else { throw LumiAPIError.invalidResponse }
         var request = URLRequest(url: url)
         request.httpMethod = method
-        request.timeoutInterval = path == "/api/song-analysis" ? 125 : 60
+        request.timeoutInterval = path.contains("song-analysis") ? 125 : 35
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw LumiAPIError.invalidResponse }
-        if http.statusCode == 401 {
-            LumiKeychain.write("", account: "duetto-access-token")
-            throw LumiAPIError.server("服务授权失效，请重试。")
+        var lastError: Error = LumiAPIError.invalidResponse
+        for attempt in 0..<(method == "GET" ? 3 : 1) {
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { throw LumiAPIError.invalidResponse }
+                if http.statusCode == 401 {
+                    LumiKeychain.write("", account: "duetto-access-token")
+                    throw LumiAPIError.server("服务授权失效，请重试。")
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    let detail = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String ?? "请求失败"
+                    throw LumiAPIError.server("HTTP \(http.statusCode)：\(detail)")
+                }
+                return try JSONDecoder().decode(T.self, from: data)
+            } catch {
+                lastError = error
+                if attempt < (method == "GET" ? 2 : 0) { try? await Task.sleep(for: .milliseconds(400 * (attempt + 1))) }
+            }
         }
-        guard (200..<300).contains(http.statusCode) else {
-            let detail = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String ?? "请求失败"
-            throw LumiAPIError.server(detail)
-        }
-        return try JSONDecoder().decode(T.self, from: data)
+        throw lastError
     }
 
     private func queryPath(_ path: String, items: [URLQueryItem]) -> String {
@@ -444,7 +464,10 @@ private final class TogetherListenModel: ObservableObject {
         catch { self.error = error.localizedDescription }
     }
 
-    func addSongToQueue(_ song: NeteaseSong) { if !queue.contains(where: { $0.id == song.id }) { queue.append(song) } }
+    func addSongToQueue(_ song: NeteaseSong) {
+        if !queue.contains(where: { $0.id == song.id }) { queue.append(song) }
+        hasExplicitPlaylistQueue = true
+    }
     func removeFromQueue(_ song: NeteaseSong) { queue.removeAll { $0.id == song.id } }
 
     func moveInQueue(_ song: NeteaseSong, by offset: Int) {
@@ -463,22 +486,45 @@ private final class TogetherListenModel: ObservableObject {
     }
 
     func addSong(_ song: NeteaseSong, to playlist: MusicPlaylist) async {
-        do { let _: [String: AnyCodableValue] = try await duetto(queryPath("/api/ncm/playlist-add", items: [URLQueryItem(name: "pid", value: playlist.id), URLQueryItem(name: "id", value: song.id)]), method: "POST") }
-        catch { self.error = error.localizedDescription }
+        do {
+            guard playlist.mine else { throw LumiAPIError.server("只能添加到自己创建的歌单。") }
+            let before: NeteaseSongList = try await duetto(queryPath("/api/ncm/playlist", items: [URLQueryItem(name: "id", value: playlist.id)]))
+            let _: [String: AnyCodableValue] = try await duetto(queryPath("/api/ncm/playlist-add", items: [URLQueryItem(name: "pid", value: playlist.id), URLQueryItem(name: "id", value: song.id)]), method: "POST")
+            let result: NeteaseSongList = try await duetto(queryPath("/api/ncm/playlist", items: [URLQueryItem(name: "id", value: playlist.id)]))
+            let matchedCount = result.songs.filter { $0.id == song.id }.count
+            let previousIDs = Set(before.songs.map(\.id))
+            let unexpectedNewIDs = Set(result.songs.map(\.id)).subtracting(previousIDs).subtracting([song.id])
+            guard matchedCount <= 1, unexpectedNewIDs.isEmpty else {
+                throw LumiAPIError.server("网易云歌单没有只添加所选歌曲，请检查歌单后重试。")
+            }
+            error = "已将《\(song.title)》加入「\(playlist.name)」"
+        } catch { self.error = error.localizedDescription }
     }
 
     func play(_ song: NeteaseSong, in list: [NeteaseSong]? = nil) async {
-        if let list { queue = list; isFMQueue = false }
-        else if !queue.contains(where: { $0.id == song.id }) { queue.append(song) }
+        if let list { queue = list; isFMQueue = false; hasExplicitPlaylistQueue = true }
+        else if !queue.contains(where: { $0.id == song.id }) {
+            queue = [song]
+            isFMQueue = false
+            hasExplicitPlaylistQueue = false
+        }
         current = song; position = 0; isRemotePlayback = false
         Task { await loadLyrics(song) }
         Task { await refreshLikeStatus() }
         do {
-            let stream: NeteaseSongStream = try await duetto(queryPath("/api/ncm/song-url", items: [URLQueryItem(name: "id", value: song.id)]))
-            guard let url = URL(string: stream.url), url.scheme == "https" else { throw LumiAPIError.server("这首歌暂时没有可播放的音源。") }
-            currentStreamURL = stream.url
+            let url: URL
+            if let cached = prefetchedStreamURLs.removeValue(forKey: song.id) { url = cached }
+            else {
+                let stream: NeteaseSongStream = try await duetto(queryPath("/api/ncm/song-url", items: [URLQueryItem(name: "id", value: song.id)]))
+                guard let resolved = URL(string: stream.url), resolved.scheme == "https" else { throw LumiAPIError.server("这首歌暂时没有可播放的音源。") }
+                url = resolved
+            }
+            currentStreamURL = url.absoluteString
             currentStreamSongID = song.id
-            let nextPlayer = AVPlayer(url: url)
+            let item = AVPlayerItem(url: url)
+            item.preferredForwardBufferDuration = 12
+            let nextPlayer = AVPlayer(playerItem: item)
+            nextPlayer.automaticallyWaitsToMinimizeStalling = true
             if let ticker, let player { player.removeTimeObserver(ticker) }
             player?.pause(); player = nextPlayer; nextPlayer.play(); isPlaying = true
             installEndObserver(for: nextPlayer)
@@ -486,8 +532,12 @@ private final class TogetherListenModel: ObservableObject {
                 Task { @MainActor in self?.position = time.seconds.isFinite ? max(0, time.seconds) : 0; self?.updateNowPlaying() }
             }
             updateNowPlaying()
+            prefetchNextStreams(after: song)
+            if !hasExplicitPlaylistQueue && !isFMQueue && queue.count == 1 {
+                Task { await self.prepareContinuousQueue(after: song) }
+            }
             Task { await self.publishRoomState() }
-            let _: [String: AnyCodableValue] = try await duetto("/api/listen-log", method: "POST", body: ["id": song.id, "title": song.title, "artist": song.artist, "cover": song.cover, "dur": song.durationSeconds, "url": stream.url])
+            let _: [String: AnyCodableValue] = try await duetto("/api/listen-log", method: "POST", body: ["id": song.id, "title": song.title, "artist": song.artist, "cover": song.cover, "dur": song.durationSeconds, "url": url.absoluteString])
         } catch { self.error = error.localizedDescription; isPlaying = false }
     }
 
@@ -514,9 +564,99 @@ private final class TogetherListenModel: ObservableObject {
     func skip(_ delta: Int) {
         guard !queue.isEmpty else { return }
         let currentIndex = queue.firstIndex(where: { $0.id == current?.id }) ?? 0
+        if delta > 0 && queue.count == 1 && !hasExplicitPlaylistQueue { Task { await advanceAfterTrackEnds() }; return }
         if isFMQueue && delta > 0 && currentIndex == queue.count - 1 { Task { await appendFMPage() }; return }
         let next = playMode == 2 && delta > 0 ? Int.random(in: 0..<queue.count) : (currentIndex + delta + queue.count) % queue.count
         Task { await play(queue[next]) }
+    }
+
+    private func advanceAfterTrackEnds() async {
+        guard let current else { return }
+        if playMode == 1 { player?.seek(to: .zero); player?.play(); position = 0; return }
+        let index = queue.firstIndex(where: { $0.id == current.id }) ?? 0
+        if queue.count > 1 {
+            if !hasExplicitPlaylistQueue && index == queue.count - 1 && playMode != 2 {
+                do {
+                    let result: NeteaseSongList = try await duetto("/api/ncm/recommend")
+                    let known = Set(queue.map(\.id))
+                    let more = result.songs.filter { !known.contains($0.id) }
+                    if let first = more.first {
+                        queue.append(contentsOf: more)
+                        await play(first)
+                        return
+                    }
+                } catch { }
+            }
+            let next = playMode == 2 ? Int.random(in: 0..<queue.count) : (index + 1) % queue.count
+            await play(queue[next])
+            return
+        }
+        if hasExplicitPlaylistQueue {
+            player?.seek(to: .zero); player?.play(); position = 0; isPlaying = true
+            return
+        }
+        // A single manually selected track is not a playlist: continue with NCM daily recommendations.
+        do {
+            let result: NeteaseSongList = try await duetto("/api/ncm/recommend")
+            let candidates = result.songs.filter { $0.id != current.id }
+            guard !candidates.isEmpty else { player?.seek(to: .zero); player?.play(); position = 0; return }
+            let next = playMode == 2 ? candidates.randomElement()! : candidates[0]
+            queue = [current] + candidates
+            hasExplicitPlaylistQueue = false
+            await play(next)
+        } catch {
+            // Keep music continuous even when recommendation service is temporarily unavailable.
+            player?.seek(to: .zero); player?.play(); position = 0; isPlaying = true
+        }
+    }
+
+    private func prepareContinuousQueue(after song: NeteaseSong) async {
+        guard !hasExplicitPlaylistQueue, !isFMQueue, queue.count == 1, current?.id == song.id else { return }
+        do {
+            let result: NeteaseSongList = try await duetto("/api/ncm/recommend")
+            guard current?.id == song.id else { return }
+            let known = Set(queue.map(\.id))
+            let nextSongs = result.songs.filter { !known.contains($0.id) }
+            guard !nextSongs.isEmpty else { return }
+            queue.append(contentsOf: nextSongs)
+            prefetchNextStreams(after: song)
+        } catch { /* The end observer retries recommendations if this request fails. */ }
+    }
+
+    private func prefetchNextStreams(after song: NeteaseSong) {
+        prefetchTask?.cancel()
+        let index = queue.firstIndex(where: { $0.id == song.id }) ?? 0
+        let nextSongs: [NeteaseSong]
+        if queue.count > 1 {
+            nextSongs = (1...min(3, queue.count - 1)).compactMap { offset in queue[(index + offset) % queue.count] }
+        } else { nextSongs = [] }
+        prefetchTask = Task { [weak self] in
+            guard let self else { return }
+            for next in nextSongs where self.prefetchedStreamURLs[next.id] == nil {
+                guard !Task.isCancelled else { return }
+                if let stream: NeteaseSongStream = try? await self.duetto(self.queryPath("/api/ncm/song-url", items: [URLQueryItem(name: "id", value: next.id)])),
+                   let url = URL(string: stream.url), url.scheme == "https" { self.prefetchedStreamURLs[next.id] = url }
+            }
+        }
+    }
+
+    func chatListeningContext() async -> String? {
+        guard let current, isPlaying || player != nil else { return nil }
+        let analysis: GeneratedListenAnalysis? = try? await duetto("/api/song-analysis", method: "POST", body: ["id": current.id, "title": current.title, "artist": current.artist, "audio_url": currentStreamSongID == current.id ? currentStreamURL : ""])
+        let context: ListenSongContext? = try? await duetto(queryPath("/api/song-context", items: [URLQueryItem(name: "id", value: current.id), URLQueryItem(name: "pos", value: String(position))]))
+        let lyric = lyrics.last(where: { $0.time <= position })?.text ?? context?.curLyric ?? "暂无当前歌词"
+        let time = "\(Int(position) / 60):\(String(format: "%02d", Int(position) % 60))"
+        var lines = ["一起听实时上下文：歌曲《\(current.title)》- \(current.artist)，播放到 \(time)，当前歌词：\(lyric)。"]
+        if let plays = context?.plays { lines.append("你们一起听过这首歌 \(plays) 次。") }
+        let analysisText = analysis?.text ?? context?.analysis
+        let source = analysis?.source ?? context?.analysisSource ?? "unknown"
+        let sourceLabel = source == "audio" ? "模型实际听完整首音频后的赏析" : (source == "lyrics" ? "仅根据歌词推断（模型没有听到音频）" : "已保存的听歌分析，来源未记录")
+        if let analysisText, !analysisText.isEmpty { lines.append("\(sourceLabel)：\(analysisText)") }
+        if let impression = context?.impression, !impression.isEmpty { lines.append("这首歌积累的共同回忆：\(impression)") }
+        if let notes = context?.notes, !notes.isEmpty {
+            lines.append("最近关于这首歌的交流：" + notes.suffix(12).map { "用户：\($0.thought)；AI：\($0.reply)" }.joined(separator: "\n"))
+        }
+        return lines.joined(separator: "\n")
     }
 
     func startFM() async {
@@ -524,7 +664,7 @@ private final class TogetherListenModel: ObservableObject {
         do {
             let result: NeteaseSongList = try await duetto("/api/ncm/personal-fm")
             guard let first = result.songs.first else { throw LumiAPIError.server("私人 FM 暂时没有新歌") }
-            queue = result.songs; isFMQueue = true
+            queue = result.songs; isFMQueue = true; hasExplicitPlaylistQueue = false
             await play(first)
             isFMQueue = true
         } catch { self.error = error.localizedDescription }
@@ -550,8 +690,7 @@ private final class TogetherListenModel: ObservableObject {
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                if self.playMode == 1 { self.player?.seek(to: .zero); self.player?.play(); self.position = 0 }
-                else { self.skip(1) }
+                await self.advanceAfterTrackEnds()
             }
         }
     }
@@ -611,7 +750,11 @@ private final class TogetherListenModel: ObservableObject {
             } else if abs(position - snapshot.positionSeconds) > 4 {
                 await player?.seek(to: CMTime(seconds: snapshot.positionSeconds, preferredTimescale: 600)); position = snapshot.positionSeconds
             }
-        } catch { roomConnected = false }
+        } catch {
+            roomSocket?.cancel(with: .goingAway, reason: nil)
+            roomSocket = nil
+            roomConnected = false
+        }
     }
 
     private func publishRoomState() async {
@@ -705,7 +848,7 @@ private final class TogetherListenModel: ObservableObject {
         do {
             let (comments, analysis, notes) = try await (commentsRequest, analysisRequest, notesRequest)
             songComments = comments.comments; commentsTotal = comments.total
-            songAnalysis = analysis.text; songImpression = analysis.impression
+            songAnalysis = analysis.text; songAnalysisSource = analysis.source ?? "unknown"; songImpression = analysis.impression
             songNotes = notes.notes
         } catch { self.error = error.localizedDescription }
     }
@@ -715,7 +858,7 @@ private final class TogetherListenModel: ObservableObject {
             let payload: [String: Any] = ["id": song.id, "title": song.title, "artist": song.artist,
                 "audio_url": currentStreamSongID == song.id ? currentStreamURL : ""]
             let result: GeneratedListenAnalysis = try await duetto("/api/song-analysis", method: "POST", body: payload)
-            songAnalysis = result.text
+            songAnalysis = result.text; songAnalysisSource = result.source ?? "unknown"
         } catch { self.error = error.localizedDescription }
     }
 
@@ -813,8 +956,13 @@ private final class TogetherListenModel: ObservableObject {
                 liveContext.append("当前歌曲：《\(current.title)》— \(current.artist)，播放进度 \(elapsed)/\(duration)。")
                 let songContext: ListenSongContext? = try? await duetto(queryPath("/api/song-context", items: [URLQueryItem(name: "id", value: current.id), URLQueryItem(name: "pos", value: String(position))]))
                 if let plays = songContext?.plays { liveContext.append("你们一起听过这首歌 \(plays) 次。") }
-                if let text = songContext?.analysis, !text.isEmpty { liveContext.append("这首歌的一次性完整听感分析（背景记忆）：\n\(text)") }
-                else if let text = generatedAnalysis?.text, !text.isEmpty { liveContext.append("这首歌的一次性完整听感分析（背景记忆）：\n\(text)") }
+                if let text = songContext?.analysis, !text.isEmpty {
+                    let source = songContext?.analysisSource == "audio" ? "模型实际听完整首音频后的赏析" : (songContext?.analysisSource == "lyrics" ? "仅根据歌词推断（没有听到音频）" : "历史分析（来源未记录）")
+                    liveContext.append("\(source)：\n\(text)")
+                } else if let text = generatedAnalysis?.text, !text.isEmpty {
+                    let source = generatedAnalysis?.source == "audio" ? "模型实际听完整首音频后的赏析" : "仅根据歌词推断（没有听到音频）"
+                    liveContext.append("\(source)：\n\(text)")
+                }
                 if let impression = songContext?.impression, !impression.isEmpty { liveContext.append("你们关于这首歌的长期回忆：\n\(impression)") }
                 if let notes = songContext?.notes, !notes.isEmpty {
                     let history = notes.map { note in
@@ -890,7 +1038,14 @@ private final class TogetherListenModel: ObservableObject {
             components.queryItems = [URLQueryItem(name: "room", value: room), URLQueryItem(name: "token", value: token)]
             guard let url = components.url else { return }
             let socket = URLSession.shared.webSocketTask(with: url)
-            roomSocket = socket; socket.resume(); roomConnected = true
+            roomSocket = socket; socket.resume(); roomConnected = false
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                socket.sendPing { error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume() }
+                }
+            }
+            roomConnected = true
             Task { @MainActor [weak self] in await self?.receiveSocket(socket) }
         } catch { roomConnected = false }
     }
@@ -941,7 +1096,7 @@ private final class TogetherListenModel: ObservableObject {
     private func applyRemoteSong(_ song: NeteaseSong, position: Double, playing: Bool) async {
         isRemotePlayback = true
         if current?.id != song.id {
-            current = song; queue = [song]
+            current = song; queue = [song]; hasExplicitPlaylistQueue = false
             do {
                 let stream: NeteaseSongStream = try await duetto(queryPath("/api/ncm/song-url", items: [URLQueryItem(name: "id", value: song.id)]))
                 guard let url = URL(string: stream.url), url.scheme == "https" else { return }
@@ -956,11 +1111,39 @@ private final class TogetherListenModel: ObservableObject {
     }
 }
 
+@MainActor
+final class TogetherListenChatPlayback: ObservableObject {
+    static let shared = TogetherListenChatPlayback()
+    @Published private(set) var current: NeteaseSong?
+    @Published private(set) var isPlaying = false
+    @Published private(set) var position: Double = 0
+    @Published private(set) var currentLyricText = ""
+    private let model = TogetherListenModel.shared
+    private var cancellables = Set<AnyCancellable>()
+
+    private init() {
+        Publishers.CombineLatest4(model.$current, model.$isPlaying, model.$position, model.$lyrics)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] song, playing, position, lyrics in
+                self?.current = song
+                self?.isPlaying = playing
+                self?.position = position
+                self?.currentLyricText = lyrics.last(where: { $0.time <= position })?.text ?? ""
+            }
+            .store(in: &cancellables)
+    }
+
+    func togglePlayback() { model.togglePlayback() }
+    func seek(_ position: Double) { model.seek(position) }
+    func chatContext() async -> String? { await model.chatListeningContext() }
+}
+
 private struct AnyCodableValue: Decodable { init(from decoder: Decoder) throws { _ = try decoder.singleValueContainer() } }
 
 struct TogetherListenView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = TogetherListenModel.shared
+    var onOpenChat: (() -> Void)? = nil
     @State private var showError = false
     @State private var showSongDetail = false
     @State private var showSettings = false
@@ -1001,6 +1184,10 @@ struct TogetherListenView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: { Image(systemName: "gearshape").foregroundStyle(ListenColors.heart) }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { onOpenChat?() } label: { Image(systemName: "bubble.left.and.bubble.right").foregroundStyle(ListenColors.heart) }
+                        .accessibilityLabel("边听边聊")
                 }
             }
             .toolbarBackground(ListenColors.background, for: .navigationBar)
@@ -1218,7 +1405,6 @@ struct TogetherListenView: View {
                 }.padding(.horizontal, 14).padding(.vertical, 24)
             }
             .frame(height: 278)
-            .background(.white.opacity(0.38), in: RoundedRectangle(cornerRadius: 24))
             .onChange(of: activeLyricID) { _, id in if let id { withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) } } }
             }
         }
@@ -1324,44 +1510,35 @@ struct TogetherListenView: View {
         VStack(alignment: .leading, spacing: 16) {
             pageHeading("一起听", caption: "房间 \(model.room) · 播放进度实时同步")
             HStack(spacing: 9) {
-                Button { model.showingArchive = false } label: { Label("房间", systemImage: "bubble.left.and.bubble.right").frame(maxWidth: .infinity).padding(.vertical, 11).background(!model.showingArchive ? .white : .clear, in: Capsule()) }
+                Button { model.showingArchive = false } label: { Label("播放与聊天", systemImage: "headphones").frame(maxWidth: .infinity).padding(.vertical, 11).background(!model.showingArchive ? .white : .clear, in: Capsule()) }
                 Button { model.showingArchive = true; if model.listenStats == nil { Task { await model.loadArchive() } } } label: { Label("听歌档案", systemImage: "books.vertical").frame(maxWidth: .infinity).padding(.vertical, 11).background(model.showingArchive ? .white : .clear, in: Capsule()) }
             }.font(.system(size: 13, weight: .medium)).foregroundStyle(ListenColors.plumBrown)
                 .padding(4).background(ListenColors.background.opacity(0.8), in: Capsule())
             if model.showingArchive {
                 archiveContent
             } else {
-            HStack(spacing: 12) {
-                Image(systemName: "headphones").font(.system(size: 22)).foregroundStyle(ListenColors.heart).frame(width: 48, height: 48).background(ListenColors.background, in: RoundedRectangle(cornerRadius: 15))
-                VStack(alignment: .leading, spacing: 3) { Text(model.roomName.isEmpty ? "我们的听歌房" : model.roomName).font(.system(size: 16, weight: .semibold)); Text(model.roomConnected ? "已连接 · 歌曲和播放进度正在同步" : "连接中…").font(.system(size: 12)).foregroundStyle(.secondary) }
-                Spacer(); Circle().fill(model.roomConnected ? .green.opacity(0.75) : .gray.opacity(0.5)).frame(width: 9, height: 9)
-            }.padding(16).background(.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 20))
-            VStack(alignment: .leading, spacing: 12) {
-                Text("房间消息").font(.system(size: 18, weight: .semibold, design: .serif)).foregroundStyle(ListenColors.plumBrown)
-                if model.messages.isEmpty { Text("说点什么，和房间里的人分享这一刻。").font(.system(size: 13)).foregroundStyle(.secondary).padding(.vertical, 10) }
-                ForEach(model.messages.suffix(40)) { message in
-                    HStack(alignment: .top, spacing: 10) {
-                        Circle().fill(message.actorID == model.actorID ? ListenColors.heart.opacity(0.65) : ListenColors.plumBrown.opacity(0.3)).frame(width: 8, height: 8).padding(.top, 6)
-                        VStack(alignment: .leading, spacing: 3) { Text(message.sender).font(.system(size: 11, weight: .semibold)).foregroundStyle(ListenColors.heart); Text(message.text).font(.system(size: 14)).foregroundStyle(ListenColors.plumBrown) }
-                        Spacer(minLength: 0)
-                    }.padding(11).background(.white.opacity(0.65), in: RoundedRectangle(cornerRadius: 14))
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
+                    Image(systemName: "headphones").font(.system(size: 22)).foregroundStyle(ListenColors.heart).frame(width: 48, height: 48).background(ListenColors.background, in: RoundedRectangle(cornerRadius: 15))
+                    VStack(alignment: .leading, spacing: 3) { Text(model.roomName.isEmpty ? "我们的听歌房" : model.roomName).font(.system(size: 16, weight: .semibold)); Text(model.roomConnected ? "房间已连接 · 播放进度同步中" : "连接中…").font(.system(size: 12)).foregroundStyle(.secondary) }
+                    Spacer(); Circle().fill(model.roomConnected ? .green.opacity(0.75) : .gray.opacity(0.5)).frame(width: 9, height: 9)
                 }
-                if !model.quoteDraft.isEmpty {
-                    HStack(spacing: 8) {
-                        Image(systemName: "quote.opening").foregroundStyle(ListenColors.heart)
-                        Text(model.quoteDraft).lineLimit(2).font(.system(size: 12, design: .serif)).foregroundStyle(ListenColors.plumBrown)
+                Text("播放时可以离开此页。音乐会继续，聊天顶部会显示正在播放的歌曲、进度和当前歌词。")
+                    .font(.system(size: 14)).foregroundStyle(.secondary)
+                Button { onOpenChat?() } label: {
+                    Label("去聊天，边听边聊", systemImage: "bubble.left.and.bubble.right.fill")
+                        .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                        .frame(maxWidth: .infinity).padding(.vertical, 15).background(ListenColors.heart, in: Capsule())
+                }.buttonStyle(.plain).disabled(onOpenChat == nil)
+                if let current = model.current {
+                    HStack(spacing: 10) {
+                        Text("正在播放").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        Text("\(current.title) · \(current.artist)").font(.system(size: 13, weight: .semibold)).lineLimit(1)
                         Spacer()
-                        Button { model.quoteDraft = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
-                    }.padding(10).background(ListenColors.background.opacity(0.85), in: RoundedRectangle(cornerRadius: 12))
+                        Button { model.togglePlayback() } label: { Image(systemName: model.isPlaying ? "pause.fill" : "play.fill").foregroundStyle(ListenColors.heart) }
+                    }
                 }
-                HStack(spacing: 10) {
-                    TextField("发送消息…", text: $model.messageDraft, axis: .vertical).lineLimit(1...4).padding(12).background(ListenColors.background.opacity(0.8), in: RoundedRectangle(cornerRadius: 16)).onSubmit { Task { await model.sendMessage() } }
-                    Button { Task { await model.askRoomAI() } } label: {
-                        Image(systemName: model.isThinking ? "ellipsis" : "sparkles").font(.system(size: 16, weight: .semibold)).foregroundStyle(ListenColors.heart).frame(width: 40, height: 40).background(ListenColors.heart.opacity(0.12), in: Circle())
-                    }.disabled(model.isThinking || model.messageDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Button { Task { await model.sendMessage() } } label: { Image(systemName: "arrow.up").font(.system(size: 16, weight: .bold)).foregroundStyle(.white).frame(width: 42, height: 42).background(ListenColors.heart, in: Circle()) }
-                }.padding(.top, 5)
-            }.padding(16).background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 22))
+            }.padding(16).background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 22))
             loginCard
             }
         }
@@ -1531,6 +1708,10 @@ private struct ListenSongDetailView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(17).background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 22))
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { Text("听后赏析").font(.system(size: 18, weight: .semibold, design: .serif)); Spacer(); Button { Task { await model.generateSongAnalysis(song) } } label: { Label("生成", systemImage: "sparkles").font(.system(size: 12, weight: .medium)) }.foregroundStyle(ListenColors.heart) }
+                        if !model.songAnalysis.isEmpty {
+                            Text(model.songAnalysisSource == "audio" ? "听觉模型已分析实际播放的完整音频" : (model.songAnalysisSource == "lyrics" ? "这份内容仅依据歌词推断，模型没有听到音频" : "这份分析的音频来源未记录"))
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
                         Text(model.songAnalysis.isEmpty ? "还没有听后赏析。" : model.songAnalysis).font(.system(size: 14)).foregroundStyle(model.songAnalysis.isEmpty ? .secondary : ListenColors.plumBrown).fixedSize(horizontal: false, vertical: true)
                         if !model.songImpression.isEmpty { Divider(); Text("你们的印象").font(.system(size: 13, weight: .semibold)).foregroundStyle(ListenColors.heart); Text(model.songImpression).font(.system(size: 13)).foregroundStyle(ListenColors.plumBrown).fixedSize(horizontal: false, vertical: true) }
                     }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(.white.opacity(0.8), in: RoundedRectangle(cornerRadius: 20))
