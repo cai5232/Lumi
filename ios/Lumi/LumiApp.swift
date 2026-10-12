@@ -74,7 +74,10 @@ private struct LumiRootView: View {
                 })
             }
             .fullScreenCover(isPresented: $showingTogetherListen) {
-                TogetherListenView()
+                TogetherListenView(onOpenChat: {
+                    showingTogetherListen = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showingChat = true }
+                })
             }
             .fullScreenCover(isPresented: $showingLettersMap) {
                 LettersMapView()
