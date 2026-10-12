@@ -93,6 +93,9 @@ private struct LumiRootView: View {
                 showingCalendar = true
                 SharedCalendarDayRouter.shared.open(dayKey: dayKey)
             }
+            .overlay {
+                TogetherListenMiniPlayer { showingTogetherListen = true }
+            }
     }
 }
 

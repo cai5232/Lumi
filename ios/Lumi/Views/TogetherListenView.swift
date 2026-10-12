@@ -195,6 +195,8 @@ private enum ListenSection: String, CaseIterable, Identifiable {
 
 @MainActor
 private final class TogetherListenModel: ObservableObject {
+    static let shared = TogetherListenModel()
+
     @Published var section: ListenSection = .moment
     @Published var login: NeteaseLoginStatus?
     @Published var qr: NeteaseLoginQR?
@@ -253,8 +255,11 @@ private final class TogetherListenModel: ObservableObject {
     private var roomSocket: URLSessionWebSocketTask?
     private var roomSocketTask: Task<Void, Never>?
     private var sleepTask: Task<Void, Never>?
+    private var hasStarted = false
 
     func start() {
+        guard !hasStarted else { return }
+        hasStarted = true
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         try? AVAudioSession.sharedInstance().setActive(true)
         registerRemoteCommands()
@@ -282,7 +287,6 @@ private final class TogetherListenModel: ObservableObject {
         pollTask?.cancel(); qrTask?.cancel(); roomSocketTask?.cancel(); sleepTask?.cancel(); roomSocket?.cancel(with: .goingAway, reason: nil); roomSocket = nil
         if let ticker, let player { player.removeTimeObserver(ticker) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
-        player?.pause()
     }
 
     fileprivate func duettoToken() async throws -> String {
@@ -897,7 +901,7 @@ private struct AnyCodableValue: Decodable { init(from decoder: Decoder) throws {
 
 struct TogetherListenView: View {
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var model = TogetherListenModel()
+    @StateObject private var model = TogetherListenModel.shared
     @State private var showError = false
     @State private var showSongDetail = false
     @State private var showSettings = false
@@ -948,7 +952,6 @@ struct TogetherListenView: View {
             .onChange(of: model.section) { _, section in
                 if section == .library && model.songs.isEmpty { Task { await model.loadRecommendations() } }
             }
-            .onDisappear { model.stop() }
             .alert("一起听", isPresented: $showError, presenting: model.error) { _ in Button("好") { model.error = nil } } message: { Text($0) }
             .onChange(of: model.error) { _, value in showError = value != nil }
             .sheet(isPresented: $showSongDetail) {
@@ -1494,5 +1497,74 @@ private enum ListenColors {
     static let heart = Color(red: 192.0 / 255.0, green: 140.0 / 255.0, blue: 155.0 / 255.0)
     static let pulse = Color(red: 180.0 / 255.0, green: 143.0 / 255.0, blue: 138.0 / 255.0)
     static let plumBrown = Color(red: 50.0 / 255.0, green: 42.0 / 255.0, blue: 45.0 / 255.0)
+}
+
+struct TogetherListenMiniPlayer: View {
+    let onOpen: () -> Void
+    @ObservedObject private var model = TogetherListenModel.shared
+    @State private var offset: CGSize = .zero
+    @State private var dragOrigin: CGSize = .zero
+
+    var body: some View {
+        GeometryReader { geometry in
+            if let song = model.current {
+                ZStack(alignment: .bottomTrailing) {
+                    Button(action: onOpen) {
+                        ZStack {
+                            Circle().fill(.white).shadow(color: ListenColors.plumBrown.opacity(0.22), radius: 12, x: 0, y: 5)
+                            if let url = URL(string: song.cover) {
+                                AsyncImage(url: url) { image in
+                                    image.resizable().scaledToFill()
+                                } placeholder: {
+                                    Image(systemName: "music.note").font(.system(size: 22, weight: .medium)).foregroundStyle(ListenColors.heart)
+                                }
+                                .frame(width: 58, height: 58)
+                                .clipShape(Circle())
+                            } else {
+                                Image(systemName: "music.note").font(.system(size: 22, weight: .medium)).foregroundStyle(ListenColors.heart)
+                            }
+                            Circle().stroke(.white.opacity(0.95), lineWidth: 2)
+                        }
+                        .frame(width: 62, height: 62)
+                        .overlay {
+                            if model.isPlaying {
+                                Circle().stroke(ListenColors.heart.opacity(0.74), lineWidth: 2).padding(-4)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("返回一起听：\(song.title)")
+
+                    Button { model.togglePlayback() } label: {
+                        Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 25, height: 25)
+                            .background(ListenColors.heart, in: Circle())
+                            .overlay(Circle().stroke(.white, lineWidth: 2))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(model.isPlaying ? "暂停播放" : "继续播放")
+                    .offset(x: 2, y: 2)
+                }
+                .position(x: geometry.size.width - 48 + offset.width, y: geometry.size.height - 148 + offset.height)
+                .gesture(
+                    DragGesture(minimumDistance: 5)
+                        .onChanged { value in
+                            let proposedX = dragOrigin.width + value.translation.width
+                            let proposedY = dragOrigin.height + value.translation.height
+                            offset = CGSize(
+                                width: min(0, max(48 - geometry.size.width, proposedX)),
+                                height: min(100, max(328 - geometry.size.height, proposedY))
+                            )
+                        }
+                        .onEnded { _ in dragOrigin = offset }
+                )
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .ignoresSafeArea()
+        .animation(.spring(response: 0.32, dampingFraction: 0.78), value: model.current?.id)
+    }
 }
 
