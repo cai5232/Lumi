@@ -4,7 +4,7 @@ import Combine
 import MediaPlayer
 import SwiftUI
 
-struct NeteaseSong: Decodable, Identifiable, Equatable {
+struct NeteaseSong: Codable, Identifiable, Equatable {
     let id: String
     let title: String
     let artist: String
@@ -26,7 +26,23 @@ struct NeteaseSong: Decodable, Identifiable, Equatable {
         cover = try values.decodeIfPresent(String.self, forKey: .cover) ?? ""
         durationSeconds = try values.decodeIfPresent(Int.self, forKey: .durationSeconds) ?? values.decodeIfPresent(Int.self, forKey: .dur) ?? 0
     }
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(title, forKey: .title)
+        try values.encode(artist, forKey: .artist)
+        try values.encode(album, forKey: .album)
+        try values.encode(cover, forKey: .cover)
+        try values.encode(durationSeconds, forKey: .durationSeconds)
+    }
     private enum CodingKeys: String, CodingKey { case id, title, name, artist, album, cover, durationSeconds, dur }
+}
+
+private struct RadioHistoryEntry: Codable, Identifiable {
+    var song: NeteaseSong
+    var position: Double
+    var updatedAt: Date
+    var id: String { song.id }
 }
 
 struct NeteaseLoginStatus: Decodable {
@@ -260,6 +276,11 @@ private final class TogetherListenModel: ObservableObject {
     @Published var playMode = 0
     @Published var isFMQueue = false
     @Published var isLoadingFM = false
+    @Published private(set) var radioHistory: [RadioHistoryEntry] = {
+        guard let data = UserDefaults.standard.data(forKey: "lumi.radio.history.v1"),
+              let entries = try? JSONDecoder().decode([RadioHistoryEntry].self, from: data) else { return [] }
+        return entries
+    }()
     @Published var sleepMinutes: Int?
     let api = LumiAPIClient()
     let actorID = UUID().uuidString
@@ -529,13 +550,19 @@ private final class TogetherListenModel: ObservableObject {
             player?.pause(); player = nextPlayer; nextPlayer.play(); isPlaying = true
             installEndObserver(for: nextPlayer)
             ticker = nextPlayer.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 2), queue: .main) { [weak self] time in
-                Task { @MainActor in self?.position = time.seconds.isFinite ? max(0, time.seconds) : 0; self?.updateNowPlaying() }
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.position = time.seconds.isFinite ? max(0, time.seconds) : 0
+                    if self.isFMQueue, let current = self.current { self.updateRadioHistory(current, position: self.position) }
+                    self.updateNowPlaying()
+                }
             }
             updateNowPlaying()
             prefetchNextStreams(after: song)
             if !hasExplicitPlaylistQueue && !isFMQueue && queue.count == 1 {
                 Task { await self.prepareContinuousQueue(after: song) }
             }
+            if isFMQueue { updateRadioHistory(song, position: 0) }
             Task { await self.publishRoomState() }
             let _: [String: AnyCodableValue] = try await duetto("/api/listen-log", method: "POST", body: ["id": song.id, "title": song.title, "artist": song.artist, "cover": song.cover, "dur": song.durationSeconds, "url": url.absoluteString])
         } catch { self.error = error.localizedDescription; isPlaying = false }
@@ -682,6 +709,25 @@ private final class TogetherListenModel: ObservableObject {
             await play(first)
             isFMQueue = true
         } catch { self.error = error.localizedDescription }
+    }
+
+    func playRadioHistory(_ entry: RadioHistoryEntry) async {
+        queue = radioHistory.map(\.song)
+        isFMQueue = true
+        await play(entry.song)
+        isFMQueue = true
+    }
+
+    private func updateRadioHistory(_ song: NeteaseSong, position: Double) {
+        if let index = radioHistory.firstIndex(where: { $0.song.id == song.id }) {
+            radioHistory[index].position = position
+            radioHistory[index].updatedAt = .now
+        } else {
+            radioHistory.insert(RadioHistoryEntry(song: song, position: position, updatedAt: .now), at: 0)
+        }
+        radioHistory.sort { $0.updatedAt > $1.updatedAt }
+        radioHistory = Array(radioHistory.prefix(30))
+        if let data = try? JSONEncoder().encode(radioHistory) { UserDefaults.standard.set(data, forKey: "lumi.radio.history.v1") }
     }
 
     private func appendFMPage() async {
@@ -1773,6 +1819,190 @@ private enum ListenColors {
     static let heart = Color(red: 192.0 / 255.0, green: 140.0 / 255.0, blue: 155.0 / 255.0)
     static let pulse = Color(red: 180.0 / 255.0, green: 143.0 / 255.0, blue: 138.0 / 255.0)
     static let plumBrown = Color(red: 50.0 / 255.0, green: 42.0 / 255.0, blue: 45.0 / 255.0)
+}
+
+struct RadioView: View {
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var model = TogetherListenModel.shared
+    @AppStorage("lumi.radio.subscribed") private var isSubscribed = false
+    @AppStorage("lumi.radio.program") private var savedProgram = "私人 FM"
+    @AppStorage("lumi.radio.duration") private var savedDuration = 30
+    @State private var showingSubscription = false
+    @State private var selectedProgram = "私人 FM"
+    @State private var selectedDuration = 30
+    private let programs = ["私人 FM", "每日推荐", "最近常听"]
+    private let durations = [15, 30, 45, 60, 90]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 20) {
+                    Button { playProgram(savedProgram, duration: nil) } label: {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 25, style: .continuous)
+                                .fill(LinearGradient(colors: [Color(red: 0.31, green: 0.22, blue: 0.30), Color(red: 0.72, green: 0.40, blue: 0.49), Color(red: 0.92, green: 0.68, blue: 0.66)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                            VStack(spacing: 15) {
+                                Image(systemName: "dot.radiowaves.left.and.right")
+                                    .font(.system(size: 45, weight: .light))
+                                    .foregroundStyle(.white.opacity(0.92))
+                                HStack(spacing: 5) {
+                                    ForEach(0..<31, id: \.self) { index in
+                                        Capsule().fill(.white.opacity(0.76))
+                                            .frame(width: 3, height: CGFloat(8 + ((index * 17 + 5) % 25)))
+                                    }
+                                }
+                                Image(systemName: "play.circle.fill")
+                                    .font(.system(size: 42, weight: .light))
+                                    .foregroundStyle(.white.opacity(0.95))
+                            }
+                        }
+                        .frame(height: 220)
+                        .overlay(alignment: .topLeading) {
+                            Text("LUMI RADIO").font(.system(size: 10, weight: .bold, design: .rounded)).tracking(2).foregroundStyle(.white.opacity(0.8)).padding(18)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("晚风电台").font(.system(size: 25, weight: .bold, design: .serif)).foregroundStyle(ListenColors.plumBrown)
+                        Text("把喜欢的声音，留一段时间给自己").font(.system(size: 13)).foregroundStyle(.secondary)
+                    }
+
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("历史电台").font(.system(size: 20, weight: .semibold, design: .serif)).foregroundStyle(ListenColors.plumBrown)
+                        Spacer()
+                        if !model.radioHistory.isEmpty { Text("\(model.radioHistory.count) 首").font(.system(size: 12)).foregroundStyle(.secondary) }
+                    }
+
+                    if model.radioHistory.isEmpty {
+                        VStack(spacing: 9) {
+                            Image(systemName: "waveform").font(.system(size: 25)).foregroundStyle(ListenColors.heart)
+                            Text("听过的电台会留在这里").font(.system(size: 13)).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 35)
+                        .background(.white.opacity(0.75), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    } else {
+                        VStack(spacing: 10) {
+                            ForEach(model.radioHistory) { entry in
+                                Button { Task { await model.playRadioHistory(entry) } } label: {
+                                    HStack(spacing: 12) {
+                                        AsyncImage(url: URL(string: entry.song.cover)) { phase in
+                                            if let image = phase.image { image.resizable().scaledToFill() }
+                                            else { Image(systemName: "music.note").foregroundStyle(ListenColors.heart).frame(maxWidth: .infinity, maxHeight: .infinity).background(ListenColors.background) }
+                                        }
+                                        .frame(width: 66, height: 66).clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                                        VStack(alignment: .leading, spacing: 6) {
+                                            Text(entry.song.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(ListenColors.plumBrown).lineLimit(1)
+                                            Text(entry.song.artist.isEmpty ? "私人 FM" : entry.song.artist).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                            ProgressView(value: entry.song.durationSeconds > 0 ? min(1, entry.position / Double(entry.song.durationSeconds)) : 0)
+                                                .tint(ListenColors.heart)
+                                            HStack {
+                                                Text(radioTime(entry.position))
+                                                Spacer()
+                                                Text(radioTime(Double(entry.song.durationSeconds)))
+                                            }.font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                                        }
+                                        Spacer(minLength: 0)
+                                        Image(systemName: model.current?.id == entry.song.id && model.isPlaying ? "waveform" : "play.fill")
+                                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(ListenColors.heart)
+                                    }
+                                    .padding(10)
+                                    .background(.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: 540)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 30)
+            }
+            .background(ListenColors.background.ignoresSafeArea())
+            .navigationTitle("电台").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: { Image(systemName: "xmark").font(.system(size: 14, weight: .semibold)).foregroundStyle(ListenColors.heart) }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { selectedProgram = savedProgram; selectedDuration = savedDuration; showingSubscription = true } label: {
+                        Label(isSubscribed ? "已订阅" : "订阅", systemImage: isSubscribed ? "bell.badge.fill" : "bell.badge")
+                            .font(.system(size: 13, weight: .medium)).foregroundStyle(ListenColors.heart)
+                    }
+                }
+            }
+            .sheet(isPresented: $showingSubscription) { subscriptionSheet }
+            .task { model.start() }
+        }
+        .tint(ListenColors.heart)
+        .preferredColorScheme(.light)
+    }
+
+    private var subscriptionSheet: some View {
+        NavigationStack {
+            Form {
+                Section("选择节目") {
+                    Picker("电台节目", selection: $selectedProgram) {
+                        ForEach(programs, id: \.self) { Text($0).tag($0) }
+                    }
+                }
+                Section {
+                    Picker("收听时长", selection: $selectedDuration) {
+                        ForEach(durations, id: \.self) { minutes in Text("\(minutes) 分钟").tag(minutes) }
+                    }
+                    .pickerStyle(.wheel)
+                    .frame(height: 130)
+                } header: { Text("播放多久后自动停止") }
+                if isSubscribed {
+                    Section {
+                        Button("取消订阅", role: .destructive) { isSubscribed = false; showingSubscription = false }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(ListenColors.background)
+            .navigationTitle("订阅电台").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { showingSubscription = false } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(isSubscribed ? "保存并收听" : "订阅并收听") {
+                        isSubscribed = true; savedProgram = selectedProgram; savedDuration = selectedDuration
+                        showingSubscription = false
+                        playProgram(selectedProgram, duration: selectedDuration)
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func playProgram(_ program: String, duration: Int?) {
+        Task {
+            switch program {
+            case "每日推荐":
+                await model.loadRecommendations()
+                if let first = model.songs.first {
+                    model.queue = model.songs; model.isFMQueue = true
+                    await model.play(first); model.isFMQueue = true
+                }
+            case "最近常听":
+                await model.loadRecentNetease()
+                if let first = model.songs.first {
+                    model.queue = model.songs; model.isFMQueue = true
+                    await model.play(first); model.isFMQueue = true
+                }
+            default:
+                await model.startFM()
+            }
+            if let duration { model.setSleepTimer(duration) }
+        }
+    }
+
+    private func radioTime(_ seconds: Double) -> String {
+        let value = max(0, Int(seconds.isFinite ? seconds : 0))
+        return String(format: "%d:%02d", value / 60, value % 60)
+    }
 }
 
 struct TogetherListenMiniPlayer: View {
