@@ -13,6 +13,35 @@ enum LumiAPIError: LocalizedError {
     }
 }
 
+struct LumiEmotionDriveValue: Decodable, Identifiable {
+    let v: Double
+    let z: String
+    let b: Double
+    var id: String { z }
+}
+
+struct LumiEmotionTop: Decodable {
+    let drive: String
+    let value: Double
+    let label: String
+}
+
+struct LumiEmotionStateResponse: Decodable {
+    let time: String
+    let drives: [String: LumiEmotionDriveValue]
+    let top: LumiEmotionTop
+}
+
+struct LumiEmotionArcEntry: Decodable, Identifiable {
+    let id: String
+    let time: String
+    let drive: String
+    let zh: String
+    let val: Double
+    let text: String
+    let type: String
+}
+
 final class LumiAPIClient {
     // Zeabur 公网 API；真机和模拟器都可以直接访问。
     var baseURL = URL(string: "https://lumi-tokyo-api.zeabur.app")!
@@ -290,6 +319,28 @@ final class LumiAPIClient {
 
     func fetchSubscriptionUsage() async throws -> SubscriptionUsage {
         var request = URLRequest(url: baseURL.appending(path: "/v1/subscription/usage"))
+        addPushAuthorization(to: &request)
+        return try await perform(request)
+    }
+
+    func fetchEmotionState(chatID: String = "default") async throws -> LumiEmotionStateResponse {
+        try await emotionRequest(chatID: chatID, operation: "state")
+    }
+
+    func fetchEmotionMurmurs(chatID: String = "default", limit: Int = 200) async throws -> [LumiEmotionArcEntry] {
+        try await emotionRequest(chatID: chatID, operation: "arc", query: [
+            URLQueryItem(name: "type", value: "murmur"),
+            URLQueryItem(name: "n", value: String(max(1, min(200, limit))))
+        ])
+    }
+
+    private func emotionRequest<T: Decodable>(chatID: String, operation: String, query: [URLQueryItem] = []) async throws -> T {
+        let pathCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+        let safeChatID = chatID.addingPercentEncoding(withAllowedCharacters: pathCharacters) ?? "default"
+        var components = URLComponents(url: baseURL.appending(path: "/v1/chats/\(safeChatID)/emotion/\(operation)"), resolvingAgainstBaseURL: false)!
+        components.queryItems = query.isEmpty ? nil : query
+        var request = URLRequest(url: components.url!)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         addPushAuthorization(to: &request)
         return try await perform(request)
     }

@@ -572,7 +572,7 @@ private final class TogetherListenModel: ObservableObject {
 
     private func advanceAfterTrackEnds() async {
         guard let current else { return }
-        if playMode == 1 { player?.seek(to: .zero); player?.play(); position = 0; return }
+        if playMode == 1 { await player?.seek(to: .zero); await player?.play(); position = 0; return }
         let index = queue.firstIndex(where: { $0.id == current.id }) ?? 0
         if queue.count > 1 {
             if !hasExplicitPlaylistQueue && index == queue.count - 1 && playMode != 2 {
@@ -592,7 +592,7 @@ private final class TogetherListenModel: ObservableObject {
             return
         }
         if hasExplicitPlaylistQueue {
-            player?.seek(to: .zero); player?.play(); position = 0; isPlaying = true
+            await player?.seek(to: .zero); await player?.play(); position = 0; isPlaying = true
             return
         }
         // A single manually selected track is not a playlist: continue with NCM daily recommendations.
@@ -601,7 +601,7 @@ private final class TogetherListenModel: ObservableObject {
             let candidates = result.songs.filter { $0.id != current.id }
             let fallback = songs.filter { $0.id != current.id }
             let continuousSongs = candidates.isEmpty ? fallback : candidates
-            guard !continuousSongs.isEmpty else { player?.seek(to: .zero); player?.play(); position = 0; isPlaying = true; return }
+            guard !continuousSongs.isEmpty else { await player?.seek(to: .zero); await player?.play(); position = 0; isPlaying = true; return }
             let next = playMode == 2 ? continuousSongs.randomElement()! : continuousSongs[0]
             queue = [current] + continuousSongs
             hasExplicitPlaylistQueue = false
@@ -609,7 +609,7 @@ private final class TogetherListenModel: ObservableObject {
         } catch {
             // If NCM recommendations are down, continue from songs already loaded in the library.
             let fallback = songs.filter { $0.id != current.id }
-            guard !fallback.isEmpty else { player?.seek(to: .zero); player?.play(); position = 0; isPlaying = true; return }
+            guard !fallback.isEmpty else { await player?.seek(to: .zero); await player?.play(); position = 0; isPlaying = true; return }
             let next = playMode == 2 ? fallback.randomElement()! : fallback[0]
             queue = [current] + fallback
             hasExplicitPlaylistQueue = false
