@@ -339,6 +339,8 @@ final class LumiAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
         #else
         let environment = "production"
         #endif
+        UserDefaults.standard.set(token, forKey: "lumi.apnsToken")
+        UserDefaults.standard.set(environment, forKey: "lumi.apnsEnvironment")
         Task {
             do { try await LumiAPIClient().registerPushToken(token, environment: environment) }
             catch { print("Push token registration failed: \(error.localizedDescription)") }
@@ -408,6 +410,8 @@ final class LumiNativeCalls: NSObject, PKPushRegistryDelegate, CXProviderDelegat
         #else
         let environment = "production"
         #endif
+        UserDefaults.standard.set(token, forKey: "lumi.voipToken")
+        UserDefaults.standard.set(environment, forKey: "lumi.voipEnvironment")
         Task {
             do { try await LumiAPIClient().registerVoIPToken(token, environment: environment) }
             catch { print("VoIP token registration failed: \(error.localizedDescription)") }
@@ -425,6 +429,8 @@ final class LumiNativeCalls: NSObject, PKPushRegistryDelegate, CXProviderDelegat
             completion()
             return
         }
+        UserDefaults.standard.set(payload.dictionaryPayload["reason"] as? String ?? "", forKey: "lumi.callReason.\(callID.lowercased())")
+        UserDefaults.standard.set(payload.dictionaryPayload["expiresAt"] as? String ?? "", forKey: "lumi.callExpiresAt.\(callID.lowercased())")
         reportIncomingCall(callID: callID, callerName: payload.dictionaryPayload["callerName"] as? String ?? "沈屿", completion: completion)
     }
 
@@ -434,8 +440,13 @@ final class LumiNativeCalls: NSObject, PKPushRegistryDelegate, CXProviderDelegat
         reportIncomingCall(callID: callID, callerName: "沈屿")
     }
 
-    func reportServerIncomingCall(_ callID: String, callerName: String = "沈屿") {
+    func reportServerIncomingCall(_ callID: String, callerName: String = "沈屿", reason: String = "") {
+        if !reason.isEmpty { UserDefaults.standard.set(reason, forKey: "lumi.callReason.\(callID.lowercased())") }
         reportIncomingCall(callID: callID, callerName: callerName)
+    }
+
+    func setExpiry(_ expiresAt: String, for callID: String) {
+        UserDefaults.standard.set(expiresAt, forKey: "lumi.callExpiresAt.\(callID.lowercased())")
     }
 
     func isLocallyInitiatedCall(_ callID: String) -> Bool {
@@ -465,7 +476,9 @@ final class LumiNativeCalls: NSObject, PKPushRegistryDelegate, CXProviderDelegat
             }
             completion?()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+        let expiryText = UserDefaults.standard.string(forKey: "lumi.callExpiresAt.\(normalizedCallID)") ?? ""
+        let expiry = ISO8601DateFormatter().date(from: expiryText) ?? Date().addingTimeInterval(60)
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, expiry.timeIntervalSinceNow)) { [weak self] in
             guard let self, self.ringingCallID?.lowercased() == normalizedCallID else { return }
             self.ringingCallID = nil
             self.locallyInitiatedCallIDs.remove(callID.lowercased())
@@ -501,6 +514,8 @@ final class LumiNativeCalls: NSObject, PKPushRegistryDelegate, CXProviderDelegat
         } else if !wasLocallyInitiated {
             Task { _ = try? await LumiAPIClient().answerIncomingCall(callID, action: "decline", to: "default") }
         }
+        UserDefaults.standard.removeObject(forKey: "lumi.callReason.\(callID)")
+        UserDefaults.standard.removeObject(forKey: "lumi.callExpiresAt.\(callID)")
         action.fulfill()
     }
 

@@ -422,27 +422,30 @@ final class LumiAPIClient {
         baseURL.appending(path: "/v1/chats/\(chatID)/gallery/\(itemID)/image")
     }
 
-    func startCall(to id: String, tts: TTSRequestSettings?) async throws -> CallStartResponse {
+    func startCall(to id: String, tts: TTSRequestSettings?, softVoice: Bool = false) async throws -> CallStartResponse {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/calls"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
         request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
-        request.httpBody = try JSONEncoder.api.encode(CallStartRequest(systemPrompt: LumiSystemPrompt.main, tts: tts))
+        request.httpBody = try JSONEncoder.api.encode(CallStartRequest(systemPrompt: LumiSystemPrompt.main, tts: tts, softVoice: softVoice))
         return try await perform(request)
     }
 
-    func sendCallTurn(_ content: String, callID: String, to id: String, tts: TTSRequestSettings?) async throws -> CallTurnResponse {
+    func sendCallTurn(_ content: String, callID: String, to id: String, tts: TTSRequestSettings?, voiceContext: String? = nil, softVoice: Bool = false) async throws -> CallTurnResponse {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/calls/\(callID)/messages"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
         request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
-        request.httpBody = try JSONEncoder.api.encode(CallTurnRequest(content: content, systemPrompt: LumiSystemPrompt.main, tts: tts))
+        request.httpBody = try JSONEncoder.api.encode(CallTurnRequest(content: content, systemPrompt: LumiSystemPrompt.main, tts: tts, voiceContext: voiceContext, softVoice: softVoice))
         return try await perform(request)
     }
 
     func endCall(_ callID: String, to id: String) async throws -> CallEndResponse {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/calls/\(callID)/end"))
         request.httpMethod = "POST"
+        addPushAuthorization(to: &request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
         return try await perform(request)
@@ -450,16 +453,19 @@ final class LumiAPIClient {
 
     func fetchIncomingCall(from id: String) async throws -> IncomingCallInfo? {
         let request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/calls/pending"))
-        let response: IncomingCallResponse = try await perform(request)
+        var authorizedRequest = request
+        addPushAuthorization(to: &authorizedRequest)
+        let response: IncomingCallResponse = try await perform(authorizedRequest)
         return response.call
     }
 
-    func answerIncomingCall(_ callID: String, action: String, to id: String, tts: TTSRequestSettings? = nil, note: String? = nil) async throws -> CallStartResponse {
+    func answerIncomingCall(_ callID: String, action: String, to id: String, tts: TTSRequestSettings? = nil, note: String? = nil, softVoice: Bool = false) async throws -> CallStartResponse {
         var request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/calls/\(callID)/answer"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
         request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
-        request.httpBody = try JSONEncoder.api.encode(CallAnswerRequest(action: action, systemPrompt: LumiSystemPrompt.main, tts: tts, note: note))
+        request.httpBody = try JSONEncoder.api.encode(CallAnswerRequest(action: action, systemPrompt: LumiSystemPrompt.main, tts: tts, note: note, softVoice: softVoice))
         return try await perform(request)
     }
 
@@ -506,6 +512,18 @@ final class LumiAPIClient {
         addPushAuthorization(to: &request)
         request.httpBody = try JSONEncoder.api.encode(PushTokenRegistration(token: token, environment: environment, threadId: "default"))
         let _: PushTokenRegistrationResponse = try await perform(request)
+    }
+
+    func syncRegisteredPushTokens() async {
+        let defaults = UserDefaults.standard
+        if let token = defaults.string(forKey: "lumi.apnsToken"),
+           let environment = defaults.string(forKey: "lumi.apnsEnvironment") {
+            try? await registerPushToken(token, environment: environment)
+        }
+        if let token = defaults.string(forKey: "lumi.voipToken"),
+           let environment = defaults.string(forKey: "lumi.voipEnvironment") {
+            try? await registerVoIPToken(token, environment: environment)
+        }
     }
 
     func registerVoIPToken(_ token: String, environment: String) async throws {

@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createPrivateKey, randomUUID, sign as cryptoSign, timingSafeEqual } from "node:crypto";
+import { connect as connectHTTP2 } from "node:http2";
 import { createServer, request as httpRequest } from "node:http";
 import { connect as connectSocket } from "node:net";
 import ncm from "NeteaseCloudMusicApi";
@@ -14,6 +15,7 @@ await duettoReady;
 const duettoPort = duettoServer.address().port;
 const mcpClientStore = new McpClientStore(join(dataDir, "mcp-clients.json"));
 const threadPath = join(dataDir, "threads.json");
+const pushDevicesPath = join(dataDir, "push-devices.json");
 const contextLimit = Number(process.env.LUMI_CONTEXT_LIMIT || 200000);
 const compactAt = Number(process.env.LUMI_COMPACT_AT || 0.86);
 const tailTokens = Number(process.env.LUMI_COMPACT_TAIL_TOKENS || 20000);
@@ -24,6 +26,8 @@ const sleepDelayMinutes = Number(process.env.LUMI_SLEEP_DELAY_MINUTES || 60);
 const sleepHours = Number(process.env.LUMI_SLEEP_HOURS || 5.5);
 const sleepCycles = Number(process.env.LUMI_SLEEP_CYCLES || 3);
 const sleepInsomniaProbability = Number(process.env.LUMI_SLEEP_INSOMNIA_PROBABILITY || 0.15);
+const callInviteSeconds = Math.max(15, Number(process.env.LUMI_CALL_INVITE_SECONDS || 30));
+const callLingerSeconds = Math.max(5, Math.min(30, Number(process.env.LUMI_CALL_LINGER_SECONDS || 18)));
 const screenShareDir = join(dataDir, "screen-share");
 const musicRoomStatePath = join(dataDir, "music-room-state.json");
 const musicRoomMessagesPath = join(dataDir, "music-room-messages.json");
@@ -213,7 +217,7 @@ async function generateSentinelWake(thread) {
     messages: [
       {
         role: "system",
-        content: `你是一个会主动关心用户的 AI。根据主动消息设定“${proactive.message}”自然地发起联系。允许的动作：主动消息=${actions.message ? "是" : "否"}，主动电话=${actions.phone ? "是" : "否"}，查看屏幕=${actions.screen ? "是" : "否"}。关闭的动作绝对不要执行。你还要自己决定下一次主动联系的间隔，单位是分钟，必须是 1 到 1440 的整数。自主唤醒要结合最近聊天、对话摘要和长期记忆，保持上下文连续。${contextSummary}${retrievedMemories}只输出 JSON，不要 Markdown：{"message":"要发给用户的话","nextWakeMinutes":整数}`
+        content: `你是一个会主动关心用户的 AI。根据主动消息设定“${proactive.message}”自然地发起联系。允许的动作：主动消息=${actions.message ? "是" : "否"}，主动电话=${actions.phone ? "是" : "否"}，查看屏幕=${actions.screen ? "是" : "否"}。关闭的动作绝对不要执行。主动电话仅用于用户长时间未回复、你有明确牵挂理由时；每天至多一次，只能在本地中午 12 点到晚上 11 点之间，不要在勿扰或睡眠期间来电。你还要自己决定下一次主动联系的间隔，单位是分钟，必须是 1 到 1440 的整数。自主唤醒要结合最近聊天、对话摘要和长期记忆，保持上下文连续。${contextSummary}${retrievedMemories}只输出 JSON，不要 Markdown：{"message":"要发给用户的话","reason":"来电卡片上的简短理由","action":"message|call|both|none","nextWakeMinutes":整数}`
       },
       { role: "user", content: recent || "还没有聊天记录。" }
     ],
@@ -221,12 +225,165 @@ async function generateSentinelWake(thread) {
   });
   const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || "{}");
   const message = typeof parsed.message === "string" && parsed.message.trim() ? parsed.message.trim() : raw.trim();
+  const requestedAction = ["message", "call", "both", "none"].includes(parsed.action) ? parsed.action : "message";
+  const localHour = Number(new Intl.DateTimeFormat("en-US", { timeZone: process.env.TZ || "Asia/Shanghai", hour: "2-digit", hourCycle: "h23" }).format(new Date()));
+  const mayCallToday = !thread.lastPhoneCallDate || thread.lastPhoneCallDate !== new Date().toLocaleDateString("sv-SE", { timeZone: process.env.TZ || "Asia/Shanghai" });
+  const phoneCallAllowed = actions.phone === true && thread.dnd !== true && mayCallToday && localHour >= 12 && localHour < 23;
+  const messageAllowed = actions.message === true;
+  const action = requestedAction === "both"
+    ? (phoneCallAllowed && messageAllowed ? "both" : phoneCallAllowed ? "call" : messageAllowed ? "message" : "none")
+    : requestedAction === "call"
+      ? (phoneCallAllowed ? "call" : "none")
+      : requestedAction === "message"
+        ? (messageAllowed ? "message" : "none")
+        : "none";
   const fallback = Math.max(1, Number(proactive.intervalMin) || 60);
   const nextWakeMinutes = Math.min(1440, Math.max(1, Math.round(Number(parsed.nextWakeMinutes) || fallback)));
   return {
     message: { id: randomUUID(), role: "assistant", content: message, contentType: "sentinel", createdAt: new Date().toISOString() },
-    nextWakeMinutes
+    nextWakeMinutes,
+    action,
+    reason: String(parsed.reason || message).trim().slice(0, 180)
   };
+}
+
+async function readPushDevices() {
+  try { return JSON.parse(await readFile(pushDevicesPath, "utf8")); }
+  catch { return {}; }
+}
+
+async function savePushDevices(devices) {
+  await mkdir(dataDir, { recursive: true });
+  const temporary = `${pushDevicesPath}.tmp`;
+  await writeFile(temporary, JSON.stringify(devices, null, 2), { mode: 0o600 });
+  await chmod(temporary, 0o600);
+  await rename(temporary, pushDevicesPath);
+}
+
+function appleProviderToken() {
+  const teamID = String(process.env.APNS_TEAM_ID || "").trim();
+  const keyID = String(process.env.APNS_KEY_ID || "").trim();
+  const privateKey = String(process.env.APNS_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+  if (!teamID || !keyID || !privateKey) throw new Error("APNs 未配置：需要 APNS_TEAM_ID、APNS_KEY_ID、APNS_PRIVATE_KEY");
+  const now = Math.floor(Date.now() / 1000);
+  const encode = value => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const unsigned = `${encode({ alg: "ES256", kid: keyID })}.${encode({ iss: teamID, iat: now })}`;
+  const signature = cryptoSign("sha256", Buffer.from(unsigned), { key: createPrivateKey(privateKey), dsaEncoding: "ieee-p1363" }).toString("base64url");
+  return `${unsigned}.${signature}`;
+}
+
+function sendAPNs(device, payload, { voip = false, expiration = 0 } = {}) {
+  return new Promise((resolve, reject) => {
+    const token = appleProviderToken();
+    const environment = device.environment === "sandbox" ? "api.sandbox.push.apple.com" : "api.push.apple.com";
+    const topic = String(process.env.APNS_BUNDLE_ID || "com.cai5232.LumiPush");
+    const client = connectHTTP2(`https://${environment}`);
+    let responseBody = "";
+    client.on("error", reject);
+    client.on("connect", () => {
+      const headers = {
+        ":method": "POST", ":path": `/3/device/${device.token}`,
+        authorization: `bearer ${token}`, "apns-topic": voip ? `${topic}.voip` : topic,
+        "apns-push-type": voip ? "voip" : "alert", "apns-priority": "10",
+        "apns-expiration": String(expiration)
+      };
+      const request = client.request(headers);
+      request.setEncoding("utf8");
+      request.on("response", result => { if (result[":status"] < 200 || result[":status"] >= 300) responseBody = `APNs ${result[":status"]}`; });
+      request.on("data", chunk => { responseBody += chunk; });
+      request.on("end", () => { client.close(); responseBody ? reject(new Error(responseBody)) : resolve(); });
+      request.on("error", error => { client.destroy(); reject(error); });
+      request.end(JSON.stringify(payload));
+    });
+    client.setTimeout(8000, () => { client.destroy(new Error("APNs request timed out")); });
+  });
+}
+
+async function sendIncomingCallPush(threadID, call) {
+  const devices = await readPushDevices();
+  const device = devices[threadID];
+  if (!device) return { sent: false, reason: "device_not_registered" };
+  const expiration = Math.floor(Date.parse(call.expiresAt) / 1000);
+  const jobs = [];
+  if (device.voipToken) jobs.push(sendAPNs({ ...device, token: device.voipToken, environment: device.voipEnvironment || device.environment }, { callId: call.callId, callerName: "沈屿", reason: call.reason, expiresAt: call.expiresAt, aps: { "content-available": 1 } }, { voip: true, expiration }));
+  const isForeground = device.foreground && Date.now() - Date.parse(device.presenceUpdatedAt || 0) < 60_000;
+  if (device.token && !device.voipToken && !isForeground) jobs.push(sendAPNs(device, { aps: { alert: { title: "沈屿来电话了", body: call.reason }, sound: "default", "content-available": 1 }, kind: "incoming_call", callId: call.callId }, { expiration }));
+  if (!jobs.length) return { sent: false, reason: "no_push_token" };
+  const results = await Promise.allSettled(jobs);
+  const failures = results.filter(result => result.status === "rejected").map(result => result.reason?.message || "APNs error");
+  return { sent: failures.length < jobs.length, errors: failures };
+}
+
+async function sendProactiveMessagePush(threadID, message) {
+  const device = (await readPushDevices())[threadID];
+  if (!device?.token) return;
+  if (device.foreground && Date.now() - Date.parse(device.presenceUpdatedAt || 0) < 60_000) return;
+  await sendAPNs(device, { aps: { alert: { title: "沈屿", body: String(message || "有一条新消息").slice(0, 200) }, sound: "default", "content-available": 1 }, kind: "assistant_message" });
+}
+
+function ensureCallStore(thread) {
+  if (!thread.calls || typeof thread.calls !== "object") thread.calls = {};
+  return thread.calls;
+}
+
+function stripCallMarkers(text) {
+  let result = String(text || "");
+  const hangup = /(?:⟪|《|【|\[)\s*(?:挂断|hangup)\s*(?:⟫|》|】|\])/i.test(result);
+  result = result.replace(/(?:⟪|《|【|\[)\s*(?:挂断|hangup)\s*(?:⟫|》|】|\])/gi, "");
+  return { text: result.trim(), hangupAfterPlayback: hangup };
+}
+
+async function synthesizeCallSpeech(text, tts, softVoice = false) {
+  if (!tts?.enabled || !tts.apiKey || !tts.voiceID) return { speechError: "语音服务尚未配置" };
+  try {
+    const host = new URL(String(tts.baseURL || ""));
+    const provider = tts.provider === "elevenlabs" ? "elevenlabs" : "minimax";
+    const allowedHosts = provider === "elevenlabs" ? ["api.elevenlabs.io"] : ["api.minimaxi.com", "api.minimax.io"];
+    if (host.protocol !== "https:" || !allowedHosts.includes(host.hostname)) throw new Error("语音服务地址不在允许的服务商域名内");
+    const endpoint = provider === "elevenlabs"
+      ? new URL(`/v1/text-to-speech/${encodeURIComponent(tts.voiceID)}`, host)
+      : new URL("/v1/t2a_v2", host);
+    const request = provider === "elevenlabs"
+      ? { method: "POST", headers: { "content-type": "application/json", "xi-api-key": tts.apiKey, accept: "audio/mpeg" }, body: JSON.stringify({ text, model_id: tts.model || "eleven_v4_turbo", voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: softVoice ? 0.82 : 1 } }) }
+      : { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tts.apiKey}` }, body: JSON.stringify({ model: tts.model || "speech-2.8-hd", text, stream: false, voice_setting: { voice_id: tts.voiceID, speed: softVoice ? 0.82 : 1, vol: softVoice ? 0.62 : 1, pitch: 0 }, audio_setting: { audio_sample_rate: 32000, bitrate: 128000, format: "mp3" } }) };
+    const response = await fetch(endpoint, { ...request, signal: AbortSignal.timeout(45_000), redirect: "error" });
+    if (!response.ok) throw new Error(`语音服务返回 ${response.status}`);
+    if (provider === "elevenlabs") {
+      const audio = Buffer.from(await response.arrayBuffer());
+      return { speechAudioBase64: audio.toString("base64"), speechDuration: null, speechScript: text };
+    }
+    const data = await response.json();
+    const audioHex = data?.data?.audio;
+    if (!audioHex || !/^(?:[\da-f]{2})+$/i.test(audioHex)) throw new Error(data?.base_resp?.status_msg || "MiniMax 没有返回 MP3 音频");
+    return { speechAudioBase64: Buffer.from(audioHex, "hex").toString("base64"), speechDuration: null, speechScript: text };
+  } catch (error) { return { speechError: String(error.message || error).slice(0, 300) }; }
+}
+
+async function createPendingCall(threadID, thread, reason) {
+  const calls = ensureCallStore(thread);
+  const existing = Object.values(calls).find(call => call.status === "pending" && Date.parse(call.expiresAt) > Date.now());
+  if (existing) return existing;
+  const call = { callId: randomUUID().toLowerCase(), reason: String(reason || "想听听你的声音").slice(0, 180), status: "pending", createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + callInviteSeconds * 1000).toISOString(), turns: [] };
+  calls[call.callId] = call;
+  const push = await sendIncomingCallPush(threadID, call).catch(error => ({ sent: false, reason: error.message }));
+  call.push = push;
+  return call;
+}
+
+function missedCallMessage(call) {
+  return { id: randomUUID(), role: "assistant", content: `📞 没接到你\n我刚才想问问你：${call.reason}。不急，等你回来再说。`, contentType: "call_status", callID: call.callId, callInitiator: "assistant", callStatus: "missed", createdAt: new Date().toISOString() };
+}
+
+async function expirePendingCalls(thread) {
+  let changed = false;
+  for (const call of Object.values(ensureCallStore(thread))) {
+    if (call.status !== "pending" || Date.parse(call.expiresAt) > Date.now()) continue;
+    call.status = "missed";
+    call.endedAt = new Date().toISOString();
+    thread.messages.push(missedCallMessage(call));
+    changed = true;
+  }
+  return changed;
 }
 
 function safeJSON(text, fallback = {}) {
@@ -327,6 +484,14 @@ async function runBackgroundPulse() {
   for (const thread of Object.values(threads)) {
     const activity = ensureActivity(thread);
     const proactive = ensureProactive(thread);
+    if (await expirePendingCalls(thread)) {
+      const missed = Object.values(ensureCallStore(thread)).filter(call => call.status === "missed" && !call.voicemailPushed).at(-1);
+      if (missed) {
+        missed.voicemailPushed = true;
+        sendProactiveMessagePush(thread.id || "default", `📞 没接到你：${missed.reason}。不急，等你回来再说。`).catch(error => console.warn(`missed-call push skipped: ${error.message}`));
+      }
+      changed = true;
+    }
     const lastUserAt = Date.parse(activity.lastUserActivityAt || 0);
     if (activity.mode === "sentinel" && activity.sleepPendingAt && Date.parse(activity.sleepPendingAt) <= now && lastUserAt <= Date.parse(activity.sleepPendingAt)) {
       if (Math.random() < sleepInsomniaProbability) {
@@ -366,7 +531,21 @@ async function runBackgroundPulse() {
     } else if (proactive.enabled && activity.mode === "sentinel" && activity.nextWakeAt && Date.parse(activity.nextWakeAt) <= now && (proactive.actions?.message !== false || proactive.actions?.phone === true || proactive.actions?.screen === true)) {
       try {
         const wake = await generateSentinelWake(thread);
-        thread.messages.push(wake.message);
+        if (wake.action === "message" || wake.action === "both") {
+          thread.messages.push(wake.message);
+          sendProactiveMessagePush(thread.id || "default", wake.message.content).catch(error => console.warn(`message push skipped: ${error.message}`));
+        }
+        if (wake.action === "call" || wake.action === "both") {
+          const call = await createPendingCall(thread.id || "default", thread, wake.reason);
+          thread.lastPhoneCallDate = new Date().toLocaleDateString("sv-SE", { timeZone: process.env.TZ || "Asia/Shanghai" });
+          call.reason = wake.reason;
+        }
+        if (wake.action === "none") {
+          activity.nextWakeAt = new Date(now + wake.nextWakeMinutes * 60_000).toISOString();
+          proactive.nextDueAt = activity.nextWakeAt;
+          changed = true;
+          continue;
+        }
         activity.nextWakeAt = new Date(now + wake.nextWakeMinutes * 60_000).toISOString();
         proactive.nextDueAt = activity.nextWakeAt;
         changed = true;
@@ -677,6 +856,8 @@ function mcpRequestAuthorized(req) {
   return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes);
 }
 
+const pushRequestAuthorized = mcpRequestAuthorized;
+
 async function body(req) {
   let raw = "";
   for await (const chunk of req) raw += chunk;
@@ -798,6 +979,33 @@ const server = createServer(async (req, res) => {
         return send(res, 200, { ok: true });
       }
       return send(res, 404, { error: "not_found" });
+    }
+    const pushMatch = url.pathname.match(/^\/v1\/push\/(register|voip\/register|presence)$/);
+    if (pushMatch) {
+      if (!pushRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+      const input = req.method === "POST" ? await body(req) : {};
+      const threadID = String(input.threadId || "default").slice(0, 80);
+      const devices = await readPushDevices();
+      const device = devices[threadID] || { environment: "production" };
+      if (pushMatch[1] === "presence" && req.method === "POST") {
+        device.foreground = Boolean(input.foreground);
+        device.presenceUpdatedAt = new Date().toISOString();
+      } else if (pushMatch[1] === "register" && req.method === "POST") {
+        const token = String(input.token || "");
+        if (!/^[\da-f]{32,512}$/i.test(token)) return send(res, 400, { error: "invalid_device_token" });
+        if (!["sandbox", "production"].includes(input.environment)) return send(res, 400, { error: "invalid_push_environment" });
+        device.token = token;
+        device.environment = input.environment;
+      } else if (pushMatch[1] === "voip/register" && req.method === "POST") {
+        const token = String(input.token || "");
+        if (!/^[\da-f]{32,512}$/i.test(token)) return send(res, 400, { error: "invalid_voip_token" });
+        if (!["sandbox", "production"].includes(input.environment)) return send(res, 400, { error: "invalid_push_environment" });
+        device.voipToken = token;
+        device.voipEnvironment = input.environment;
+      } else return send(res, 405, { error: "method_not_allowed" });
+      devices[threadID] = device;
+      await savePushDevices(devices);
+      return send(res, 200, { ok: true, registered: Boolean(device.token), voipRegistered: Boolean(device.voipToken) });
     }
     if (url.pathname === "/v1/mcp/servers") {
       if (!mcpRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
@@ -932,25 +1140,123 @@ const server = createServer(async (req, res) => {
     }
     const settingsPath = url.pathname === "/v1/settings/proactive";
     const activityMatch = url.pathname.match(/^\/v1\/chats\/([^/]+)\/activity$/);
+    const callMatch = url.pathname.match(/^\/v1\/chats\/([^/]+)\/calls(?:\/([^/]+)(?:\/(messages|end|answer))?)?$/);
     const match = url.pathname.match(/^\/v1\/chats\/([^/]+)(\/messages)?$/);
-    if (!match && !activityMatch && !settingsPath) return send(res, 404, { error: "not_found" });
-    const id = decodeURIComponent((match || activityMatch)?.[1] || "default");
+    if (!match && !activityMatch && !settingsPath && !callMatch) return send(res, 404, { error: "not_found" });
+    const id = decodeURIComponent((match || activityMatch || callMatch)?.[1] || "default");
     const threads = await readThreads();
     if (!threads[id]) threads[id] = { id, title: "新聊天", messages: [], proactive: { enabled: false, threadId: id, message: "有一段时间没聊了，结合我们的上下文自然地来找我说句话。", intervalMin: 60, intervalMax: 60, nextDueAt: null, scheduledForUserMessageId: null }, activity: { mode: "sentinel", lastUserActivityAt: new Date().toISOString(), nextWakeAt: null, sleepPendingAt: null, sleepStage: null } };
     ensureActivity(threads[id]);
-    if (req.method === "GET" && url.pathname === "/v1/settings/proactive") return send(res, 200, threads.default?.proactive || threads[id].proactive);
+    if (callMatch) {
+      const callID = callMatch[2];
+      const operation = callMatch[3];
+      const thread = threads[id];
+      const calls = ensureCallStore(thread);
+      if (req.method === "GET" && callID === "pending" && !operation) {
+        if (!pushRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+        const expired = await expirePendingCalls(thread);
+        const call = Object.values(calls).find(item => item.status === "pending" && Date.parse(item.expiresAt) > Date.now());
+        if (expired) await saveThreads(threads);
+        return send(res, 200, { call: call ? { callId: call.callId, reason: call.reason, createdAt: call.createdAt, expiresAt: call.expiresAt } : null });
+      }
+      if (req.method === "POST" && !callID) {
+        if (!pushRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+        const input = await body(req);
+        const call = { callId: randomUUID().toLowerCase(), status: "active", initiator: "user", createdAt: new Date().toISOString(), startedAt: new Date().toISOString(), turns: [] };
+        calls[call.callId] = call;
+        const reply = await generateReply({ input: "电话刚接通。请用一句简短、自然、轻柔的话开场，告诉对方你在听。", systemPrompt: `${input.systemPrompt || ""}\n\n当前是实时语音通话。回复适合直接朗读，句子简短，匹配对方的情绪、语速和音量；没有明确线索时不要猜测情绪。`, thread, context: `语音通话 ${call.callId}；语速和音量应匹配用户当下的状态。` });
+        const first = { id: randomUUID(), role: "assistant", content: reply.content, createdAt: new Date().toISOString() };
+        call.turns.push(first);
+        const speech = await synthesizeCallSpeech(first.content, input.tts, Boolean(input.softVoice));
+        await saveThreads(threads);
+        return send(res, 200, { callId: call.callId, status: "accepted", firstMessage: first, speechAudioBase64: speech.speechAudioBase64, speechDuration: speech.speechDuration, speechScript: speech.speechScript, speechError: speech.speechError });
+      }
+      if (req.method === "POST" && callID && operation === "answer") {
+        if (!pushRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+        const input = await body(req);
+        const call = calls[callID];
+        if (!call || call.status !== "pending") return send(res, 200, { callId: callID, status: "expired", assistantMessage: null, callStatusMessage: null });
+        if (Date.parse(call.expiresAt) <= Date.now()) {
+          const expired = await expirePendingCalls(thread);
+          if (expired) await saveThreads(threads);
+          return send(res, 200, { callId: callID, status: "expired" });
+        }
+        if (input.action !== "accept") {
+          call.status = "declined";
+          call.endedAt = new Date().toISOString();
+          const note = String(input.note || "").trim().slice(0, 60);
+          const statusMessage = { id: randomUUID(), role: "assistant", content: note ? `📞 你没接电话：${note}` : "📞 你暂时不方便接听", contentType: "call_status", callID, callInitiator: "assistant", callStatus: "declined", createdAt: new Date().toISOString() };
+          thread.messages.push(statusMessage);
+          await saveThreads(threads);
+          return send(res, 200, { callId: callID, status: "declined", callStatusMessage: statusMessage });
+        }
+        call.status = "active";
+        call.startedAt = new Date().toISOString();
+        const reply = await generateReply({ input: `电话接通了。对方接了你的电话。来电理由：${call.reason}。请简短、轻柔地开场。`, systemPrompt: `${input.systemPrompt || ""}\n\n当前是实时语音通话。回复适合直接朗读，句子简短，匹配对方的情绪、语速和音量；没有明确线索时不要猜测情绪。`, thread, context: `主动来电理由：${call.reason}。通话时匹配用户的情绪和音量，避免强行判断。` });
+        const first = { id: randomUUID(), role: "assistant", content: reply.content, createdAt: new Date().toISOString() };
+        call.turns.push(first);
+        const speech = await synthesizeCallSpeech(first.content, input.tts, Boolean(input.softVoice));
+        await saveThreads(threads);
+        return send(res, 200, { callId: callID, status: "accepted", firstMessage: first, speechAudioBase64: speech.speechAudioBase64, speechDuration: speech.speechDuration, speechScript: speech.speechScript, speechError: speech.speechError });
+      }
+      if (req.method === "POST" && callID && operation === "messages") {
+        if (!pushRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+        const input = await body(req);
+        const call = calls[callID];
+        if (!call || call.status !== "active") return send(res, 404, { error: "active_call_not_found" });
+        const content = String(input.content || "").trim().slice(0, 4000);
+        if (!content) return send(res, 400, { error: "content_required" });
+        markUserActivity(thread, content);
+        const userTurn = { id: randomUUID(), role: "user", content, createdAt: new Date().toISOString() };
+        call.turns.push(userTurn);
+        const voiceContext = String(input.voiceContext || "").trim().slice(0, 1000);
+        const voicePrefix = voiceContext ? `[用户说话状态：${voiceContext}]\n` : "";
+        const transcript = call.turns.slice(-12).map(turn => `${turn.role === "user" ? "用户" : "沈屿"}：${turn.content}`).join("\n");
+        const bedtime = /晚安|睡了|先睡|去睡|明天见|good\s*night/i.test(content);
+        const callSystemPrompt = `${input.systemPrompt || ""}\n\n当前是实时语音通话。回复适合直接朗读，句子简短，匹配对方的情绪、语速和音量；没有明确线索时不要猜测情绪。${bedtime ? `对方在道晚安，请轻声回应；只有自然收尾时才在回复末尾写 ⟪挂断⟫。播放完后留 ${callLingerSeconds} 秒，期间对方开口就继续通话。` : ""}`;
+        const reply = await generateReply({ input: `${voicePrefix}${content}`, systemPrompt: callSystemPrompt, thread, context: `实时语音通话。最近通话内容：\n${transcript}\n\n说话情绪与语气线索：${voiceContext || "暂无声学线索"}。以内容为准，线索不足时不要推断情绪。` });
+        const parsedReply = stripCallMarkers(reply.content);
+        const assistantTurn = { id: randomUUID(), role: "assistant", content: parsedReply.text, createdAt: new Date().toISOString() };
+        call.turns.push(assistantTurn);
+        const softVoice = Boolean(input.softVoice) || bedtime || /声音比平时轻|轻声|低声|困/.test(voiceContext + content);
+        const speech = await synthesizeCallSpeech(assistantTurn.content, input.tts, softVoice);
+        await saveThreads(threads);
+        return send(res, 200, { userTurn, assistantTurn, hangupAfterPlayback: parsedReply.hangupAfterPlayback, speechAudioBase64: speech.speechAudioBase64, speechDuration: speech.speechDuration, speechScript: speech.speechScript, speechError: speech.speechError });
+      }
+      if (req.method === "POST" && callID && operation === "end") {
+        if (!pushRequestAuthorized(req)) return send(res, 401, { error: "unauthorized" });
+        const call = calls[callID];
+        if (!call) return send(res, 404, { error: "call_not_found" });
+        if (!call.endedAt) { call.endedAt = new Date().toISOString(); call.status = "ended"; }
+        const duration = Math.max(0, Math.round((Date.parse(call.endedAt) - Date.parse(call.startedAt || call.createdAt)) / 1000));
+        let summary = "这次聊了几句。";
+        const userLine = call.turns.slice().reverse().find(turn => turn.role === "user")?.content;
+        if (userLine) summary = `聊到“${userLine.slice(0, 36)}${userLine.length > 36 ? "…" : ""}”`;
+        const recordMessage = { id: randomUUID(), role: "assistant", content: `📞 语音通话 · ${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, "0")}\n${summary}`, contentType: "call_record", callID, callInitiator: call.initiator || "assistant", callDuration: duration, createdAt: new Date().toISOString() };
+        if (!call.recorded) { thread.messages.push(recordMessage); call.recorded = true; }
+        await saveThreads(threads);
+        return send(res, 200, { callId: callID, duration, recordMessage });
+      }
+      return send(res, 405, { error: "method_not_allowed" });
+    }
+    if (req.method === "GET" && url.pathname === "/v1/settings/proactive") {
+      const owner = threads.default || threads[id];
+      return send(res, 200, { ...owner.proactive, dnd: owner.dnd === true });
+    }
     if (req.method === "PUT" && url.pathname === "/v1/settings/proactive") {
       const input = await body(req);
       const proactive = ensureProactive(threads.default || threads[id]);
+      const owner = threads.default || threads[id];
       proactive.enabled = Boolean(input.enabled);
       proactive.threadId = input.threadId || "default";
       proactive.message = typeof input.message === "string" && input.message.trim() ? input.message.trim() : proactive.message;
       proactive.intervalMin = Math.max(1, Number(input.intervalMin) || 60);
       proactive.intervalMax = Math.max(proactive.intervalMin, Number(input.intervalMax) || proactive.intervalMin);
       if (input.actions && typeof input.actions === "object") proactive.actions = { message: input.actions.message !== false, phone: input.actions.phone !== false, screen: input.actions.screen === true };
+      if (typeof input.dnd === "boolean") owner.dnd = input.dnd;
       if (!proactive.enabled) proactive.nextDueAt = null;
       await saveThreads(threads);
-      return send(res, 200, proactive);
+      return send(res, 200, { ...proactive, dnd: owner.dnd === true });
     }
     if (activityMatch) {
       if (req.method === "GET") return send(res, 200, threads[id].activity);

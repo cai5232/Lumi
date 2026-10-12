@@ -372,6 +372,7 @@ struct TTSRequestSettings: Encodable {
 struct CallStartRequest: Encodable {
     let systemPrompt: String
     let tts: TTSRequestSettings?
+    var softVoice: Bool = false
 }
 
 struct CallStartResponse: Decodable {
@@ -384,6 +385,7 @@ struct CallStartResponse: Decodable {
     let speechDuration: Double?
     let speechScript: String?
     let speechError: String?
+    let hangupAfterPlayback: Bool?
 }
 
 struct CallTurn: Codable, Identifiable {
@@ -401,6 +403,7 @@ struct CallTurnResponse: Decodable {
     let speechDuration: Double?
     let speechScript: String?
     let speechError: String?
+    let hangupAfterPlayback: Bool?
 }
 
 struct CallEndResponse: Decodable {
@@ -426,6 +429,8 @@ struct CallTurnRequest: Encodable {
     let content: String
     let systemPrompt: String
     let tts: TTSRequestSettings?
+    var voiceContext: String? = nil
+    var softVoice: Bool = false
 }
 
 struct CallAnswerRequest: Encodable {
@@ -433,6 +438,7 @@ struct CallAnswerRequest: Encodable {
     let systemPrompt: String
     let tts: TTSRequestSettings?
     let note: String?
+    let softVoice: Bool
 }
 
 
@@ -445,6 +451,7 @@ struct ProactiveSettings: Codable {
     var nextDueAt: String?
     var scheduledForUserMessageId: String?
     var actions: ProactiveActions? = nil
+    var dnd: Bool? = nil
 }
 
 struct ProactiveActions: Codable {

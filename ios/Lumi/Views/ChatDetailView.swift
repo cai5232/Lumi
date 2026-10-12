@@ -349,7 +349,8 @@ struct ChatDetailView: View {
         guard !showingCallDemo else { return }
         do {
             guard let call = try await LumiAPIClient().fetchIncomingCall(from: "default") else { return }
-            LumiNativeCalls.shared.reportServerIncomingCall(call.callId)
+            LumiNativeCalls.shared.setExpiry(ISO8601DateFormatter().string(from: call.expiresAt), for: call.callId)
+            LumiNativeCalls.shared.reportServerIncomingCall(call.callId, reason: call.reason)
         } catch {
             // A transient poll error should not interrupt the chat.
         }
@@ -1182,6 +1183,8 @@ private final class SpatialSpeechPlayback: ObservableObject {
     private var route: [RouteSegment] = []
     private var initialPosition = (azimuth: 270.0, distance: 0.25)
 
+    func setVolume(_ volume: Float) { source.volume = min(1, max(0, volume)) }
+
     func play(url: URL, script: String) {
         guard FileManager.default.fileExists(atPath: url.path), let file = try? AVAudioFile(forReading: url) else { return }
         do {
@@ -1489,6 +1492,7 @@ struct SettingsView: View {
     @AppStorage("lumi.proactiveActionMessage") private var proactiveActionMessage = true
     @AppStorage("lumi.proactiveActionPhone") private var proactiveActionPhone = true
     @AppStorage("lumi.proactiveActionScreen") private var proactiveActionScreen = false
+    @AppStorage("lumi.proactiveDND") private var proactiveDND = false
     @State private var settingsLoaded = false
     @State private var syncStatus = "正在连接后端…"
     @State private var settingsSaveTask: Task<Void, Never>?
@@ -1540,7 +1544,7 @@ struct SettingsView: View {
                         .autocorrectionDisabled()
                     Button("保存口令并重试同步") {
                         LumiKeychain.write(pushAPIToken.trimmingCharacters(in: .whitespacesAndNewlines), account: "push-api-token")
-                        Task { await loadProactiveSettings() }
+                        Task { await api.syncRegisteredPushTokens(); await loadProactiveSettings() }
                     }
                     Text("从 Zeabur 的 lumi-server 服务变量复制 LUMI_PUSH_API_TOKEN；口令保存在本机钥匙串，不会写入聊天记录。")
                         .font(.system(size: 12))
@@ -1550,6 +1554,8 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("勿扰模式", isOn: $proactiveDND)
+                        .tint(Color(red: 0.72, green: 0.35, blue: 0.49))
                     Toggle(isOn: $proactiveNudgeEnabled) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("保活")
@@ -1662,6 +1668,7 @@ struct SettingsView: View {
         .onChange(of: proactiveActionMessage) { _, _ in saveProactiveSettings() }
         .onChange(of: proactiveActionPhone) { _, _ in saveProactiveSettings() }
         .onChange(of: proactiveActionScreen) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveDND) { _, _ in saveProactiveSettings() }
         .background(Color(red: 0.984, green: 0.949, blue: 0.957))
         .preferredColorScheme(.light)
         .sheet(isPresented: $showingVoiceSettings) {
@@ -1731,6 +1738,7 @@ struct SettingsView: View {
             proactiveActionMessage = settings.actions?.message ?? true
             proactiveActionPhone = settings.actions?.phone ?? true
             proactiveActionScreen = settings.actions?.screen ?? false
+            proactiveDND = settings.dnd ?? false
             syncStatus = "已同步到后端"
             let authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
             if authorization == .authorized || authorization == .provisional || authorization == .ephemeral {
@@ -1772,7 +1780,8 @@ struct SettingsView: View {
                     message: proactiveNudgeMessage,
                     intervalMin: proactiveNudgeInterval,
                     intervalMax: proactiveNudgeInterval,
-                    actions: ProactiveActions(message: proactiveActionMessage, phone: proactiveActionPhone, screen: proactiveActionScreen)
+                    actions: ProactiveActions(message: proactiveActionMessage, phone: proactiveActionPhone, screen: proactiveActionScreen),
+                    dnd: proactiveDND
                 ))
                 syncStatus = "已同步到后端"
             } catch {
@@ -2421,11 +2430,35 @@ private struct SubscriptionUsageSheet: View {
     }
 }
 
+private final class CallVoiceMetrics: @unchecked Sendable {
+    private let lock = NSLock()
+    private var duration = 0.0
+    private var energy = 0.0
+    private var quietDuration = 0.0
+
+    func add(meanEnergy: Double, duration: Double) {
+        lock.lock(); defer { lock.unlock() }
+        self.duration += duration
+        energy += meanEnergy * duration
+        if meanEnergy < 0.012 { quietDuration += duration }
+    }
+
+    func take() -> (duration: Double, energy: Double, quietRatio: Double) {
+        lock.lock(); defer { lock.unlock() }
+        let result = (duration, duration > 0 ? energy / duration : 0, duration > 0 ? quietDuration / duration : 0)
+        duration = 0; energy = 0; quietDuration = 0
+        return result
+    }
+
+    func reset() { _ = take() }
+}
+
 @MainActor
 private final class CallSpeechRecognition: NSObject, ObservableObject {
     @Published private(set) var transcript = ""
     @Published private(set) var isListening = false
     @Published private(set) var errorMessage: String?
+    private(set) var lastVoiceCue = ""
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
     private let audioEngine = AVAudioEngine()
@@ -2435,6 +2468,7 @@ private final class CallSpeechRecognition: NSObject, ObservableObject {
     private var isStarting = false
     private var tapInstalled = false
     private var silenceTask: Task<Void, Never>?
+    private let voiceMetrics = CallVoiceMetrics()
 
     func start(onFinal: @escaping (String) -> Void) {
         guard !isListening, !isStarting else { return }
@@ -2495,6 +2529,7 @@ private final class CallSpeechRecognition: NSObject, ObservableObject {
         request.shouldReportPartialResults = true
         recognitionRequest = request
         transcript = ""
+        voiceMetrics.reset()
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers])
@@ -2506,8 +2541,22 @@ private final class CallSpeechRecognition: NSObject, ObservableObject {
                 errorMessage = "麦克风设备还没准备好，请再试一次"
                 return
             }
+            let voiceMetrics = self.voiceMetrics
             input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
                 self?.recognitionRequest?.append(buffer)
+                guard let channels = buffer.floatChannelData else { return }
+                let frames = Int(buffer.frameLength)
+                let channelCount = Int(buffer.format.channelCount)
+                guard frames > 0, channelCount > 0 else { return }
+                var squareSum = 0.0
+                for frame in 0..<frames {
+                    for channel in 0..<channelCount {
+                        let sample = Double(channels[channel][frame])
+                        squareSum += sample * sample
+                    }
+                }
+                let meanEnergy = sqrt(squareSum / Double(frames * channelCount))
+                voiceMetrics.add(meanEnergy: meanEnergy, duration: Double(frames) / buffer.format.sampleRate)
             }
             tapInstalled = true
             audioEngine.prepare()
@@ -2550,8 +2599,27 @@ private final class CallSpeechRecognition: NSObject, ObservableObject {
     private func finishTranscript() {
         let finalText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         let handler = onFinal
+        if !finalText.isEmpty { lastVoiceCue = describeVoice(text: finalText) }
         stop()
         if !finalText.isEmpty { handler?(finalText) }
+    }
+
+    private func describeVoice(text: String) -> String {
+        let metrics = voiceMetrics.take()
+        guard metrics.duration > 0 else { return "语音特征不足" }
+        let defaults = UserDefaults.standard
+        let baselineKey = "lumi.callVoiceEnergyBaseline"
+        let baseline = defaults.double(forKey: baselineKey)
+        let normalizedBaseline = baseline > 0.001 ? baseline : max(metrics.energy, 0.02)
+        var cues: [String] = []
+        if metrics.energy < normalizedBaseline * 0.68 { cues.append("声音比平时轻") }
+        else if metrics.energy > normalizedBaseline * 1.38 { cues.append("声音比平时响") }
+        if metrics.quietRatio > 0.42 { cues.append("停顿比平时多") }
+        let rate = Double(text.count) / max(0.5, metrics.duration * (1 - min(metrics.quietRatio, 0.7)))
+        if rate < 2.4 { cues.append("语速偏慢") }
+        else if rate > 6.5 { cues.append("语速偏快") }
+        defaults.set(baseline == 0 ? metrics.energy : baseline * 0.92 + metrics.energy * 0.08, forKey: baselineKey)
+        return cues.isEmpty ? "声音和语速接近平时" : cues.joined(separator: "、")
     }
 }
 
@@ -2767,6 +2835,10 @@ private struct CallDemoView: View {
     @State private var generatingReply = false
     @State private var callAudioFiles: [UUID: URL] = [:]
     @State private var didFinishCall = false
+    @State private var softVoiceEnabled = false
+    @State private var incomingReason = ""
+    @State private var hangupAfterPlayback = false
+    @State private var hangupTask: Task<Void, Never>?
     @StateObject private var player = SpatialSpeechPlayback()
     @StateObject private var speechRecognition = CallSpeechRecognition()
     let incomingCallID: String?
@@ -2790,6 +2862,7 @@ private struct CallDemoView: View {
         .animation(.easeInOut(duration: 0.28), value: phase == .connected)
         .task {
             if incomingCallID != nil {
+                incomingReason = UserDefaults.standard.string(forKey: "lumi.callReason.\(incomingCallID!.lowercased())") ?? ""
                 phase = .connected
                 generatingReply = true
             }
@@ -2800,9 +2873,21 @@ private struct CallDemoView: View {
             else { startListeningIfNeeded() }
         }
         .onChange(of: player.isPlaying) { _, isPlaying in
-            if !isPlaying { startListeningIfNeeded() }
+            if !isPlaying {
+                if hangupAfterPlayback { scheduleGentleHangup() }
+                startListeningIfNeeded()
+            }
+        }
+        .onChange(of: softVoiceEnabled) { _, enabled in player.setVolume(enabled ? 0.52 : 1) }
+        .onChange(of: speechRecognition.transcript) { _, transcript in
+            if !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                hangupTask?.cancel()
+                hangupTask = nil
+                hangupAfterPlayback = false
+            }
         }
         .onDisappear {
+            hangupTask?.cancel()
             speechRecognition.stop()
             Task { await finishCallIfNeeded() }
         }
@@ -2867,6 +2952,12 @@ private struct CallDemoView: View {
                 VStack(spacing: 3) {
                     Text("沈屿")
                         .font(.system(size: 16, weight: .semibold))
+                    if !incomingReason.isEmpty {
+                        Text(incomingReason)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.black.opacity(0.50))
+                            .lineLimit(1)
+                    }
                     TimelineView(.periodic(from: .now, by: 1)) { timeline in
                         Text(callDuration(at: timeline.date))
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
@@ -2943,9 +3034,10 @@ private struct CallDemoView: View {
                         .padding(.horizontal, 25)
                 }
                 HStack(spacing: 10) {
-                    callControl(title: muted ? "已静音" : "静音", icon: muted ? "mic.slash.fill" : "mic.fill", selected: muted) { muted.toggle() }
-                    callAction(title: "挂断", icon: "phone.down.fill", color: Color(red: 0.92, green: 0.25, blue: 0.31)) { Task { await leaveCall() } }
-                    callControl(title: speakerOn ? "扬声器" : "听筒", icon: speakerOn ? "speaker.wave.2.fill" : "speaker.fill", selected: speakerOn) { speakerOn.toggle() }
+                    callControl(title: muted ? "已静音" : "静音", icon: muted ? "mic.slash.fill" : "mic.fill", selected: muted, width: 72) { muted.toggle() }
+                    callControl(title: softVoiceEnabled ? "轻声已开" : "轻声", icon: "moon.zzz.fill", selected: softVoiceEnabled, width: 72) { softVoiceEnabled.toggle() }
+                    callAction(title: "挂断", icon: "phone.down.fill", color: Color(red: 0.92, green: 0.25, blue: 0.31), width: 84) { Task { await leaveCall() } }
+                    callControl(title: speakerOn ? "扬声器" : "听筒", icon: speakerOn ? "speaker.wave.2.fill" : "speaker.fill", selected: speakerOn, width: 72) { speakerOn.toggle() }
                 }
             }
             .padding(.bottom, 44)
@@ -2976,7 +3068,7 @@ private struct CallDemoView: View {
         }
     }
 
-    private func callAction(title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
+    private func callAction(title: String, icon: String, color: Color, width: CGFloat = 104, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 10) {
                 Image(systemName: icon)
@@ -2988,10 +3080,10 @@ private struct CallDemoView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white)
-        .frame(width: 104)
+        .frame(width: width)
     }
 
-    private func callControl(title: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func callControl(title: String, icon: String, selected: Bool, width: CGFloat = 104, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 9) {
                 Image(systemName: icon)
@@ -3000,7 +3092,7 @@ private struct CallDemoView: View {
                     .background(selected ? Color.black.opacity(0.10) : .white.opacity(0.64), in: Circle())
                 Text(title).font(.system(size: 13, weight: .medium))
             }
-            .frame(width: 104)
+            .frame(width: width)
         }
         .buttonStyle(.plain)
     }
@@ -3016,12 +3108,13 @@ private struct CallDemoView: View {
         do {
             let response: CallStartResponse
             if let incomingCallID {
-                response = try await LumiAPIClient().answerIncomingCall(incomingCallID, action: "accept", to: "default", tts: tts)
+                response = try await LumiAPIClient().answerIncomingCall(incomingCallID, action: "accept", to: "default", tts: tts, softVoice: softVoiceEnabled)
             } else {
-                response = try await LumiAPIClient().startCall(to: "default", tts: tts)
+                response = try await LumiAPIClient().startCall(to: "default", tts: tts, softVoice: softVoiceEnabled)
             }
             guard response.status == "accepted" else {
                 if let message = response.assistantMessage { onRejected(message, response.callStatusMessage) }
+                else { onEnded(nil) }
                 dismiss()
                 return
             }
@@ -3048,9 +3141,16 @@ private struct CallDemoView: View {
         }
     }
 
-    private func sendTypedTurn(_ submittedText: String? = nil) async {
+    private func sendTypedTurn(_ submittedText: String? = nil, voiceContext suppliedVoiceContext: String? = nil) async {
         let text = (submittedText ?? callDraft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let callID, !sendingTurn else { return }
+        hangupTask?.cancel()
+        hangupTask = nil
+        hangupAfterPlayback = false
+        let voiceContext = submittedText == nil ? (suppliedVoiceContext ?? speechRecognition.lastVoiceCue) : (suppliedVoiceContext ?? "")
+        if voiceContext.contains("声音比平时轻") || ["晚安", "睡了", "先睡", "去睡", "明天见"].contains(where: text.contains) {
+            softVoiceEnabled = true
+        }
         callDraft = ""
         speechRecognition.stop()
         sendingTurn = true
@@ -3064,7 +3164,7 @@ private struct CallDemoView: View {
         let tts = makeTTSSettings(enabled: true)
         if tts == nil { requestError = "请先在语音设置中填写所选服务的 API Key 和 Voice ID" }
         do {
-            let response = try await LumiAPIClient().sendCallTurn(text, callID: callID, to: "default", tts: tts)
+            let response = try await LumiAPIClient().sendCallTurn(text, callID: callID, to: "default", tts: tts, voiceContext: voiceContext, softVoice: softVoiceEnabled)
             if let index = turns.firstIndex(where: { $0.id == provisionalTurn.id }) {
                 turns[index] = response.userTurn
             } else {
@@ -3072,14 +3172,17 @@ private struct CallDemoView: View {
             }
             let assistantBubbles = splitAssistantTurn(response.assistantTurn)
             turns.append(contentsOf: assistantBubbles)
+            hangupAfterPlayback = response.hangupAfterPlayback == true
             if let encoded = response.speechAudioBase64, let data = Data(base64Encoded: encoded) {
                 let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("call-turn-\(response.assistantTurn.id.uuidString).mp3")
                 try? data.write(to: url, options: .atomic)
                 CallAudioStore.save(callID: callID, fileName: url.lastPathComponent, script: response.speechScript ?? response.assistantTurn.content, duration: response.speechDuration)
                 for bubble in assistantBubbles { callAudioFiles[bubble.id] = url }
+                player.setVolume(softVoiceEnabled ? 0.52 : 1)
                 player.play(url: url, script: response.speechScript ?? response.assistantTurn.content)
             } else if let speechError = response.speechError {
                 requestError = "这次回复没有语音：\(speechError)"
+                if hangupAfterPlayback { scheduleGentleHangup() }
             }
         } catch { requestError = error.localizedDescription }
     }
@@ -3087,7 +3190,19 @@ private struct CallDemoView: View {
     private func startListeningIfNeeded() {
         guard phase == .connected, !muted, !player.isPlaying, !sendingTurn else { return }
         speechRecognition.start { text in
-            Task { await sendTypedTurn(text) }
+            let cue = speechRecognition.lastVoiceCue
+            Task { await sendTypedTurn(text, voiceContext: cue) }
+        }
+    }
+
+    private func scheduleGentleHangup() {
+        guard hangupAfterPlayback else { return }
+        hangupTask?.cancel()
+        hangupTask = Task {
+            try? await Task.sleep(for: .seconds(18))
+            guard !Task.isCancelled, hangupAfterPlayback,
+                  speechRecognition.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            await leaveCall()
         }
     }
 
@@ -3104,6 +3219,7 @@ private struct CallDemoView: View {
     private func finishCallIfNeeded() async {
         guard !didFinishCall, let callID else { return }
         didFinishCall = true
+        UserDefaults.standard.removeObject(forKey: "lumi.callReason.\(incomingCallID?.lowercased() ?? "")")
         do {
             let response = try await LumiAPIClient().endCall(callID, to: "default")
             onEnded(response.recordMessage)

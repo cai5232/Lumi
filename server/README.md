@@ -27,6 +27,11 @@ Zeabur 环境变量：
 - `LUMI_SLEEP_HOURS`：正常睡眠周期小时数，默认 `5.5`
 - `LUMI_SLEEP_CYCLES`：每晚 N1→N2→N3→REM 的循环次数，默认 `3`
 - `LUMI_SLEEP_INSOMNIA_PROBABILITY`：入睡即失眠并直接回到哨兵模式的概率，默认 `0.15`
+- `LUMI_CALL_INVITE_SECONDS`：主动来电响铃后转为未接留言的时间，默认 `30`
+- `LUMI_CALL_LINGER_SECONDS`：说晚安后电话保留的时间提示，默认 `18`
+- `APNS_TEAM_ID`、`APNS_KEY_ID`、`APNS_PRIVATE_KEY`：Apple Push Notifications 的 Team ID、Key ID 和 `.p8` 私钥。私钥可用 `\\n` 表示换行
+- `APNS_BUNDLE_ID`：推送主题，默认 `com.cai5232.LumiPush`；VoIP 推送主题会自动追加 `.voip`
+- `LUMI_PUSH_API_TOKEN`：iOS 与服务器交换推送令牌、更新勿扰和调用服务端通话 API 共用的 Bearer 口令
 - `LUMI_MEMORY_API_URL`：记忆库地址，默认 `https://memorycore.zeabur.app`
 - `LUMI_MEMORY_API_KEY`：可选，记忆库 API Key
 - `LUMI_MEMORY_SEARCH_PATH`：可选，检索路径，默认 `/search`
