@@ -715,12 +715,32 @@ struct ChatDetailView: View {
         let sourceWidth = CGFloat(image.cgImage?.width ?? Int(image.size.width * image.scale))
         let sourceHeight = CGFloat(image.cgImage?.height ?? Int(image.size.height * image.scale))
         let largestSide = max(sourceWidth, sourceHeight)
-        let scale = min(1, 2048 / max(largestSide, 1))
-        let size = CGSize(width: (sourceWidth * scale).rounded(), height: (sourceHeight * scale).rounded())
-        let rendered = UIGraphicsImageRenderer(size: size).image { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
+        let maximumBytes = 3_500_000
+        let sideLimits: [CGFloat] = [2048, 1792, 1600, 1400, 1200, 1024, 896, 768, 640, 512, 384]
+        let qualities: [CGFloat] = [0.82, 0.72, 0.62, 0.52, 0.42, 0.32, 0.24]
+
+        for sideLimit in sideLimits {
+            let scale = min(1, sideLimit / max(largestSide, 1))
+            let size = CGSize(
+                width: max(1, (sourceWidth * scale).rounded()),
+                height: max(1, (sourceHeight * scale).rounded())
+            )
+            var format = UIGraphicsImageRendererFormat.default()
+            // size is measured in pixels; the default screen scale could otherwise
+            // multiply a 2048px target by the device's 2x/3x display scale.
+            format.scale = 1
+            format.opaque = true
+            let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                image.draw(in: CGRect(origin: .zero, size: size))
+            }
+            for quality in qualities {
+                if let data = rendered.jpegData(compressionQuality: quality),
+                   data.count <= maximumBytes {
+                    return data
+                }
+            }
         }
-        return rendered.jpegData(compressionQuality: 0.80)
+        return nil
     }
 
     private func sendDraft(text: String) async {
