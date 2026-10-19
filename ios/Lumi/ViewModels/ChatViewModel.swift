@@ -345,15 +345,17 @@ final class ChatViewModel: ObservableObject {
         let hasStoredHTML = message.htmlContent != nil
         let htmlContent = message.htmlContent ?? ((message.contentType == "html" || Self.isHTML(visible)) ? visible : nil)
         let textContent = hasStoredHTML ? visible : (htmlContent == nil ? visible : "")
-        // Keep ordinary line-break rhythm as separate bubbles, but never split a code response
-        // into one bubble per line. Code needs to retain its indentation and line structure.
+        // Keep long replies and intentional paragraphs in one bubble so their
+        // line breaks remain part of the message. Short, line-by-line replies
+        // keep the existing separate-bubble rhythm.
         let lines = textContent
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let groupedCode = Self.looksLikeCode(textContent)
+        let groupedLongText = textContent.count >= 240 || textContent.contains("\n\n")
         var bubbles: [ChatMessage]
-        if groupedCode {
+        if groupedCode || groupedLongText {
             bubbles = [ChatMessage(id: message.id, role: .assistant, content: textContent, createdAt: message.createdAt, thinking: thinking)]
         } else {
             bubbles = lines.enumerated().map { index, line in
