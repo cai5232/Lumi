@@ -701,7 +701,10 @@ struct ChatDetailView: View {
     }
 
     private func markdownText(_ content: String) -> Text {
-        if let parsed = try? AttributedString(markdown: content, options: .init(interpretedSyntax: .full)) { return Text(parsed) }
+        // Markdown treats a single newline as a soft break. Add the Markdown
+        // hard-break marker so intentional line breaks remain visible inside a bubble.
+        let source = content.replacingOccurrences(of: "\n", with: "  \n")
+        if let parsed = try? AttributedString(markdown: source, options: .init(interpretedSyntax: .full)) { return Text(parsed) }
         return Text(content)
     }
 
