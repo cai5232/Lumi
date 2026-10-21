@@ -1578,6 +1578,12 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("自主活动") {
+                    NavigationLink(destination: SoloDashboardView()) {
+                        settingsCard(title: "Solo", subtitle: "查看自动运行状态、调整阈值和回看统计", icon: "sparkles")
+                    }
+                }
+
                 Section("模型线路") {
                     NavigationLink(destination: LumiAPIProvidersView()) {
                         settingsCard(
@@ -1589,14 +1595,14 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    SecureField("Zeabur 的 LUMI_PUSH_API_TOKEN", text: $pushAPIToken)
+                    SecureField("Coolify 的 LUMI_PUSH_API_TOKEN", text: $pushAPIToken)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Button("保存口令并重试同步") {
                         LumiKeychain.write(pushAPIToken.trimmingCharacters(in: .whitespacesAndNewlines), account: "push-api-token")
                         Task { await loadProactiveSettings() }
                     }
-                    Text("从 Zeabur 的 lumi-server 服务变量复制 LUMI_PUSH_API_TOKEN；口令保存在本机钥匙串，不会写入聊天记录。")
+                    Text("从 Coolify 的 lumi-server 服务变量复制 LUMI_PUSH_API_TOKEN；口令保存在本机钥匙串，不会写入聊天记录。")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 } header: {
@@ -1839,7 +1845,7 @@ struct SettingsView: View {
     private func syncErrorMessage(_ error: Error) -> String {
         let details = error.localizedDescription
         if details.contains("401") || details.localizedCaseInsensitiveContains("unauthorized") {
-            return "同步被拒绝：请检查上方的 LUMI_PUSH_API_TOKEN 是否与 Zeabur 一致"
+            return "同步被拒绝：请检查上方的 LUMI_PUSH_API_TOKEN 是否与 Coolify 一致"
         }
         if details.contains("404") || details.contains("not_found") {
             return "线上后端版本过旧，缺少保活接口；需要部署 lumi-server 新版本"
@@ -3765,5 +3771,155 @@ private struct LumiWorldBookPageStyle: ViewModifier {
             .toolbarBackground(LumiPalette.chatBackground, for: .navigationBar, .bottomBar)
             .toolbarBackground(.visible, for: .navigationBar, .bottomBar)
             .preferredColorScheme(.light)
+    }
+}
+
+
+struct SoloDashboardView: View {
+    @State private var enabled = true
+    @State private var mode = "mix"
+    @State private var desireThreshold = 0.78
+    @State private var idleMinutes = 30
+    @State private var touchDecayMinutes = 30
+    @State private var running = false
+    @State private var metrics: [SoloMetric] = []
+    @State private var status = "正在连接后端…"
+    @State private var settingsLoaded = false
+    @State private var saveTask: Task<Void, Never>?
+    private let api = LumiAPIClient()
+
+    var body: some View {
+        List {
+            Section {
+                Toggle("启用自动 Solo", isOn: $enabled)
+                HStack {
+                    Label("当前状态", systemImage: running ? "sparkles" : "moon")
+                    Spacer()
+                    Text(running ? "运行中" : (enabled ? "等待触发条件" : "已关闭"))
+                        .foregroundStyle(running ? Color(red: 0.66, green: 0.35, blue: 0.47) : .secondary)
+                }
+                Picker("运行方式", selection: $mode) {
+                    Text("混合").tag("mix")
+                    Text("回忆").tag("recall")
+                    Text("幻想").tag("fantasy")
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("欲望阈值")
+                        Spacer()
+                        Text(desireThreshold.formatted(.number.precision(.fractionLength(2))))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $desireThreshold, in: 0.5...0.98, step: 0.01)
+                        .tint(Color(red: 0.72, green: 0.35, blue: 0.49))
+                }
+                Stepper("达到阈值后静默 \(idleMinutes) 分钟", value: $idleMinutes, in: 5...1440, step: 5)
+                Stepper("触摸影响衰减 \(touchDecayMinutes) 分钟", value: $touchDecayMinutes, in: 5...180, step: 5)
+                Text(status)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Solo 自动运行")
+            } footer: {
+                Text("仅在默认聊天中，欲望值达到阈值且静默时间满足后自动运行；此页不会手动触发。Solo 内部文字不会保存。")
+            }
+
+            Section {
+                if metrics.isEmpty {
+                    ContentUnavailableView("还没有完成记录", systemImage: "waveform.path", description: Text("后端只记录已完成的 Solo 次数与运行时长。"))
+                } else {
+                    ForEach(metrics.sorted { $0.completedAt > $1.completedAt }) { item in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(item.completedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.system(size: 13, weight: .medium))
+                                Spacer()
+                                Text(modeName(item.mode))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                            HStack(spacing: 12) {
+                                Label("\(item.durationSeconds) 秒", systemImage: "timer")
+                                Label("阈值时欲望 \(item.desire.formatted(.number.precision(.fractionLength(2))))", systemImage: "heart.fill")
+                                if !item.chord.isEmpty { Text(item.chord) }
+                            }
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("最近完成记录")
+                    Spacer()
+                    Button("刷新") { Task { await reload() } }
+                        .font(.system(size: 13))
+                }
+            }
+        }
+        .navigationTitle("Solo")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await reload() }
+        .refreshable { await reload() }
+        .onChange(of: enabled) { _, _ in saveSettings() }
+        .onChange(of: mode) { _, _ in saveSettings() }
+        .onChange(of: desireThreshold) { _, _ in saveSettings() }
+        .onChange(of: idleMinutes) { _, _ in saveSettings() }
+        .onChange(of: touchDecayMinutes) { _, _ in saveSettings() }
+        .onDisappear { saveTask?.cancel() }
+    }
+
+    private func reload() async {
+        do {
+            async let settingsRequest = api.fetchSoloSettings()
+            async let metricsRequest = api.fetchSoloMetrics()
+            let (settings, records) = try await (settingsRequest, metricsRequest)
+            enabled = settings.enabled
+            mode = settings.mode
+            desireThreshold = settings.desireThreshold
+            idleMinutes = settings.idleMinutes
+            touchDecayMinutes = settings.touchDecayMinutes
+            running = settings.running
+            metrics = records
+            status = "已同步 · \(records.count) 条完成记录"
+            settingsLoaded = true
+        } catch {
+            status = "读取失败：\(error.localizedDescription)"
+            settingsLoaded = true
+        }
+    }
+
+    private func saveSettings() {
+        guard settingsLoaded else { return }
+        saveTask?.cancel()
+        status = "正在保存…"
+        saveTask = Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            do {
+                let saved = try await api.updateSoloSettings(SoloSettings(
+                    enabled: enabled,
+                    mode: mode,
+                    desireThreshold: desireThreshold,
+                    idleMinutes: idleMinutes,
+                    touchDecayMinutes: touchDecayMinutes,
+                    running: running
+                ))
+                running = saved.running
+                status = "已同步 · \(metrics.count) 条完成记录"
+            } catch {
+                status = "保存失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func modeName(_ value: String) -> String {
+        switch value {
+        case "recall": return "回忆"
+        case "fantasy": return "幻想"
+        default: return "混合"
+        }
     }
 }

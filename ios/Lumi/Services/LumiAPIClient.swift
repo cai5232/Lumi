@@ -492,6 +492,27 @@ final class LumiAPIClient {
         return try await perform(request)
     }
 
+    func fetchSoloSettings() async throws -> SoloSettings {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/settings/solo"))
+        addPushAuthorization(to: &request)
+        return try await perform(request)
+    }
+
+    func updateSoloSettings(_ settings: SoloSettings) async throws -> SoloSettings {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/settings/solo"))
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        addPushAuthorization(to: &request)
+        request.httpBody = try JSONEncoder.api.encode(settings)
+        return try await perform(request)
+    }
+
+    func fetchSoloMetrics(limit: Int = 50) async throws -> [SoloMetric] {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/solo/metrics").appending(queryItems: [URLQueryItem(name: "limit", value: String(limit))]))
+        addPushAuthorization(to: &request)
+        return try await perform(request)
+    }
+
     func fetchActivityState(for id: String = "default") async throws -> ActivityState {
         let request = URLRequest(url: baseURL.appending(path: "/v1/chats/\(id)/activity"))
         return try await perform(request)
