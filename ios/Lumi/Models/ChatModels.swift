@@ -1,9 +1,11 @@
 import Foundation
 
-struct ChatMessage: Codable, Identifiable, Equatable {
-    enum Role: String, Codable { case user, assistant }
+struct ChatMessage: Codable, Identifiable, Equatable, Sendable {
+    enum Role: String, Codable, Sendable { case user, assistant }
 
     let id: UUID
+    var renderID: UUID? = nil
+    var renderIdentity: UUID { renderID ?? id }
     let role: Role
     let content: String
     var contentType: String? = nil
@@ -23,10 +25,12 @@ struct ChatMessage: Codable, Identifiable, Equatable {
     var callInitiator: String?
     var callStatus: String?
     var screenStatus: String?
+    var attachments: [ChatMessageAttachment] = []
+    var toolCalls: [ChatToolCallTrace] = []
 
-    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, thinking, audioFileName, speechDuration, speechScript, localImageFileName, localImageFileNames, imageAttachmentCount, callID, callDuration, callInitiator, callStatus, screenStatus }
+    enum CodingKeys: String, CodingKey { case id, role, content, contentType, htmlContent, htmlTitle, createdAt, isThinking, thinking, audioFileName, speechDuration, speechScript, localImageFileName, localImageFileNames, imageAttachmentCount, callID, callDuration, callInitiator, callStatus, screenStatus, attachments, toolCalls }
 
-    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, localImageFileNames: [String] = [], imageAttachmentCount: Int? = nil, callID: String? = nil, callDuration: Double? = nil, callInitiator: String? = nil, callStatus: String? = nil, screenStatus: String? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil) {
+    init(id: UUID, role: Role, content: String, createdAt: Date, isThinking: Bool = false, thinking: String? = nil, audioFileName: String? = nil, speechDuration: Double? = nil, speechScript: String? = nil, localImageFileName: String? = nil, localImageFileNames: [String] = [], imageAttachmentCount: Int? = nil, callID: String? = nil, callDuration: Double? = nil, callInitiator: String? = nil, callStatus: String? = nil, screenStatus: String? = nil, contentType: String? = nil, htmlContent: String? = nil, htmlTitle: String? = nil, attachments: [ChatMessageAttachment] = [], toolCalls: [ChatToolCallTrace] = []) {
         self.id = id
         self.role = role
         self.content = content
@@ -47,6 +51,8 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         self.callInitiator = callInitiator
         self.callStatus = callStatus
         self.screenStatus = screenStatus
+        self.attachments = attachments
+        self.toolCalls = toolCalls
     }
 
     init(from decoder: Decoder) throws {
@@ -71,7 +77,81 @@ struct ChatMessage: Codable, Identifiable, Equatable {
         callInitiator = try container.decodeIfPresent(String.self, forKey: .callInitiator)
         callStatus = try container.decodeIfPresent(String.self, forKey: .callStatus)
         screenStatus = try container.decodeIfPresent(String.self, forKey: .screenStatus)
+        attachments = try container.decodeIfPresent([ChatMessageAttachment].self, forKey: .attachments) ?? []
+        toolCalls = try container.decodeIfPresent([ChatToolCallTrace].self, forKey: .toolCalls) ?? []
     }
+}
+
+struct ChatToolCallTrace: Codable, Equatable, Identifiable, Sendable {
+    var id: String { "\(name)-\(arguments.hashValue)-\(result.hashValue)" }
+    let name: String
+    let arguments: String
+    let result: String
+    let succeeded: Bool
+}
+
+struct ChatMessageAttachment: Codable, Equatable, Sendable {
+    var type: String
+    var items: [String]?
+    var askedAt: Double?
+    var answeredBy: String?
+    var answeredAt: Double?
+    var picked: Int?
+    var of: String?
+    var idx: Int?
+    var text: String?
+
+    enum CodingKeys: String, CodingKey {
+        case type, items, picked, of, idx, text
+        case askedAt = "asked_at"
+        case answeredBy = "answered_by"
+        case answeredAt = "answered_at"
+    }
+}
+
+struct ChatOptionPick: Codable, Equatable {
+    var msgID: String
+    var idx: Int
+    var text: String
+
+    enum CodingKeys: String, CodingKey { case msgID = "msg_id", idx, text }
+}
+
+struct LumiDrawerItem: Decodable, Identifiable, Equatable {
+    let id: String
+    let kind: String
+    let content: String
+    let createdAt: Date
+    let seen: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, content, seen
+        case createdAt = "created_at"
+    }
+}
+
+struct LumiActivityEvent: Decodable, Identifiable, Equatable {
+    let id: String
+    let time: Date
+    let kind: String
+    let title: String
+    let content: String
+}
+
+struct LumiActivityHistoryResponse: Decodable {
+    let events: [LumiActivityEvent]
+}
+
+struct LumiDrawerListResponse: Decodable {
+    let items: [LumiDrawerItem]
+}
+
+struct LumiDrawerUnseenResponse: Decodable {
+    let count: Int
+}
+
+struct LumiDrawerSeenRequest: Encodable {
+    let ids: [String]
 }
 
 struct ChatThread: Codable, Identifiable {
@@ -80,6 +160,11 @@ struct ChatThread: Codable, Identifiable {
     var messages: [ChatMessage]
     var hasMore: Bool?
     var nextBefore: Date?
+}
+
+struct ChatRemarkState: Codable, Equatable {
+    var assistantRemark: String
+    var aiRemark: String
 }
 
 struct DiaryLock: Codable, Equatable {
@@ -284,11 +369,14 @@ enum LumiAPIModelCatalog {
             throw URLError(.badURL)
         }
         let rootPath = "/" + components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        components.path = rootPath == "/" ? "/models" : rootPath + "/models"
+        let normalized = rootPath.replacingOccurrences(of: #"/(chat/completions|messages|models)/?$"#, with: "", options: .regularExpression)
+        components.path = normalized.isEmpty || normalized == "/" ? "/v1/models" : normalized + "/models"
         guard let url = components.url else { throw URLError(.badURL) }
         var request = URLRequest(url: url)
+        request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if apiFormat == "anthropic" {
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
             request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         } else {
@@ -317,6 +405,8 @@ struct SendMessageRequest: Encodable {
     var provider: String = "zenmux"
     var model: String = ""
     var customProvider: LumiCustomAPIRequestConfig?
+    var pick: ChatOptionPick?
+    var timeZone: String = TimeZone.current.identifier
 }
 
 struct SendMessageResponse: Decodable {
@@ -325,6 +415,8 @@ struct SendMessageResponse: Decodable {
     let galleryItems: [RemoteGalleryItem]?
     let galleryMessages: [ChatMessage]?
     let memorySaved: Bool?
+    let aiRemark: String?
+    let updatedOptionMessage: ChatMessage?
     let speechAudioBase64: String?
     let speechDuration: Double?
     let speechScript: String?
@@ -360,7 +452,7 @@ struct GalleryListResponse: Decodable {
     let items: [RemoteGalleryItem]
 }
 
-struct TTSRequestSettings: Encodable {
+struct TTSRequestSettings: Codable {
     let provider: String
     let apiKey: String
     let model: String
@@ -373,6 +465,9 @@ struct CallStartRequest: Encodable {
     let systemPrompt: String
     let tts: TTSRequestSettings?
     var softVoice: Bool = false
+    var provider: String = "zenmux"
+    var model: String = ""
+    var customProvider: LumiCustomAPIRequestConfig?
 }
 
 struct CallStartResponse: Decodable {
@@ -386,6 +481,7 @@ struct CallStartResponse: Decodable {
     let speechScript: String?
     let speechError: String?
     let hangupAfterPlayback: Bool?
+    let nextWakeSeconds: Int?
 }
 
 struct CallTurn: Codable, Identifiable {
@@ -404,6 +500,7 @@ struct CallTurnResponse: Decodable {
     let speechScript: String?
     let speechError: String?
     let hangupAfterPlayback: Bool?
+    let nextWakeSeconds: Int?
 }
 
 struct CallEndResponse: Decodable {
@@ -431,6 +528,11 @@ struct CallTurnRequest: Encodable {
     let tts: TTSRequestSettings?
     var voiceContext: String? = nil
     var softVoice: Bool = false
+    var provider: String = "zenmux"
+    var model: String = ""
+    var customProvider: LumiCustomAPIRequestConfig?
+    var noResponse: Bool = false
+    var wakeFollowUp: Bool = false
 }
 
 struct CallAnswerRequest: Encodable {
@@ -439,6 +541,9 @@ struct CallAnswerRequest: Encodable {
     let tts: TTSRequestSettings?
     let note: String?
     let softVoice: Bool
+    var provider: String = "zenmux"
+    var model: String = ""
+    var customProvider: LumiCustomAPIRequestConfig?
 }
 
 
@@ -458,6 +563,28 @@ struct ProactiveActions: Codable {
     var message: Bool
     var phone: Bool
     var screen: Bool
+    var surf: Bool? = nil
+}
+
+struct LumiSoloSettings: Codable, Equatable {
+    var enabled: Bool = true
+    var mode: String = "mix"
+    var desireThreshold: Double = 0.78
+    var idleMinutes: Int = 30
+    var touchDecayMinutes: Int = 30
+    var running: Bool = false
+}
+
+struct LumiSoloMetric: Codable, Identifiable {
+    var id: String
+    var mode: String
+    var trigger: String
+    var desire: Double
+    var chord: String?
+    var touchInfluence: Double?
+    var durationSeconds: Int
+    var completedAt: String
+    var interrupted: Bool
 }
 
 struct ActivityState: Codable {
@@ -471,6 +598,8 @@ struct ActivityState: Codable {
     var nextDreamAt: String?
     var dreamCycle: Int?
     var sleepStage: String?
+    var lastSleepError: String?
+    var lastDreamAt: String?
 }
 
 struct SubscriptionUsage: Decodable {
@@ -493,4 +622,63 @@ struct SubscriptionQuota: Decodable {
     let remainingFlows: Double
     let usedValueUSD: Double
     let maxValueUSD: Double
+}
+
+struct ModelUsageDay: Decodable, Identifiable {
+    let date: String
+    let requests: Int
+    let tokens: Int
+    var id: String { date }
+}
+
+struct ModelUsageWeek: Decodable {
+    let tokens: Int
+    let requests: Int
+    let cacheRate: Double
+}
+
+struct ModelRequestLog: Decodable, Identifiable {
+    let id: String
+    let createdAt: Date
+    let provider: String
+    let model: String
+    let status: Int
+    let durationMs: Int
+    let inputTokens: Int
+    let outputTokens: Int
+    let cachedTokens: Int
+    let requestJSON: String
+    let responseJSON: String
+}
+
+struct ModelUsageResponse: Decodable {
+    let days: [ModelUsageDay]
+    let week: ModelUsageWeek
+    let requests: [ModelRequestLog]
+}
+
+struct LumiContextUsageResponse: Decodable {
+    let compaction: Compaction
+
+    struct Compaction: Decodable {
+        let activeHistoryTokensEstimate: Int
+        let lastMeasuredInputTokens: Int
+        let triggerTokensEstimate: Int
+        let contextLimitTokens: Int?
+    }
+
+    var percentage: Int {
+        let trigger = max(1, compaction.triggerTokensEstimate)
+        let used = max(compaction.activeHistoryTokensEstimate, compaction.lastMeasuredInputTokens)
+        return min(100, max(0, Int((Double(used) / Double(trigger) * 100).rounded())))
+    }
+}
+
+struct LumiContextCompressionSettings: Decodable {
+    let triggerRatio: Double
+    let defaultTriggerRatio: Double
+    let contextLimitTokens: Int
+    let triggerTokensEstimate: Int
+    let minimumTriggerTokens: Int?
+    let maximumTriggerTokens: Int?
 }

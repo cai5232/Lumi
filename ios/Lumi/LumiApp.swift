@@ -30,7 +30,6 @@ struct LumiApp: App {
 @MainActor
 private struct LumiRootView: View {
     @StateObject private var model: ChatViewModel
-    @State private var showingChat = false
     @State private var showingSettings = false
     @State private var showingFood = false
     @State private var showingGallery = false
@@ -38,8 +37,11 @@ private struct LumiRootView: View {
     @State private var showingHeartTrace = false
     @State private var showingTogetherWatch = false
     @State private var showingTogetherListen = false
+    @State private var showingRadio = false
+    @State private var showingSleepRadio = false
     @State private var showingLettersMap = false
     @State private var showingCalendar = false
+    @State private var showingDrawer = false
 
     init() {
         _model = StateObject(wrappedValue: ChatViewModel(
@@ -53,57 +55,64 @@ private struct LumiRootView: View {
     }
 
     var body: some View {
-        LumiHomeView(openChat: { showingChat = true }, openSettings: { showingSettings = true }, openFood: { showingFood = true }, openGallery: { showingGallery = true }, openDiary: { showingDiary = true }, openHeartTrace: { showingHeartTrace = true }, openTogetherWatch: { showingTogetherWatch = true }, openTogetherListen: { showingTogetherListen = true }, openLettersMap: { showingLettersMap = true }, openCalendar: { showingCalendar = true })
-            .fullScreenCover(isPresented: $showingChat) {
-                ZStack {
-                    ChatDetailView(model: model, onClose: { showingChat = false })
-                    DraggableClawdPet(assetName: model.isSending ? "clawd-working-thinking" : "clawd-idle-follow")
-                }
-            }
-            .fullScreenCover(isPresented: $showingSettings) {
-                SettingsView()
-            }
-            .fullScreenCover(isPresented: $showingFood) {
-                FoodNotebookView()
-            }
-            .fullScreenCover(isPresented: $showingGallery) {
-                TogetherView()
-            }
-            .fullScreenCover(isPresented: $showingDiary) {
-                TogetherView(startOnDiary: true)
-            }
-            .fullScreenCover(isPresented: $showingHeartTrace) {
-                HeartTraceView(onClose: { showingHeartTrace = false })
-            }
-            .fullScreenCover(isPresented: $showingTogetherWatch) {
-                TogetherWatchView(onAskAboutVideo: { _, text, imageBase64 in
-                    if model.messages.isEmpty { await model.load() }
-                    return await model.sendWatchMessage(text, imageBase64: imageBase64)
+        NavigationStack {
+            ZStack {
+                ChatDetailView(model: model, onOpenEntry: { entry in
+                    switch entry {
+                    case .drawer: showingDrawer = true
+                    case .sleepRadio: showingSleepRadio = true
+                    case .heartTrace: showingHeartTrace = true
+                    case .diary: showingDiary = true
+                    case .gallery: showingGallery = true
+                    case .together: showingTogetherWatch = true
+                    case .treasureMap, .footsteps: showingLettersMap = true
+                    case .food: showingFood = true
+                    case .settings: showingSettings = true
+                    }
                 })
+                DraggableClawdPet(assetName: model.isSending ? "clawd-working-thinking" : "clawd-idle-follow")
             }
-            .fullScreenCover(isPresented: $showingTogetherListen) {
-                TogetherListenView()
-            }
-            .fullScreenCover(isPresented: $showingLettersMap) {
-                LettersMapView()
-            }
-            .fullScreenCover(isPresented: $showingCalendar) {
-                SharedCalendarView()
-            }
-            .onOpenURL { url in
-                guard url.scheme == "ourcalendar", url.host == "day",
-                      let dayKey = url.pathComponents.dropFirst().first else { return }
-                showingCalendar = true
-                SharedCalendarDayRouter.shared.open(dayKey: dayKey)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenSharedCalendarDay"))) { notification in
-                guard let dayKey = notification.object as? String else { return }
-                showingCalendar = true
-                SharedCalendarDayRouter.shared.open(dayKey: dayKey)
-            }
-            .overlay {
-                TogetherListenMiniPlayer { showingTogetherListen = true }
-            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarBackground(.hidden, for: .bottomBar)
+        }
+        .fullScreenCover(isPresented: $showingSettings) { SettingsView() }
+        .fullScreenCover(isPresented: $showingDrawer) {
+            LumiDrawerView(chatID: "default", onClose: { showingDrawer = false })
+        }
+        .fullScreenCover(isPresented: $showingFood) { FoodNotebookView() }
+        .fullScreenCover(isPresented: $showingGallery) { TogetherView() }
+        .fullScreenCover(isPresented: $showingDiary) { TogetherView(startOnDiary: true) }
+        .fullScreenCover(isPresented: $showingHeartTrace) {
+            HeartTraceView(onClose: { showingHeartTrace = false })
+        }
+        .fullScreenCover(isPresented: $showingTogetherWatch) {
+            TogetherWatchView(onAskAboutVideo: { _, text, imageBase64 in
+                if model.messages.isEmpty { await model.load() }
+                return await model.sendWatchMessage(text, imageBase64: imageBase64)
+            })
+        }
+        .fullScreenCover(isPresented: $showingTogetherListen) { TogetherListenView() }
+        .fullScreenCover(isPresented: $showingRadio) { RadioView() }
+        .fullScreenCover(isPresented: $showingSleepRadio) { SleepRadioView(chatModel: model) }
+        .fullScreenCover(isPresented: $showingLettersMap) { LettersMapView() }
+        .fullScreenCover(isPresented: $showingCalendar) { SharedCalendarView() }
+        .onOpenURL { url in
+            guard url.scheme == "ourcalendar", url.host == "day",
+                  let dayKey = url.pathComponents.dropFirst().first else { return }
+            showingCalendar = true
+            SharedCalendarDayRouter.shared.open(dayKey: dayKey)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenSharedCalendarDay"))) { notification in
+            guard let dayKey = notification.object as? String else { return }
+            showingCalendar = true
+            SharedCalendarDayRouter.shared.open(dayKey: dayKey)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenSleepRadio"))) { _ in
+            showingSleepRadio = true
+        }
+        .overlay {
+            TogetherListenMiniPlayer { showingTogetherListen = true }
+        }
     }
 }
 
@@ -116,6 +125,7 @@ private struct LumiHomeView: View {
     let openHeartTrace: () -> Void
     let openTogetherWatch: () -> Void
     let openTogetherListen: () -> Void
+    let openRadio: () -> Void
     let openLettersMap: () -> Void
     let openCalendar: () -> Void
 
@@ -126,7 +136,6 @@ private struct LumiHomeView: View {
         .init(title: "日记", symbol: "book.closed.fill", tint: Color(red: 0.91, green: 0.56, blue: 0.67), action: .diary),
         .init(title: "日历", symbol: "calendar", tint: Color(red: 0.89, green: 0.36, blue: 0.38), action: .calendar),
         .init(title: "吃了么", symbol: "fork.knife", tint: Color(red: 0.96, green: 0.67, blue: 0.37), action: .food),
-        .init(title: "一起听", symbol: "headphones", tint: Color(red: 0.95, green: 0.56, blue: 0.67), action: .togetherListen),
         .init(title: "共看", symbol: "play.rectangle.fill", tint: Color(red: 0.92, green: 0.48, blue: 0.57), action: .togetherWatch),
         .init(title: "设置", symbol: "gearshape.fill", tint: Color(red: 0.43, green: 0.49, blue: 0.61), action: .settings),
         .init(title: "行迹", symbol: "figure.walk", tint: Color(red: 0.43, green: 0.49, blue: 0.61)),
@@ -245,6 +254,7 @@ private struct LumiHomeView: View {
             case .heartTrace: openHeartTrace()
             case .togetherWatch: openTogetherWatch()
             case .togetherListen: openTogetherListen()
+            case .radio: openRadio()
             case .lettersMap: openLettersMap()
             case .calendar: openCalendar()
             case .none: break
@@ -290,7 +300,7 @@ private struct FoodNotebookView: View {
 }
 
 private struct LumiHomeApp: Identifiable {
-    enum Action { case chat, settings, food, gallery, diary, heartTrace, togetherWatch, togetherListen, lettersMap, calendar }
+    enum Action { case chat, settings, food, gallery, diary, heartTrace, togetherWatch, togetherListen, radio, lettersMap, calendar }
     let id = UUID()
     let title: String
     let symbol: String
@@ -370,6 +380,9 @@ final class LumiAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
         if response.notification.request.content.userInfo["kind"] as? String == "screen_request" {
             UserDefaults.standard.set(true, forKey: "lumi.screenRequestPending")
             NotificationCenter.default.post(name: Notification.Name("LumiScreenRequest"), object: nil)
+        }
+        if response.notification.request.content.userInfo["kind"] as? String == "sleep_radio_ready" {
+            NotificationCenter.default.post(name: Notification.Name("OpenSleepRadio"), object: nil)
         }
     }
 }

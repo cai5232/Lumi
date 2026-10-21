@@ -17,6 +17,7 @@ private struct ChatHistoryTopOffsetKey: PreferenceKey {
 struct ChatDetailView: View {
     @StateObject private var model: ChatViewModel
     var onClose: (() -> Void)? = nil
+    var onOpenEntry: ((LumiChatEntry) -> Void)? = nil
     @StateObject private var glassPresentation = GlassComparisonPresentation()
     @State private var showingSettings = false
     @State private var htmlMessage: ChatMessage?
@@ -31,20 +32,34 @@ struct ChatDetailView: View {
     @State private var screenRequestPending = false
     @State private var selectedCallRecord: ChatMessage?
     @State private var showingSubscriptionUsage = false
+    @State private var showingModelRequestLog = false
     @State private var showingTogether = false
+    @State private var showingRemarkEditor = false
+    @State private var remarkDraft = ""
     @State private var historyPagingArmed = false
     @State private var historyPagingPrimed = false
     @State private var didInitialScroll = false
+    @State private var isShowingEntryMenu = false
+    @State private var hasDrawerUnread = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("lumi.appearance.surfaceStyle") private var appearanceStyle = "frosted"
+    @AppStorage("lumi.appearance.bubbleColor") private var appearanceBubbleColor = "#F5ECEC"
+    @AppStorage("lumi.appearance.opacity") private var appearanceOpacity = 0.78
+    @AppStorage("lumi.appearance.backgroundPath") private var appearanceBackgroundPath = ""
+    @AppStorage("lumi.appearance.backgroundBlur") private var appearanceBackgroundBlur = 0.0
+    @AppStorage("lumi.appearance.fontSize") private var appearanceFontSize = 15.0
+    @AppStorage("lumi.appearance.textColor") private var appearanceTextColor = "#332B30"
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
 
-    init(model: ChatViewModel? = nil, onClose: (() -> Void)? = nil) {
+    init(model: ChatViewModel? = nil, onClose: (() -> Void)? = nil, onOpenEntry: ((LumiChatEntry) -> Void)? = nil) {
         _model = StateObject(wrappedValue: model ?? ChatViewModel())
         self.onClose = onClose
+        self.onOpenEntry = onOpenEntry
     }
 
     var body: some View {
         ZStack {
-            LumiPalette.chatBackground.ignoresSafeArea()
+            chatBackdrop
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -58,7 +73,7 @@ struct ChatDetailView: View {
                         // confirmed with the server UUID. Keep the row identity stable
                         // across that replacement so SwiftUI does not briefly remove the
                         // user's bubble while the assistant reply arrives.
-                        ForEach(Array(model.messages.enumerated()), id: \.offset) { index, message in
+                        ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
                             if message.contentType != "together_watch" {
                                 if shouldShowTimeDivider(at: index) {
                                     timeDivider(for: message.createdAt)
@@ -68,15 +83,15 @@ struct ChatDetailView: View {
                         }
                         if model.isSending { thinkingBubble }
                     }
-                    .animation(.easeOut(duration: 0.24), value: model.messages.count)
                     .padding(.horizontal, 16)
-                    .padding(.top, 112)
+                    .padding(.top, 12)
                     .padding(.bottom, 20)
                     Color.clear
                         .frame(height: 1)
                         .id("chat-bottom-anchor")
                 }
                 .scrollIndicators(.hidden)
+                .modifier(ChatBottomScrollEdgeEffectModifier())
                 .coordinateSpace(name: "chat-scroll")
                 .onPreferenceChange(ChatHistoryTopOffsetKey.self) { offset in
                     // Before the initial jump to the newest message, the top marker is
@@ -114,56 +129,30 @@ struct ChatDetailView: View {
                     historyPagingArmed = true
                 }
             }
-            GeometryReader { geometry in
-                ZStack(alignment: .top) {
-                    LinearGradient(
-                        stops: [
-                            .init(color: LumiPalette.chatBackground.opacity(0.98), location: 0),
-                            .init(color: LumiPalette.chatBackground.opacity(0.84), location: 0.48),
-                            .init(color: LumiPalette.chatBackground.opacity(0), location: 1)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: max(geometry.safeAreaInsets.top, 44) + 100)
-                    .blur(radius: 18)
-                    .ignoresSafeArea(edges: .top)
-                    .allowsHitTesting(false)
-
-                    topBar
-                        .padding(.top, max(geometry.safeAreaInsets.top, 44) + 12)
-                        .frame(width: geometry.size.width, alignment: .top)
-                        .zIndex(5)
-                }
-            }
         }
         .foregroundStyle(LumiPalette.textPrimary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(edges: [.top, .horizontal])
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            composer
-                .padding(.top, 5)
-                .background(.clear)
-                .background(alignment: .top) {
-                    LinearGradient(
-                        stops: [
-                            .init(color: LumiPalette.chatBackground.opacity(0), location: 0),
-                            .init(color: LumiPalette.chatBackground.opacity(0.80), location: 0.58),
-                            .init(color: LumiPalette.chatBackground.opacity(0.98), location: 1)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 84)
-                    .blur(radius: 18)
-                    .offset(y: -42)
-                    .allowsHitTesting(false)
+        .ignoresSafeArea(edges: .horizontal)
+        .toolbar { chatToolbar }
+        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .safeAreaInset(edge: .bottom, spacing: 0) { composer.zIndex(1) }
+        .overlayPreferenceValue(ChatEntryButtonAnchorKey.self) { anchor in
+            GeometryReader { geometry in
+                if isShowingEntryMenu, let anchor {
+                    chatEntryMenu
+                        .position(x: geometry[anchor].midX, y: geometry[anchor].minY - entryMenuHeight / 2 - 8)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+            }
         }
         .task {
             await model.load()
+            await model.loadRemarks()
             await pollIncomingCall()
         }
+        .task { await refreshDrawerHint() }
+        .onChange(of: isShowingEntryMenu) { _, _ in Task { await refreshDrawerHint() } }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task { await model.load() }
         }
@@ -207,6 +196,9 @@ struct ChatDetailView: View {
                 .presentationDragIndicator(.visible)
                 .presentationBackground(LumiPalette.chatBackground)
         }
+        .fullScreenCover(isPresented: $showingModelRequestLog) {
+            ModelRequestLogSheet()
+        }
         .fullScreenCover(isPresented: $showingSettings) {
             SettingsView()
         }
@@ -228,7 +220,8 @@ struct ChatDetailView: View {
             ThinkingDetailsSheetView(text: glassPresentation.thinkingText) { height in
                 glassPresentation.thinkingHeight = height
             }
-                .presentationDetents([.height(glassPresentation.thinkingHeight)])
+                .presentationDetents([.medium, .large])
+                .presentationContentInteraction(.scrolls)
                 .presentationDragIndicator(.visible)
                 .presentationBackground(LumiPalette.chatBackground)
         }
@@ -243,6 +236,16 @@ struct ChatDetailView: View {
         }
         .fullScreenCover(item: $selectedCallRecord) { record in
             CallRecordView(record: record)
+        }
+        .fullScreenCover(isPresented: $showingCallDemo) {
+            CallDemoView(incomingCallID: incomingCallID, onRejected: { message, statusMessage in
+                model.receiveCallOutcome(message, statusMessage: statusMessage)
+                endLocalSystemCall()
+            }, onEnded: { record in
+                incomingCallID = nil
+                endLocalSystemCall()
+                if let record { model.receiveCallRecord(record) }
+            })
         }
         .overlay(alignment: .top) {
             if let error = model.errorMessage {
@@ -269,10 +272,75 @@ struct ChatDetailView: View {
                     .transition(.opacity)
             }
         }
+        .alert("修改备注", isPresented: $showingRemarkEditor) {
+            TextField("给沈屿的备注", text: $remarkDraft)
+            Button("保存") {
+                Task {
+                    do { try await model.saveAssistantRemark(remarkDraft.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    catch { model.errorMessage = "备注保存失败：\(error.localizedDescription)" }
+                }
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("长按中间胶囊可以修改备注。")
+        }
     }
 
-    private var topBar: some View {
-        HStack(spacing: 0) {
+    private var assistantTitleCapsule: some View {
+        VStack(spacing: 1) {
+            Text(model.assistantRemark.isEmpty ? "沈屿" : model.assistantRemark)
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundStyle(LumiPalette.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(model.contextUsagePercentage.map { "上下文 \($0)%" } ?? "上下文 --%")
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(LumiPalette.textSecondary.opacity(0.82))
+        }
+        .frame(width: 200, height: 44)
+        .background { LumiLiquidGlass(shape: Capsule()) }
+        .contentShape(Capsule())
+        .onTapGesture { remarkDraft = model.assistantRemark; showingRemarkEditor = true }
+        .onLongPressGesture(minimumDuration: 0.55) { remarkDraft = model.assistantRemark; showingRemarkEditor = true }
+        .accessibilityElement()
+        .accessibilityLabel(model.assistantRemark.isEmpty ? "沈屿" : model.assistantRemark)
+        .accessibilityHint("轻点或长按修改备注")
+    }
+
+    private var callButton: some View {
+        Button {
+            incomingCallID = nil
+            showingCallDemo = true
+        } label: {
+            Image(systemName: "phone")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(LumiPalette.iconPink)
+                .frame(width: 42, height: 42)
+                .background { LumiLiquidGlass(shape: Circle()) }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("让沈屿给我打电话")
+    }
+
+    @ToolbarContentBuilder
+    private var chatToolbar: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            ToolbarItem(placement: .topBarLeading) { leadingHeaderControls }
+                .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .principal) { assistantTitleCapsule }
+                .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .topBarTrailing) { callButton }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarLeading) { leadingHeaderControls }
+            ToolbarItem(placement: .principal) { assistantTitleCapsule }
+            ToolbarItem(placement: .topBarTrailing) { callButton }
+        }
+    }
+
+    private var leadingHeaderControls: some View {
+        HStack(spacing: 8) {
             if let onClose {
                 Button(action: onClose) {
                     Image(systemName: "chevron.left")
@@ -280,50 +348,80 @@ struct ChatDetailView: View {
                         .foregroundStyle(LumiPalette.iconPink)
                         .frame(width: 42, height: 42)
                         .background { LumiLiquidGlass(shape: Circle()) }
-                        .overlay(Circle().stroke(.white.opacity(0.64), lineWidth: 1))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("返回桌面")
-                .zIndex(10)
+                }.buttonStyle(.plain).accessibilityLabel("返回桌面")
             }
-            Spacer(minLength: 12)
-            Text("沈屿")
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .foregroundStyle(LumiPalette.textPrimary)
-                .frame(width: 184, height: 44)
-                .background { LumiLiquidGlass(shape: Capsule()) }
-                .overlay(Capsule().stroke(.white.opacity(0.64), lineWidth: 1))
-                .onTapGesture { showingTogether = true }
-
-            Spacer(minLength: 12)
-
-            Button { LumiNativeCalls.shared.startAIInitiatedCall() } label: {
-                Image(systemName: "phone.fill")
-                    .font(.system(size: 16, weight: .semibold))
+            Button { showingModelRequestLog = true } label: {
+                Image(systemName: "heart")
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(LumiPalette.iconPink)
                     .frame(width: 42, height: 42)
                     .background { LumiLiquidGlass(shape: Circle()) }
-                    .overlay(Circle().stroke(.white.opacity(0.64), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("让沈屿给我打电话")
-            .fullScreenCover(isPresented: $showingCallDemo) {
-                CallDemoView(
-                    incomingCallID: incomingCallID,
-                    onRejected: { message, statusMessage in
-                        model.receiveCallOutcome(message, statusMessage: statusMessage)
-                        endLocalSystemCall()
-                    },
-                    onEnded: { record in
-                        incomingCallID = nil
-                        endLocalSystemCall()
-                        if let record { model.receiveCallRecord(record) }
-                    }
-                )
-            }
+            }.buttonStyle(.plain).accessibilityLabel("请求日志")
         }
-        .padding(.horizontal, 14)
+    }
+
+    private var entryMenuHeight: CGFloat { CGFloat(menuEntries.count) * 44 + CGFloat(max(0, menuEntries.count - 1)) * 7 }
+    private var menuEntries: [LumiChatEntry] { LumiChatEntry.allCases.filter { $0 != .heartTrace } }
+    private var chatEntryMenu: some View {
+        VStack(spacing: 7) {
+            ForEach(menuEntries) { entry in
+                Button {
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.58)) { isShowingEntryMenu = false }
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    onOpenEntry?(entry)
+                } label: {
+                    Image(systemName: entry.symbol)
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(LumiPalette.iconPink)
+                        .frame(width: 44, height: 44)
+                        .background { LumiLiquidGlass(shape: Circle()) }
+                }.buttonStyle(.plain).accessibilityLabel(entry.rawValue)
+            }
+        }.frame(width: 52, height: entryMenuHeight)
+    }
+
+    private func refreshDrawerHint() async {
+        guard let count = try? await LumiAPIClient().fetchDrawerUnseenCount(for: "default") else { return }
+        hasDrawerUnread = count > 0
+    }
+
+    private var chatBackdrop: some View {
+        GeometryReader { geometry in
+            ZStack {
+                LumiPalette.chatBackground
+                if !appearanceBackgroundPath.isEmpty, let image = UIImage(contentsOfFile: appearanceBackgroundPath) {
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                        .blur(radius: appearanceBackgroundBlur)
+                }
+            }
+        }.ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private func chatMessageSurface(base: Color, cornerRadius: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if appearanceStyle == "solid" {
+            shape.fill(base)
+        } else if appearanceStyle == "liquid" {
+            if #available(iOS 26.0, *) {
+                Color.clear
+                    .glassEffect(.regular.tint(base.opacity(0.46)).interactive(), in: shape)
+                    .opacity(appearanceOpacity)
+                    .overlay(shape.stroke(.white.opacity(0.42 * appearanceOpacity), lineWidth: 0.8))
+                    .allowsHitTesting(false)
+            } else {
+                shape.fill(.ultraThinMaterial.opacity(appearanceOpacity))
+                    .overlay(shape.fill(base.opacity(appearanceOpacity * 0.4)))
+                    .overlay(shape.stroke(.white.opacity(0.42 * appearanceOpacity), lineWidth: 0.8))
+            }
+        } else {
+            ZStack {
+                shape.fill(.ultraThinMaterial.opacity(appearanceOpacity))
+                shape.fill(base.opacity(appearanceOpacity))
+            }
+            .overlay(shape.stroke(.white.opacity(0.34 * appearanceOpacity), lineWidth: 0.7))
+        }
     }
 
     private var composer: some View {
@@ -332,6 +430,8 @@ struct ChatDetailView: View {
             selectedImageNames: $selectedImageNames,
             selectedGalleryItem: $selectedGalleryItem,
             photoItems: $photoItems,
+            isShowingEntryMenu: $isShowingEntryMenu,
+            hasDrawerUnread: hasDrawerUnread,
             onSend: { text in
                 Task { await sendDraft(text: text) }
             }
@@ -546,8 +646,8 @@ struct ChatDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         markdownText(visibleContent(message.content))
-                            .foregroundStyle(LumiPalette.textPrimary)
-                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(RestoredChatColor.color(appearanceTextColor))
+                            .font(.system(size: appearanceFontSize, weight: .regular))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -556,7 +656,11 @@ struct ChatDetailView: View {
                 .padding(.horizontal, isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 8 : (isCallStatus ? 10 : 13)))
                 .padding(.vertical, isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3))))
                 .frame(width: isGalleryCollection ? 284 : ((isScreenRequest || isScreenStatus) ? nil : (message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8)))), alignment: .leading)
-                .background(isGalleryCollection || isScreenRequest || isScreenStatus ? .clear : (isUserSide ? LumiPalette.userBubble : .white))
+                .background {
+                    if !isGalleryCollection && !isScreenRequest && !isScreenStatus {
+                        chatMessageSurface(base: isUserSide ? RestoredChatColor.color(appearanceBubbleColor) : .white, cornerRadius: 21)
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: isGalleryCollection ? 0 : 21))
                 if !isUserSide { Spacer(minLength: 48) }
                 if isUserSide {
@@ -709,6 +813,25 @@ struct ChatDetailView: View {
     }
 }
 
+enum LumiChatEntry: String, CaseIterable, Identifiable {
+    case drawer = "抽屉", sleepRadio = "睡前电台", heartTrace = "心情", diary = "日记", gallery = "相册", together = "共看", treasureMap = "藏宝地图", footsteps = "足迹", food = "吃了么", settings = "设置"
+    var id: String { rawValue }
+    var symbol: String {
+        switch self {
+        case .drawer: return "archivebox.fill"
+        case .sleepRadio: return "moon.zzz.fill"
+        case .heartTrace: return "heart"
+        case .diary: return "book.closed.fill"
+        case .gallery: return "photo.on.rectangle.angled"
+        case .together: return "play.rectangle.fill"
+        case .treasureMap: return "map.fill"
+        case .food: return "fork.knife"
+        case .footsteps: return "figure.walk"
+        case .settings: return "gearshape.fill"
+        }
+    }
+}
+
 private struct GalleryCollectionCard: View {
     let notice: GalleryCollectionNotice
     let localImageName: String?
@@ -820,6 +943,9 @@ private struct ComposerInputView: View {
     @Binding var selectedImageNames: [String]
     @Binding var selectedGalleryItem: RemoteGalleryItem?
     @Binding var photoItems: [PhotosPickerItem]
+    @Binding var isShowingEntryMenu: Bool
+    let hasDrawerUnread: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let onSend: (String) -> Void
     @State private var text = ""
     @FocusState private var focused: Bool
@@ -872,13 +998,27 @@ private struct ComposerInputView: View {
                 .scrollIndicators(.hidden)
             }
             HStack(spacing: 7) {
+                Button {
+                    focused = false
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.58)) { isShowingEntryMenu.toggle() }
+                } label: {
+                    Image(systemName: isShowingEntryMenu ? "xmark" : "plus")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(LumiPalette.iconPink)
+                        .frame(width: 42, height: 42)
+                        .modifier(ComposerGlassButtonSurface())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isShowingEntryMenu ? "收起入口菜单" : "展开功能入口")
+                .anchorPreference(key: ChatEntryButtonAnchorKey.self, value: .bounds) { $0 }
+                .scaleEffect(hasDrawerUnread && !reduceMotion ? 1.06 : 1)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 2.1).repeatForever(autoreverses: true), value: hasDrawerUnread)
                 PhotosPicker(selection: $photoItems, maxSelectionCount: 4, matching: .images) {
                     Image(systemName: "paperclip")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(LumiPalette.iconPink)
-                        .frame(width: 38, height: 38)
-                        .background { LumiLiquidGlass(shape: Circle()) }
-                        .overlay(Circle().stroke(.white.opacity(0.64), lineWidth: 1))
+                        .frame(width: 42, height: 42)
+                        .modifier(ComposerGlassButtonSurface())
                 }
                 .buttonStyle(.plain)
                 HStack(spacing: 6) {
@@ -886,6 +1026,7 @@ private struct ComposerInputView: View {
                         .focused($focused)
                         .foregroundStyle(LumiPalette.textPrimary)
                         .tint(LumiPalette.iconPink)
+                        .font(.system(size: 15))
                         .lineLimit(1)
                         .submitLabel(.send)
                         .onSubmit {
@@ -900,9 +1041,9 @@ private struct ComposerInputView: View {
                         }
                 }
                 .padding(.horizontal, 14)
-                .frame(height: 38)
-                .background { LumiLiquidGlass(shape: Capsule()) }
-                .overlay(Capsule().stroke(.white.opacity(0.64), lineWidth: 1))
+                .frame(height: 42)
+                .background { LumiLiquidGlass(shape: Capsule()).allowsHitTesting(false) }
+                .compositingGroup()
 
                 Button {
                     let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -914,17 +1055,17 @@ private struct ComposerInputView: View {
                     Image(systemName: "paperplane.fill")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(LumiPalette.iconPink)
-                        .frame(width: 38, height: 38)
-                        .background { LumiLiquidGlass(shape: Circle()) }
-                        .overlay(Circle().stroke(.white.opacity(0.64), lineWidth: 1))
+                        .frame(width: 42, height: 42)
+                        .modifier(ComposerGlassButtonSurface())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("发送")
             }
         }
-        .frame(height: selectedImageData.isEmpty && selectedGalleryItem == nil ? 42 : 104)
+
         .padding(.horizontal, 12)
-        .padding(.vertical, 2)
+        .padding(.top, 7)
+        .padding(.bottom, 2)
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
             Task {
@@ -1069,17 +1210,25 @@ private enum LumiPalette {
 
 private struct LumiLiquidGlass<S: Shape>: View {
     let shape: S
+    var tint: Color? = nil
 
     @ViewBuilder var body: some View {
         if #available(iOS 26.0, *) {
-            Color.clear
-                .glassEffect(.regular.tint(Color.white.opacity(0.62)), in: shape)
-                .allowsHitTesting(false)
+            if let tint {
+                Color.clear
+                    .glassEffect(.regular.tint(tint).interactive(), in: shape)
+                    .allowsHitTesting(false)
+            } else {
+                Color.clear
+                    .glassEffect(.regular.interactive(), in: shape)
+                    .allowsHitTesting(false)
+            }
         } else {
             shape.fill(Color.white.opacity(0.64)).allowsHitTesting(false)
         }
     }
 }
+
 
 private struct ThinkingDots: View {
     @State private var animate = false
@@ -2321,6 +2470,420 @@ private struct GlassComparisonView: View {
             }
             .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white.opacity(0.85), lineWidth: 0.8))
         }
+    }
+}
+
+@MainActor
+private struct ModelRequestLogSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    private let api = LumiAPIClient()
+    @State private var usage: ModelUsageResponse?
+    @State private var loading = true
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let usage {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(usage.requests) { request in
+                                VStack(spacing: 0) {
+                                    NavigationLink(destination: ModelRequestDetailView(request: request)) {
+                                        ModelUsageRequestRow(request: request)
+                                    }
+                                    .buttonStyle(.plain)
+                                    if request.id != usage.requests.last?.id {
+                                        Rectangle()
+                                            .fill(LumiPalette.textSecondary.opacity(0.18))
+                                            .frame(height: 0.7)
+                                            .padding(.leading, 28)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.top, 8)
+                        .padding(.bottom, 24)
+                    }
+                    .overlay {
+                        if usage.requests.isEmpty { emptyState("还没有模型请求记录") }
+                    }
+                } else if loading {
+                    ProgressView("正在读取模型用量")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    emptyState(error ?? "暂时无法读取模型用量")
+                }
+            }
+            .background(LumiPalette.chatBackground.ignoresSafeArea())
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 2) {
+                        Text("模型用量")
+                            .font(.system(size: 17, weight: .semibold, design: .rounded))
+                            .foregroundStyle(LumiPalette.textPrimary)
+                        Text("本周请求 \(usage?.week.requests.formatted() ?? "--") 次")
+                            .font(.system(size: 11, weight: .regular, design: .rounded))
+                            .foregroundStyle(LumiPalette.textSecondary.opacity(0.68))
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(LumiPalette.iconPink)
+                            .frame(width: 46, height: 46)
+                            .background {
+                                Circle()
+                                    .fill(.white.opacity(0.84))
+                                    .overlay(Circle().stroke(.white.opacity(0.82), lineWidth: 1))
+                            }
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                    .accessibilityLabel("返回聊天")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await refresh() } } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(LumiPalette.textPrimary)
+                            .frame(width: 46, height: 46)
+                            .background {
+                                Circle()
+                                    .fill(.white.opacity(0.84))
+                                    .overlay(Circle().stroke(.white.opacity(0.82), lineWidth: 1))
+                            }
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                    .disabled(loading)
+                    .accessibilityLabel("刷新模型用量")
+                }
+            }
+            .task { await refresh() }
+        }
+        .preferredColorScheme(.light)
+    }
+
+    private func emptyState(_ message: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(LumiPalette.iconPink)
+            Text(message)
+                .font(.system(size: 14))
+                .foregroundStyle(LumiPalette.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+    }
+
+    private func refresh() async {
+        loading = usage == nil
+        defer { loading = false }
+        do {
+            usage = try await api.fetchModelUsage()
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+private struct ModelUsageRequestRow: View {
+    let request: ModelRequestLog
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Capsule()
+                .fill(request.status >= 200 && request.status < 400
+                      ? Color(red: 0.38, green: 0.72, blue: 0.56)
+                      : Color(red: 1.0, green: 0.55, blue: 0.20))
+                .frame(width: 5, height: 58)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(request.provider)  \(request.model)")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(LumiPalette.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Spacer(minLength: 4)
+                    Text(request.createdAt.formatted(date: .omitted, time: .shortened))
+                        .font(.system(size: 12, weight: .regular, design: .rounded))
+                        .foregroundStyle(LumiPalette.textSecondary.opacity(0.62))
+                }
+                HStack(spacing: 7) {
+                    Text("\((request.inputTokens + request.outputTokens).formatted()) tokens")
+                    Text("·")
+                    Text("\(max(0, request.durationMs).formatted()) ms")
+                    Text("·")
+                    Text("\(request.status)")
+                }
+                .font(.system(size: 13, weight: .regular, design: .rounded))
+                .foregroundStyle(LumiPalette.textSecondary.opacity(0.72))
+            }
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(LumiPalette.textSecondary.opacity(0.42))
+        }
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct ModelRequestDetailSection: Identifiable {
+    let title: String
+    let subtitle: String
+    let content: String
+    var id: String { title }
+}
+
+@MainActor
+private struct ModelRequestDetailView: View {
+    let request: ModelRequestLog
+    @State private var expandedSections: Set<String> = ["当前消息", "模型回复"]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                detailCard("请求概况") {
+                    detailLine("线路", request.provider)
+                    detailLine("模型", request.model)
+                    detailLine("时间", request.createdAt.formatted(date: .long, time: .standard))
+                    detailLine("状态码", "\(request.status)")
+                    detailLine("耗时", "\(request.durationMs.formatted()) ms")
+                    detailLine("输入 Token", request.inputTokens.formatted())
+                    detailLine("输出 Token", request.outputTokens.formatted())
+                    detailLine("缓存 Token", request.cachedTokens.formatted())
+                }
+                ForEach(detailSections) { section in
+                    sectionCard(section)
+                }
+            }
+            .padding(18)
+        }
+        .background(LumiPalette.chatBackground.ignoresSafeArea())
+        .navigationTitle("请求详情")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var detailSections: [ModelRequestDetailSection] {
+        let body = requestObject
+        let response = responseObject
+        let messages = (body["messages"] as? [[String: Any]]) ?? []
+        let systemText = systemPrompt(from: body, messages: messages)
+        let messageContents = messages.map { readableContent($0["content"] ?? "") }
+        let allPromptText = ([systemText] + messageContents).joined(separator: "\n\n")
+        let retrieved = tagContents(["retrieved_memories"], in: allPromptText)
+        let longTerm = tagContents(["long_term_memory", "long_term_memories", "user_profile", "long_term_profile", "sent_mail_memory"], in: allPromptText)
+        let summary = tagContents(["context_summary"], in: allPromptText)
+        let requestRuntime = tagContents(["system_context"], in: messageContents.last ?? "")
+            .map { stripTags(["retrieved_memories", "context_summary", "long_term_memory", "long_term_memories", "user_profile", "long_term_profile", "sent_mail_memory"], from: $0) }
+        let userIndices = messages.indices.filter { messages[$0]["role"] as? String == "user" }
+        let currentIndex = userIndices.last
+        let history = messages.indices.compactMap { index -> String? in
+            guard index != currentIndex else { return nil }
+            let item = messages[index]
+            let role = item["role"] as? String ?? "message"
+            guard role == "user" || role == "assistant" else { return nil }
+            let text = stripTags(["system_context", "retrieved_memories", "context_summary", "long_term_memory", "long_term_memories", "user_profile", "long_term_profile", "sent_mail_memory", "food_tool", "food_tool_result", "lumi_tool_calls"], from: readableContent(item["content"] ?? ""))
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return "\(role == "user" ? "用户" : "助手")\n\(text)"
+        }
+        let currentText = currentIndex.map { readableContent(messages[$0]["content"] ?? "") } ?? ""
+        let cleanCurrentText = stripTags(["system_context", "retrieved_memories", "context_summary", "long_term_memory", "long_term_memories", "user_profile", "long_term_profile", "sent_mail_memory", "food_tool", "food_tool_result", "lumi_tool_calls"], from: currentText)
+        let tools: String = body["tools"].flatMap { prettyJSON($0) } ?? ""
+        let calls = toolCallContent(response: response, messages: messages, promptText: allPromptText)
+        let output = modelOutput(from: response)
+
+        return [
+            section("系统提示词", "模型的基础指令", systemText),
+            section("对话上下文", "本轮之前的聊天记录", history.joined(separator: "\n\n────────\n\n")),
+            section("上下文摘要", "压缩后保留的历史摘要", summary.joined(separator: "\n\n")),
+            section("长期记忆", "固定画像或长期记忆字段", longTerm.joined(separator: "\n\n")),
+            section("检索记忆", "本轮检索并注入的记忆", retrieved.joined(separator: "\n\n")),
+            section("请求上下文", "时间、功能状态等本轮附加信息", requestRuntime.joined(separator: "\n\n")),
+            section("当前消息", "本轮发送给模型的最新用户内容", cleanCurrentText),
+            section("工具调用", "工具定义、模型发起的调用及工具返回", calls.isEmpty ? tools : [tools, calls].filter { !$0.isEmpty }.joined(separator: "\n\n--- 实际调用与结果 ---\n\n")),
+            section("模型回复", "模型返回的可见文本或错误", output)
+        ]
+    }
+
+    private var requestObject: [String: Any] {
+        jsonObject(request.requestJSON) as? [String: Any] ?? [:]
+    }
+
+    private var responseObject: [String: Any] {
+        jsonObject(request.responseJSON) as? [String: Any] ?? [:]
+    }
+
+    private func section(_ title: String, _ subtitle: String, _ raw: String) -> ModelRequestDetailSection {
+        let content = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ModelRequestDetailSection(title: title, subtitle: subtitle, content: content.isEmpty ? "（本次请求未包含此项）" : content)
+    }
+
+    private func sectionCard(_ section: ModelRequestDetailSection) -> some View {
+        let isExpanded = Binding(
+            get: { expandedSections.contains(section.id) },
+            set: { value in
+                if value { expandedSections.insert(section.id) }
+                else { expandedSections.remove(section.id) }
+            }
+        )
+        return DisclosureGroup(isExpanded: isExpanded) {
+            Text(section.content)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(LumiPalette.textPrimary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(LumiPalette.chatBackground.opacity(0.86), in: RoundedRectangle(cornerRadius: 13))
+                .padding(.top, 8)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(section.title)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(LumiPalette.textPrimary)
+                Text(section.subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(LumiPalette.textSecondary.opacity(0.7))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .tint(LumiPalette.iconPink)
+        .padding(15)
+        .background(.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func detailCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(LumiPalette.textPrimary)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func detailLine(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(title).foregroundStyle(LumiPalette.textSecondary)
+            Spacer(minLength: 12)
+            Text(value).foregroundStyle(LumiPalette.textPrimary).multilineTextAlignment(.trailing)
+        }
+        .font(.system(size: 14))
+    }
+
+    private func systemPrompt(from body: [String: Any], messages: [[String: Any]]) -> String {
+        if let system = body["system"] { return readableContent(system) }
+        return messages.filter { $0["role"] as? String == "system" }
+            .map { readableContent($0["content"] ?? "") }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+    }
+
+    private func toolCallContent(response: [String: Any], messages: [[String: Any]], promptText: String) -> String {
+        var parts: [String] = []
+        if let tools = requestObject["tools"], let text = prettyJSON(tools), !text.isEmpty {
+            parts.append("可用工具定义\n\(text)")
+        }
+        if let choices = response["choices"] as? [[String: Any]],
+           let message = choices.first?["message"] as? [String: Any],
+           let calls = message["tool_calls"], let text = prettyJSON(calls) {
+            parts.append("模型发起的工具调用\n\(text)")
+        }
+        if let content = response["content"] as? [[String: Any]] {
+            let calls = content.filter { ($0["type"] as? String) == "tool_use" }
+            if !calls.isEmpty, let text = prettyJSON(calls) { parts.append("模型发起的工具调用\n\(text)") }
+        }
+        let toolMessages = messages.filter {
+            let role = $0["role"] as? String
+            return role == "tool" || role == "function"
+        }.map { message in
+            let name = (message["name"] as? String) ?? (message["tool_call_id"] as? String) ?? "工具结果"
+            return "\(name)\n\(readableContent(message["content"] ?? ""))"
+        }
+        if !toolMessages.isEmpty { parts.append("工具返回\n" + toolMessages.joined(separator: "\n\n")) }
+        let foodCalls = tagContents(["food_tool"], in: promptText)
+        if !foodCalls.isEmpty { parts.append("饮食工具调用\n" + foodCalls.joined(separator: "\n\n")) }
+        let foodResults = tagContents(["food_tool_result"], in: promptText)
+        if !foodResults.isEmpty { parts.append("饮食工具返回\n" + foodResults.joined(separator: "\n\n")) }
+        let tracedCalls = tagContents(["lumi_tool_calls"], in: promptText)
+        if !tracedCalls.isEmpty { parts.append("Lumi 工具调用记录\n" + tracedCalls.joined(separator: "\n\n")) }
+        return parts.joined(separator: "\n\n────────\n\n")
+    }
+
+    private func modelOutput(from response: [String: Any]) -> String {
+        if let error = response["error"] as? [String: Any] {
+            return (error["message"] as? String) ?? (prettyJSON(error) ?? "模型返回错误")
+        }
+        if let choices = response["choices"] as? [[String: Any]],
+           let message = choices.first?["message"] as? [String: Any] {
+            return readableContent(message["content"] ?? "")
+        }
+        if let content = response["content"] { return readableContent(content) }
+        return prettyJSON(response) ?? ""
+    }
+
+    private func tagContents(_ tags: [String], in source: String) -> [String] {
+        tags.flatMap { tag -> [String] in
+            let pattern = "(?is)<\\s*\(NSRegularExpression.escapedPattern(for: tag))\\b[^>]*>(.*?)</\\s*\(NSRegularExpression.escapedPattern(for: tag))\\s*>"
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+            let range = NSRange(source.startIndex..<source.endIndex, in: source)
+            return regex.matches(in: source, range: range).compactMap { match in
+                guard let range = Range(match.range(at: 1), in: source) else { return nil }
+                return String(source[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+    }
+
+    private func stripTags(_ tags: [String], from source: String) -> String {
+        tags.reduce(source) { text, tag in
+            let escapedTag = NSRegularExpression.escapedPattern(for: tag)
+            guard let regex = try? NSRegularExpression(pattern: "(?is)<\\s*\(escapedTag)\\b[^>]*>.*?</\\s*\(escapedTag)\\s*>") else { return text }
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+        }
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func readableContent(_ value: Any) -> String {
+        if let text = value as? String { return text }
+        if let parts = value as? [Any] {
+            return parts.map { part -> String in
+                guard let object = part as? [String: Any] else { return String(describing: part) }
+                if let text = object["text"] as? String { return text }
+                if object["type"] as? String == "image" || object["image_url"] != nil { return "[图片]" }
+                if object["type"] as? String == "tool_use" { return "[工具调用] " + (object["name"] as? String ?? "") + "\n" + (prettyJSON(object["input"] ?? [:]) ?? "") }
+                if object["type"] as? String == "tool_result" { return "[工具结果]\n" + readableContent(object["content"] ?? "") }
+                return ""
+            }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
+        if let object = value as? [String: Any], let text = prettyJSON(object) { return text }
+        return String(describing: value)
+    }
+
+    private func jsonObject(_ raw: String) -> Any? {
+        guard let data = raw.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data)
+    }
+
+    private func prettyJSON(_ value: Any) -> String? {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        return text
     }
 }
 
@@ -3827,5 +4390,29 @@ private struct LumiWorldBookPageStyle: ViewModifier {
             .toolbarBackground(LumiPalette.chatBackground, for: .navigationBar, .bottomBar)
             .toolbarBackground(.visible, for: .navigationBar, .bottomBar)
             .preferredColorScheme(.light)
+    }
+}
+
+private struct ChatEntryButtonAnchorKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>?
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) { value = nextValue() ?? value }
+}
+private struct ChatBottomScrollEdgeEffectModifier: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) { content.scrollEdgeEffectHidden(true, for: .bottom) }
+        else { content }
+    }
+}
+private struct ComposerGlassButtonSurface: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) { content.glassEffect(.regular.interactive(), in: Circle()) }
+        else { content.background(Color.white.opacity(0.64), in: Circle()) }
+    }
+}
+private enum RestoredChatColor {
+    static func color(_ hex: String) -> Color {
+        let raw = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        guard raw.count == 6, let rgb = UInt32(raw, radix: 16) else { return LumiPalette.textPrimary }
+        return Color(red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
     }
 }

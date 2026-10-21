@@ -6,6 +6,7 @@ struct HeartTraceView: View {
 
     @State private var state: LumiEmotionStateResponse?
     @State private var murmurs: [LumiEmotionArcEntry] = []
+    @State private var history: [LumiEmotionHistoryEntry] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var refreshedAt = Date()
@@ -45,7 +46,14 @@ struct HeartTraceView: View {
             }
             .refreshable { await refresh() }
         }
-        .task { await refresh() }
+        .task {
+            await refresh()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5 * 60))
+                guard !Task.isCancelled else { break }
+                await refresh()
+            }
+        }
         .preferredColorScheme(.light)
     }
 
@@ -79,7 +87,7 @@ struct HeartTraceView: View {
                     Text("最近 24 小时")
                         .font(.system(size: 17, weight: .semibold, design: .rounded))
                         .foregroundStyle(ink)
-                    Text("情绪独白里的心绪强度")
+                    Text("心绪强度变化 · 每 10 分钟记录")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(muted)
                 }
@@ -114,9 +122,10 @@ struct HeartTraceView: View {
                     .symbolSize(point.isCurrent ? 48 : 28)
                     .foregroundStyle(rose.opacity(point.isCurrent ? 1 : 0.72))
             }
+            .chartXScale(domain: chartStart...refreshedAt)
             .chartYScale(domain: 0...1)
             .chartXAxis {
-                AxisMarks(values: .stride(by: .hour, count: 6)) { value in
+                AxisMarks(values: chartAxisDates) { value in
                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.6, dash: [3, 4])).foregroundStyle(ink.opacity(0.11))
                     AxisValueLabel(format: .dateTime.hour(.defaultDigits(amPM: .omitted)))
                         .foregroundStyle(muted)
@@ -134,12 +143,12 @@ struct HeartTraceView: View {
                     }
                 }
             }
-            .frame(height: 176)
+            .frame(height: 154)
 
             HStack(spacing: 6) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 9, weight: .semibold))
-                Text(isLoading ? "正在读取心绪" : "更新于 \(refreshedAt.formatted(date: .omitted, time: .shortened))")
+                Text(chartFootnote)
                     .font(.system(size: 10, weight: .medium))
             }
             .foregroundStyle(muted.opacity(0.85))
@@ -151,7 +160,7 @@ struct HeartTraceView: View {
     }
 
     private var moodCard: some View {
-        VStack(alignment: .leading, spacing: 15) {
+        VStack(alignment: .leading, spacing: 11) {
             HStack {
                 Text("此刻的情绪")
                     .font(.system(size: 17, weight: .semibold, design: .rounded))
@@ -183,35 +192,22 @@ struct HeartTraceView: View {
 
     private func moodSlider(drive: String, item: LumiEmotionDriveValue) -> some View {
         let value = min(1, max(0, item.v))
-        return HStack(spacing: 10) {
+        return HStack(spacing: 9) {
             Image(systemName: driveSymbols[drive] ?? "heart")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(rose.opacity(0.92))
-                .frame(width: 18)
+                .frame(width: 20)
             Text(item.z)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(ink.opacity(0.9))
-                .frame(width: 42, alignment: .leading)
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(rose.opacity(0.11))
-                    Capsule()
-                        .fill(LinearGradient(colors: [Color(red: 0.95, green: 0.62, blue: 0.68), rose], startPoint: .leading, endPoint: .trailing))
-                        .frame(width: max(8, geometry.size.width * value))
-                    Circle()
-                        .fill(.white)
-                        .frame(width: 12, height: 12)
-                        .overlay(Circle().stroke(rose.opacity(0.72), lineWidth: 2))
-                        .offset(x: max(0, min(geometry.size.width - 12, geometry.size.width * value - 6)))
-                }
-                .frame(height: 8)
-                .frame(maxHeight: .infinity)
-            }
-            .frame(height: 18)
+                .frame(width: 40, alignment: .leading)
+            ProgressView(value: value)
+                .progressViewStyle(.linear)
+                .tint(rose)
             Text("\(Int(value * 100))")
                 .font(.system(size: 10, weight: .semibold, design: .rounded).monospacedDigit())
                 .foregroundStyle(muted)
-                .frame(width: 26, alignment: .trailing)
+                .frame(width: 28, alignment: .trailing)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.z)，\(Int(value * 100))")
@@ -257,16 +253,26 @@ struct HeartTraceView: View {
     private var chartPoints: [HeartTracePoint] {
         let now = refreshedAt
         let start = now.addingTimeInterval(-24 * 60 * 60)
-        let records = murmurs.compactMap { entry -> HeartTracePoint? in
+        var records = history.compactMap { entry -> HeartTracePoint? in
             guard let time = date(from: entry.time), time >= start, time <= now else { return nil }
-            return HeartTracePoint(id: entry.id, time: time, value: min(1, max(0, entry.val)), isCurrent: false)
+            return HeartTracePoint(id: entry.id, time: time, value: min(1, max(0, entry.top.value)), isCurrent: false)
         }.sorted { $0.time < $1.time }
-        guard let state else { return records }
-        let current = HeartTracePoint(id: "current", time: now, value: min(1, max(0, state.top.value)), isCurrent: true)
-        if records.last?.time.timeIntervalSince(now) ?? -3600 > -120 {
-            return records
+        if let state, (records.last?.time.timeIntervalSince(now) ?? -3600) < -120 {
+            records.append(HeartTracePoint(id: "current", time: now, value: min(1, max(0, state.top.value)), isCurrent: true))
         }
-        return records + [current]
+        return records
+    }
+
+    private var chartStart: Date { refreshedAt.addingTimeInterval(-24 * 60 * 60) }
+
+    private var chartAxisDates: [Date] {
+        (0...4).map { chartStart.addingTimeInterval(Double($0) * 6 * 60 * 60) }
+    }
+
+    private var chartFootnote: String {
+        if isLoading { return "正在读取心绪" }
+        if chartPoints.count < 2 { return "心绪变化已开始记录，曲线会随着状态变化逐步形成" }
+        return "更新于 \(refreshedAt.formatted(date: .omitted, time: .shortened)) · 共 \(chartPoints.count) 个历史点"
     }
 
     private var latestMurmur: LumiEmotionArcEntry? {
@@ -279,9 +285,11 @@ struct HeartTraceView: View {
         do {
             async let currentState = api.fetchEmotionState()
             async let recentMurmurs = api.fetchEmotionMurmurs()
-            let (newState, newMurmurs) = try await (currentState, recentMurmurs)
+            async let emotionHistory = api.fetchEmotionHistory()
+            let (newState, newMurmurs, newHistory) = try await (currentState, recentMurmurs, emotionHistory)
             state = newState
             murmurs = newMurmurs
+            history = newHistory
             refreshedAt = .now
         } catch {
             errorMessage = "心迹暂时没有连上服务器：\(error.localizedDescription)"

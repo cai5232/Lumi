@@ -13,6 +13,9 @@
     <key>LSRequiresIPhoneOS</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>Lumi 使用麦克风把通话中的声音转换为文字发送给沈屿。</string>
     <key>NSLocationWhenInUseUsageDescription</key><string>藏宝地图需要当前位置来判断你是否走到信件附近，并在你确认后记录足迹。</string>
+    <key>NSLocalNetworkUsageDescription</key><string>Lumi 需要连接你这台 Mac 上专用的外卖助手，并把订单预览卡片发回聊天。</string>
+    <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+    <key>LUMI_TAKEOUT_BRIDGE_HOST</key><string>yanyandeMacBook-Air.local</string>
     <key>UIBackgroundModes</key><array><string>voip</string><string>audio</string></array>
     <key>CFBundleURLTypes</key>
     <array>
