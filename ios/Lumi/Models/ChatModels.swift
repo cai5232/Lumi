@@ -436,6 +436,28 @@ struct CallAnswerRequest: Encodable {
 }
 
 
+struct SoloSettings: Codable {
+    var enabled: Bool
+    var mode: String
+    var desireThreshold: Double
+    var idleMinutes: Int
+    var touchDecayMinutes: Int
+    var running: Bool
+}
+
+struct SoloMetric: Decodable, Identifiable {
+    let id: String
+    let threadId: String
+    let mode: String
+    let trigger: String
+    let desire: Double
+    let chord: String
+    let touchInfluence: Double
+    let durationSeconds: Int
+    let completedAt: Date
+    let interrupted: Bool
+}
+
 struct ProactiveSettings: Codable {
     var enabled: Bool
     var threadId: String
