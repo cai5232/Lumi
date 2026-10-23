@@ -138,6 +138,11 @@ struct ChatDetailView: View {
                 }
             }
         }
+        .overlay {
+            if let threadID = model.instantCommandThreadID {
+                LumiInstantCommandsView(threadID: threadID, refreshToken: model.messages.last?.id)
+            }
+        }
         .foregroundStyle(LumiPalette.textPrimary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(edges: [.top, .horizontal])

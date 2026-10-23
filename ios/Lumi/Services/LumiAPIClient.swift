@@ -50,8 +50,8 @@ struct LumiEmotionHistoryEntry: Decodable, Identifiable {
 }
 
 final class LumiAPIClient {
-    // Zeabur 公网 API；真机和模拟器都可以直接访问。
-    var baseURL = URL(string: "https://lumi-tokyo-api.zeabur.app")!
+    // 当前 Coolify 生产 API；真机和模拟器使用相同的指令与聊天服务。
+    var baseURL = URL(string: "https://lumi-api.yanvn.top")!
     private let session: URLSession
     var pushAPIToken: String? {
         let stored = LumiKeychain.read(account: "push-api-token")
@@ -542,6 +542,29 @@ final class LumiAPIClient {
 
     private func request<T: Decodable>(path: String) async throws -> T {
         try await perform(URLRequest(url: baseURL.appending(path: path)))
+    }
+
+    func fetchInstantCommands(threadID: String) async throws -> [LumiInstantCommand] {
+        var request = URLRequest(url: baseURL.appending(path: "/v1/chats").appendingPathComponent(threadID).appending(path: "commands"))
+        addPushAuthorization(to: &request)
+        let response: LumiInstantCommandsResponse = try await perform(request)
+        return response.items
+    }
+
+    func finishInstantCommand(_ id: String, threadID: String, cancel: Bool) async throws {
+        var url = baseURL.appending(path: "/v1/chats").appendingPathComponent(threadID).appending(path: "commands").appendingPathComponent(id)
+        if !cancel { url.append(path: "complete") }
+        var request = URLRequest(url: url)
+        request.httpMethod = cancel ? "DELETE" : "POST"
+        addPushAuthorization(to: &request)
+        // A lost response may follow a successful action. Already removed means complete.
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw LumiAPIError.invalidResponse }
+        if http.statusCode == 404 { return }
+        guard (200..<300).contains(http.statusCode),
+              (try? JSONDecoder().decode(LumiCommandActionResponse.self, from: data).ok) == true else {
+            throw LumiAPIError.server("HTTP \(http.statusCode)：指令操作失败，请重试")
+        }
     }
 
     private func addPushAuthorization(to request: inout URLRequest) {

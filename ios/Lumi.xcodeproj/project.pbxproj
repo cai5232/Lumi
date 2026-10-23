@@ -76,6 +76,7 @@
 		A50000000000000000000000C /* LXGWWenKai-Regular.ttf in Widget Resources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000000C /* LXGWWenKai-Regular.ttf */; };
 		A50000000000000000000000D /* SpaceMono-Bold.ttf in Widget Resources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000000D /* SpaceMono-Bold.ttf */; };
 		A50000000000000000000000E /* SpaceMono-Regular.ttf in Widget Resources */ = {isa = PBXBuildFile; fileRef = B50000000000000000000000E /* SpaceMono-Regular.ttf */; };
+		A60000000000000000000001 /* InstantCommandsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B60000000000000000000001 /* InstantCommandsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -158,6 +159,7 @@
 		B50000000000000000000000C /* LXGWWenKai-Regular.ttf in Widget */ = {isa = PBXFileReference; lastKnownFileType = file; path = ../Lumi/CalendarFonts/LXGWWenKai-Regular.ttf; sourceTree = "<group>"; };
 		B50000000000000000000000D /* SpaceMono-Bold.ttf in Widget */ = {isa = PBXFileReference; lastKnownFileType = file; path = ../Lumi/CalendarFonts/SpaceMono-Bold.ttf; sourceTree = "<group>"; };
 		B50000000000000000000000E /* SpaceMono-Regular.ttf in Widget */ = {isa = PBXFileReference; lastKnownFileType = file; path = ../Lumi/CalendarFonts/SpaceMono-Regular.ttf; sourceTree = "<group>"; };
+		B60000000000000000000001 /* InstantCommandsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstantCommandsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -221,6 +223,7 @@
 			isa = PBXGroup;
 			children = (
 				B10000000000000000000006 /* ChatDetailView.swift */,
+				B60000000000000000000001 /* InstantCommandsView.swift */,
 				B10000000000000000000012 /* TogetherView.swift */,
 				B10000000000000000000013 /* ClawdPetView.swift */,
 				B1000000000000000000001A /* McpSettingsView.swift */,
@@ -479,6 +482,7 @@
 				A10000000000000000000004 /* LumiAPIClient.swift in Sources */,
 				A10000000000000000000005 /* ChatViewModel.swift in Sources */,
 				A10000000000000000000006 /* ChatDetailView.swift in Sources */,
+				A60000000000000000000001 /* InstantCommandsView.swift in Sources */,
 				A10000000000000000000031 /* FoodNotebookNativeView.swift in Sources */,
 				A10000000000000000000036 /* LettersMapView.swift in Sources */,
 				A10000000000000000000037 /* TogetherWatchView.swift in Sources */,
