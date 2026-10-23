@@ -7,6 +7,7 @@ import AVFoundation
 import Speech
 import WebKit
 import UniformTypeIdentifiers
+import ImageIO
 
 private struct ChatHistoryTopOffsetKey: PreferenceKey {
     static var defaultValue: CGFloat = -.greatestFiniteMagnitude
@@ -16,15 +17,18 @@ private struct ChatHistoryTopOffsetKey: PreferenceKey {
 @MainActor
 struct ChatDetailView: View {
     @StateObject private var model: ChatViewModel
-    @StateObject private var musicModel = TogetherListenChatPlayback.shared
     var onClose: (() -> Void)? = nil
+    var onOpenEntry: ((LumiChatEntry) -> Void)? = nil
+    @StateObject private var keyboardGeometry = ChatKeyboardGeometry()
     @StateObject private var glassPresentation = GlassComparisonPresentation()
     @State private var showingSettings = false
     @State private var htmlMessage: ChatMessage?
+    @State private var selectedToolMessage: ChatMessage?
     @State private var fullScreenHTMLMessage: ChatMessage?
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var selectedImageData: [Data] = []
     @State private var selectedImageNames: [String] = []
+    @State private var selectedSticker: RemoteSticker?
     @State private var selectedGalleryItem: RemoteGalleryItem?
     @State private var showingCallDemo = false
     @State private var incomingCallID: String?
@@ -32,20 +36,36 @@ struct ChatDetailView: View {
     @State private var screenRequestPending = false
     @State private var selectedCallRecord: ChatMessage?
     @State private var showingSubscriptionUsage = false
+    @State private var showingModelRequestLog = false
     @State private var showingTogether = false
+    @State private var showingRemarkEditor = false
+    @State private var remarkDraft = ""
     @State private var historyPagingArmed = false
     @State private var historyPagingPrimed = false
     @State private var didInitialScroll = false
+    @State private var visibleHistoryLimit = 100
+    @State private var isPreparingSend = false
+    @State private var hasDrawerUnread = false
+    @State private var hiddenMessageIDs: Set<String> = []
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("lumi.appearance.surfaceStyle") private var appearanceStyle = "frosted"
+    @AppStorage("lumi.appearance.bubbleColor") private var appearanceBubbleColor = "#F5ECEC"
+    @AppStorage("lumi.appearance.opacity") private var appearanceOpacity = 0.78
+    @AppStorage("lumi.appearance.backgroundPath") private var appearanceBackgroundPath = ""
+    @AppStorage("lumi.appearance.backgroundBlur") private var appearanceBackgroundBlur = 0.0
+    @AppStorage("lumi.appearance.fontSize") private var appearanceFontSize = 15.0
+    @AppStorage("lumi.appearance.textColor") private var appearanceTextColor = "#332B30"
     @AppStorage("lumi.ttsEnabled") private var ttsEnabled = false
 
-    init(model: ChatViewModel? = nil, onClose: (() -> Void)? = nil) {
+    init(model: ChatViewModel? = nil, onClose: (() -> Void)? = nil, onOpenEntry: ((LumiChatEntry) -> Void)? = nil) {
         _model = StateObject(wrappedValue: model ?? ChatViewModel())
         self.onClose = onClose
+        self.onOpenEntry = onOpenEntry
     }
 
     var body: some View {
         ZStack {
-            LumiPalette.chatBackground.ignoresSafeArea()
+            chatBackdrop
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -55,29 +75,32 @@ struct ChatDetailView: View {
                             .background(GeometryReader { reader in
                                 Color.clear.preference(key: ChatHistoryTopOffsetKey.self, value: reader.frame(in: .named("chat-scroll")).minY)
                             })
-                        // A sent message is first rendered with a local UUID and then
-                        // confirmed with the server UUID. Keep the row identity stable
-                        // across that replacement so SwiftUI does not briefly remove the
-                        // user's bubble while the assistant reply arrives.
-                        ForEach(Array(model.messages.enumerated()), id: \.offset) { index, message in
-                            if message.contentType != "together_watch" {
-                                if shouldShowTimeDivider(at: index) {
+                        // Keep one child per stable message identity. Index identities
+                        // change when older pages are inserted, and conditional children
+                        // force LazyVStack to measure history just to discover row counts.
+                        ForEach(visibleHistoryRows) { row in
+                            let message = row.message
+                            VStack(spacing: 10) {
+                                if row.showsTimeDivider {
                                     timeDivider(for: message.createdAt)
                                 }
-                                messageBubble(message, showAvatar: shouldShowAvatar(at: index))
+                                messageBubble(message, showAvatar: row.showsAvatar)
                             }
+                            .modifier(ChatReplyArrival(isNewReply: model.arrivingReplyMessageID == message.id))
                         }
-                        if model.isSending { thinkingBubble }
+                        if model.isAwaitingReply {
+                            thinkingBubble
+                        }
                     }
-                    .animation(.easeOut(duration: 0.24), value: model.messages.count)
                     .padding(.horizontal, 16)
-                    .padding(.top, 184)
+                    .padding(.top, 12)
                     .padding(.bottom, 20)
                     Color.clear
                         .frame(height: 1)
                         .id("chat-bottom-anchor")
                 }
                 .scrollIndicators(.hidden)
+                .modifier(ChatBottomScrollEdgeEffectModifier())
                 .coordinateSpace(name: "chat-scroll")
                 .onPreferenceChange(ChatHistoryTopOffsetKey.self) { offset in
                     // Before the initial jump to the newest message, the top marker is
@@ -86,25 +109,51 @@ struct ChatDetailView: View {
                     if offset < 0 { historyPagingPrimed = true; return }
                     guard historyPagingPrimed, offset >= 0, !model.isLoadingOlderHistory else { return }
                     historyPagingPrimed = false
-                    Task { await model.loadOlderHistoryIfNeeded() }
+                    if visibleHistoryLimit < model.messages.count {
+                        visibleHistoryLimit += 100
+                    } else {
+                        Task {
+                            await model.loadOlderHistoryIfNeeded()
+                            visibleHistoryLimit += 100
+                        }
+                    }
                 }
                 .scrollDismissesKeyboard(.immediately)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 }
-                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-                    DispatchQueue.main.async {
-                        proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                    guard !keyboardGeometry.isSwitching else { return }
+                    // The keyboard changes the scroll viewport after it finishes
+                    // appearing. Move directly to the bottom anchor once that
+                    // layout settles, without animating a long scroll through history.
+                    Task { @MainActor in
+                        await Task.yield()
+                        var transaction = Transaction()
+                        transaction.animation = nil
+                        withTransaction(transaction) {
+                            proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                        }
                     }
                 }
-                .onChange(of: model.messages.count) { _, _ in
-                    guard !didInitialScroll else { return }
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(120))
-                        proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
-                        didInitialScroll = true
-                        historyPagingArmed = true
+                .onChange(of: visibleHistoryRows.last?.id) { _, _ in
+                    if !didInitialScroll {
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(120))
+                            proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                            didInitialScroll = true
+                            historyPagingArmed = true
+                        }
+                    } else {
+                        Task { @MainActor in
+                            await Task.yield()
+                            var transaction = Transaction()
+                            transaction.animation = nil
+                            withTransaction(transaction) {
+                                proxy.scrollTo("chat-bottom-anchor", anchor: .bottom)
+                            }
+                        }
                     }
                 }
                 .task {
@@ -115,28 +164,6 @@ struct ChatDetailView: View {
                     historyPagingArmed = true
                 }
             }
-            GeometryReader { geometry in
-                ZStack(alignment: .top) {
-                    LinearGradient(
-                        stops: [
-                            .init(color: LumiPalette.chatBackground.opacity(0.98), location: 0),
-                            .init(color: LumiPalette.chatBackground.opacity(0.84), location: 0.48),
-                            .init(color: LumiPalette.chatBackground.opacity(0), location: 1)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: max(geometry.safeAreaInsets.top, 44) + 165)
-                    .blur(radius: 18)
-                    .ignoresSafeArea(edges: .top)
-                    .allowsHitTesting(false)
-
-                    topBar
-                        .padding(.top, max(geometry.safeAreaInsets.top, 44) + 12)
-                        .frame(width: geometry.size.width, alignment: .top)
-                        .zIndex(5)
-                }
-            }
         }
         .overlay {
             if let threadID = model.instantCommandThreadID {
@@ -145,33 +172,26 @@ struct ChatDetailView: View {
         }
         .foregroundStyle(LumiPalette.textPrimary)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(edges: [.top, .horizontal])
+        .ignoresSafeArea(edges: .horizontal)
+        .toolbar { chatToolbar }
+        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            composer
-                .padding(.top, 5)
-                .background(.clear)
-                .background(alignment: .top) {
-                    LinearGradient(
-                        stops: [
-                            .init(color: LumiPalette.chatBackground.opacity(0), location: 0),
-                            .init(color: LumiPalette.chatBackground.opacity(0.80), location: 0.58),
-                            .init(color: LumiPalette.chatBackground.opacity(0.98), location: 1)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 84)
-                    .blur(radius: 18)
-                    .offset(y: -42)
-                    .allowsHitTesting(false)
-                }
+            composer.padding(.bottom, keyboardGeometry.coveredHeight).zIndex(1)
         }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .task {
+            hiddenMessageIDs = Set(UserDefaults.standard.stringArray(forKey: hiddenMessagesDefaultsKey) ?? [])
             await model.load()
+            await model.loadRemarks()
             await pollIncomingCall()
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            Task { await model.load() }
+            Task {
+                async let usage: Void = model.refreshContextUsage()
+                async let remarks: Void = model.loadRemarks()
+                _ = await (usage, remarks)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("LumiRemoteMessageReceived"))) { _ in
             Task { await model.load() }
@@ -213,6 +233,9 @@ struct ChatDetailView: View {
                 .presentationDragIndicator(.visible)
                 .presentationBackground(LumiPalette.chatBackground)
         }
+        .fullScreenCover(isPresented: $showingModelRequestLog) {
+            ModelRequestLogSheet()
+        }
         .fullScreenCover(isPresented: $showingSettings) {
             SettingsView()
         }
@@ -234,7 +257,8 @@ struct ChatDetailView: View {
             ThinkingDetailsSheetView(text: glassPresentation.thinkingText) { height in
                 glassPresentation.thinkingHeight = height
             }
-                .presentationDetents([.height(glassPresentation.thinkingHeight)])
+                .presentationDetents([.medium, .large])
+                .presentationContentInteraction(.scrolls)
                 .presentationDragIndicator(.visible)
                 .presentationBackground(LumiPalette.chatBackground)
         }
@@ -244,11 +268,27 @@ struct ChatDetailView: View {
                 .presentationDragIndicator(.visible)
                 .presentationBackground(LumiPalette.chatBackground)
         }
+        .sheet(item: $selectedToolMessage) { message in
+            ToolCallsDetailSheet(toolCalls: message.toolCalls)
+                .presentationDetents([.height(380), .medium])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(LumiPalette.chatBackground)
+        }
         .fullScreenCover(item: $fullScreenHTMLMessage) { message in
             HTMLMessageFullScreen(message: message)
         }
         .fullScreenCover(item: $selectedCallRecord) { record in
             CallRecordView(record: record)
+        }
+        .fullScreenCover(isPresented: $showingCallDemo) {
+            CallDemoView(incomingCallID: incomingCallID, onRejected: { message, statusMessage in
+                model.receiveCallOutcome(message, statusMessage: statusMessage)
+                endLocalSystemCall()
+            }, onEnded: { record in
+                incomingCallID = nil
+                endLocalSystemCall()
+                if let record { model.receiveCallRecord(record) }
+            })
         }
         .overlay(alignment: .top) {
             if let error = model.errorMessage {
@@ -275,42 +315,75 @@ struct ChatDetailView: View {
                     .transition(.opacity)
             }
         }
-    }
-
-    private var topBar: some View {
-        VStack(spacing: 9) {
-            topBarButtons
-            if let song = musicModel.current, musicModel.isPlaying {
-                HStack(spacing: 10) {
-                    AsyncImage(url: URL(string: song.cover)) { phase in
-                        if let image = phase.image { image.resizable().scaledToFill() }
-                        else { Image(systemName: "music.note").foregroundStyle(LumiPalette.iconPink).frame(maxWidth: .infinity, maxHeight: .infinity).background(.white.opacity(0.72)) }
-                    }
-                    .frame(width: 38, height: 38).clipShape(RoundedRectangle(cornerRadius: 8))
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 4) {
-                            Text(song.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                            Text("· \(song.artist)").font(.system(size: 10)).foregroundStyle(LumiPalette.textSecondary).lineLimit(1)
-                        }
-                        Text(musicModel.currentLyricText.isEmpty ? "正在一起听" : musicModel.currentLyricText)
-                            .font(.system(size: 10)).foregroundStyle(LumiPalette.textSecondary).lineLimit(1)
-                        Slider(value: Binding(get: { musicModel.position }, set: { musicModel.seek($0) }), in: 0...max(1, Double(song.durationSeconds)))
-                            .tint(LumiPalette.iconPink)
-                    }
-                    Button { musicModel.togglePlayback() } label: {
-                        Image(systemName: "pause.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(LumiPalette.iconPink)
-                    }.buttonStyle(.plain).padding(.horizontal, 4)
+        .alert("修改备注", isPresented: $showingRemarkEditor) {
+            TextField("给沈屿的备注", text: $remarkDraft)
+            Button("保存") {
+                Task {
+                    do { try await model.saveAssistantRemark(remarkDraft.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    catch { model.errorMessage = "备注保存失败：\(error.localizedDescription)" }
                 }
-                .padding(.horizontal, 11).padding(.vertical, 7)
-                .background(LumiLiquidGlass(shape: RoundedRectangle(cornerRadius: 15, style: .continuous)))
-                .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous).stroke(.white.opacity(0.65), lineWidth: 1))
-                .padding(.horizontal, 18)
             }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("长按中间胶囊可以修改备注。")
         }
     }
 
-    private var topBarButtons: some View {
-        HStack(spacing: 0) {
+    private var assistantTitleCapsule: some View {
+        VStack(spacing: 1) {
+            Text(model.assistantRemark.isEmpty ? "沈屿" : model.assistantRemark)
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundStyle(LumiPalette.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(model.contextUsagePercentage.map { "上下文 \($0)%" } ?? "上下文 --%")
+                .font(.system(size: 9, weight: .medium, design: .rounded))
+                .foregroundStyle(LumiPalette.textSecondary.opacity(0.82))
+        }
+        .frame(width: 200, height: 44)
+        .background { LumiLiquidGlass(shape: Capsule()) }
+        .contentShape(Capsule())
+        .onTapGesture { remarkDraft = model.assistantRemark; showingRemarkEditor = true }
+        .onLongPressGesture(minimumDuration: 0.55) { remarkDraft = model.assistantRemark; showingRemarkEditor = true }
+        .accessibilityElement()
+        .accessibilityLabel(model.assistantRemark.isEmpty ? "沈屿" : model.assistantRemark)
+        .accessibilityHint("轻点或长按修改备注")
+    }
+
+    private var callButton: some View {
+        Button {
+            incomingCallID = nil
+            showingCallDemo = true
+        } label: {
+            Image(systemName: "phone")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(LumiPalette.iconPink)
+                .frame(width: 42, height: 42)
+                .background { LumiLiquidGlass(shape: Circle()) }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("让沈屿给我打电话")
+    }
+
+    @ToolbarContentBuilder
+    private var chatToolbar: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            ToolbarItem(placement: .topBarLeading) { leadingHeaderControls }
+                .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .principal) { assistantTitleCapsule }
+                .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .topBarTrailing) { callButton }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .topBarLeading) { leadingHeaderControls }
+            ToolbarItem(placement: .principal) { assistantTitleCapsule }
+            ToolbarItem(placement: .topBarTrailing) { callButton }
+        }
+    }
+
+    private var leadingHeaderControls: some View {
+        HStack(spacing: 8) {
             if let onClose {
                 Button(action: onClose) {
                     Image(systemName: "chevron.left")
@@ -318,50 +391,68 @@ struct ChatDetailView: View {
                         .foregroundStyle(LumiPalette.iconPink)
                         .frame(width: 42, height: 42)
                         .background { LumiLiquidGlass(shape: Circle()) }
-                        .overlay(Circle().stroke(.white.opacity(0.64), lineWidth: 1))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("返回桌面")
-                .zIndex(10)
+                }.buttonStyle(.plain).accessibilityLabel("返回桌面")
             }
-            Spacer(minLength: 12)
-            Text("沈屿")
-                .font(.system(size: 16, weight: .semibold, design: .rounded))
-                .foregroundStyle(LumiPalette.textPrimary)
-                .frame(width: 184, height: 44)
-                .background { LumiLiquidGlass(shape: Capsule()) }
-                .overlay(Capsule().stroke(.white.opacity(0.64), lineWidth: 1))
-                .onTapGesture { showingTogether = true }
-
-            Spacer(minLength: 12)
-
-            Button { LumiNativeCalls.shared.startAIInitiatedCall() } label: {
-                Image(systemName: "phone.fill")
-                    .font(.system(size: 16, weight: .semibold))
+            Button { showingModelRequestLog = true } label: {
+                Image(systemName: "heart")
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(LumiPalette.iconPink)
                     .frame(width: 42, height: 42)
                     .background { LumiLiquidGlass(shape: Circle()) }
-                    .overlay(Circle().stroke(.white.opacity(0.64), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("让沈屿给我打电话")
-            .fullScreenCover(isPresented: $showingCallDemo) {
-                CallDemoView(
-                    incomingCallID: incomingCallID,
-                    onRejected: { message, statusMessage in
-                        model.receiveCallOutcome(message, statusMessage: statusMessage)
-                        endLocalSystemCall()
-                    },
-                    onEnded: { record in
-                        incomingCallID = nil
-                        endLocalSystemCall()
-                        if let record { model.receiveCallRecord(record) }
-                    }
-                )
-            }
+            }.buttonStyle(.plain).accessibilityLabel("请求日志")
         }
-        .padding(.horizontal, 14)
+    }
+
+    private var menuEntries: [LumiChatEntry] { LumiChatEntry.allCases.filter { $0 != .heartTrace && $0 != .drawer && $0 != .diary && $0 != .gallery && $0 != .footsteps } }
+    private var hiddenMessagesDefaultsKey: String { "lumi.chat.hiddenMessages.\(model.chatID)" }
+
+    private func hideMessage(_ message: ChatMessage) {
+        let id = message.id.uuidString
+        withAnimation(.easeOut(duration: 0.18)) { hiddenMessageIDs.insert(id) }
+        UserDefaults.standard.set(Array(hiddenMessageIDs).sorted(), forKey: hiddenMessagesDefaultsKey)
+    }
+
+    private func copyableMessageText(_ message: ChatMessage) -> String {
+        visibleContent(message.speechScript ?? message.htmlContent ?? message.content)
+    }
+
+    private var chatBackdrop: some View {
+        GeometryReader { geometry in
+            ZStack {
+                LumiPalette.chatBackground
+                if !appearanceBackgroundPath.isEmpty, let image = UIImage(contentsOfFile: appearanceBackgroundPath) {
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                        .blur(radius: appearanceBackgroundBlur)
+                }
+            }
+        }.ignoresSafeArea()
+    }
+
+    @ViewBuilder
+    private func chatMessageSurface(base: Color, cornerRadius: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if appearanceStyle == "solid" {
+            shape.fill(base)
+        } else if appearanceStyle == "liquid" {
+            if #available(iOS 26.0, *) {
+                Color.clear
+                    .glassEffect(.regular.tint(base.opacity(0.46)).interactive(), in: shape)
+                    .opacity(appearanceOpacity)
+                    .overlay(shape.stroke(.white.opacity(0.42 * appearanceOpacity), lineWidth: 0.8))
+                    .allowsHitTesting(false)
+            } else {
+                shape.fill(.ultraThinMaterial.opacity(appearanceOpacity))
+                    .overlay(shape.fill(base.opacity(appearanceOpacity * 0.4)))
+                    .overlay(shape.stroke(.white.opacity(0.42 * appearanceOpacity), lineWidth: 0.8))
+            }
+        } else {
+            ZStack {
+                shape.fill(.ultraThinMaterial.opacity(appearanceOpacity))
+                shape.fill(base.opacity(appearanceOpacity))
+            }
+            .overlay(shape.stroke(.white.opacity(0.34 * appearanceOpacity), lineWidth: 0.7))
+        }
     }
 
     private var composer: some View {
@@ -369,7 +460,16 @@ struct ChatDetailView: View {
             selectedImageData: $selectedImageData,
             selectedImageNames: $selectedImageNames,
             selectedGalleryItem: $selectedGalleryItem,
+            selectedSticker: $selectedSticker,
             photoItems: $photoItems,
+            menuEntries: menuEntries,
+            onOpenEntry: { entry in
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                onOpenEntry?(entry)
+            },
+            hasDrawerUnread: hasDrawerUnread,
+            isSending: model.isSending || isPreparingSend,
+            keyboardGeometry: keyboardGeometry,
             onSend: { text in
                 Task { await sendDraft(text: text) }
             }
@@ -387,7 +487,8 @@ struct ChatDetailView: View {
         guard !showingCallDemo else { return }
         do {
             guard let call = try await LumiAPIClient().fetchIncomingCall(from: "default") else { return }
-            LumiNativeCalls.shared.reportServerIncomingCall(call.callId)
+            LumiNativeCalls.shared.setExpiry(ISO8601DateFormatter().string(from: call.expiresAt), for: call.callId)
+            LumiNativeCalls.shared.reportServerIncomingCall(call.callId, reason: call.reason)
         } catch {
             // A transient poll error should not interrupt the chat.
         }
@@ -443,9 +544,31 @@ struct ChatDetailView: View {
         .transition(.opacity)
     }
 
-    /// A single server request can be split into several chat bubbles that share
-    /// the same timestamp. Show the avatar only on the first bubble of that
-    /// request; a standalone call record still gets its own avatar.
+    private struct HistoryRow: Identifiable {
+        let message: ChatMessage
+        let showsAvatar: Bool
+        let showsTimeDivider: Bool
+        var id: UUID { message.renderIdentity }
+    }
+
+    private var visibleHistoryRows: [HistoryRow] {
+        // Bound layout work even when the local cache contains years of messages.
+        // Older messages remain in the model and are revealed on upward paging.
+        var rows: [HistoryRow] = []
+        for index in model.messages.indices.reversed() {
+            let message = model.messages[index]
+            guard !hiddenMessageIDs.contains(message.id.uuidString),
+                  !model.pendingReplyMessageIDs.contains(message.id),
+                  message.contentType != "together_watch" else { continue }
+            rows.append(HistoryRow(message: message,
+                                   showsAvatar: shouldShowAvatar(at: index),
+                                   showsTimeDivider: shouldShowTimeDivider(at: index)))
+            if rows.count >= visibleHistoryLimit { break }
+        }
+        return rows.reversed()
+    }
+
+    /// Split reply bubbles share a timestamp; show an avatar only on the first.
     private func shouldShowAvatar(at index: Int) -> Bool {
         guard index > 0 else { return true }
         let current = model.messages[index]
@@ -464,12 +587,39 @@ struct ChatDetailView: View {
         let isCallRecord = message.contentType == "call_record"
         let isCallStatus = message.contentType == "call_status"
         let isGalleryCollection = message.contentType == "gallery_collected"
+        let isSticker = message.contentType == "sticker"
         let isScreenRequest = message.contentType == "screen_request"
         let isScreenStatus = message.contentType == "screen_status"
         let isUserSide = message.callInitiator == "user" || (message.callInitiator == nil && message.role == .user)
         VStack(alignment: isUserSide ? .trailing : .leading, spacing: 5) {
             let imageNames = message.localImageFileNames.isEmpty ? message.localImageFileName.map { [$0] } ?? [] : message.localImageFileNames
-            if !isGalleryCollection, !imageNames.isEmpty {
+            if isSticker {
+                HStack(alignment: .top, spacing: 8) {
+                    if !isUserSide { assistantAvatar(for: message) }
+                    if isUserSide { Spacer(minLength: 48) }
+                    VStack(alignment: isUserSide ? .trailing : .leading, spacing: 8) {
+                        if !visibleContent(message.content).isEmpty {
+                            markdownText(visibleContent(message.content))
+                                .foregroundStyle(RestoredChatColor.color(appearanceTextColor))
+                                .font(.system(size: appearanceFontSize, weight: .regular))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 13)
+                                .padding(.vertical, 10)
+                                .background {
+                                    chatMessageSurface(base: isUserSide ? RestoredChatColor.color(appearanceBubbleColor) : .white, cornerRadius: 21)
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 21))
+                        }
+                        ChatStickerMessageImage(localFileName: imageNames.first, remotePath: message.stickerImageURL)
+                            .frame(width: ChatStickerMessageImage.maximumSide, height: ChatStickerMessageImage.maximumSide, alignment: isUserSide ? .trailing : .leading)
+                        if imageNames.count > 1 { LocalPhotoStack(fileNames: Array(imageNames.dropFirst())) }
+                    }
+                    if !isUserSide { Spacer(minLength: 48) }
+                    if isUserSide { avatar(for: .user) }
+                }
+            }
+            if !isSticker {
+            if !isGalleryCollection && !isSticker, !imageNames.isEmpty {
                 LocalPhotoStack(fileNames: imageNames)
             }
             HStack(alignment: .top) {
@@ -583,8 +733,8 @@ struct ChatDetailView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         markdownText(visibleContent(message.content))
-                            .foregroundStyle(LumiPalette.textPrimary)
-                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(RestoredChatColor.color(appearanceTextColor))
+                            .font(.system(size: appearanceFontSize, weight: .regular))
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -593,7 +743,11 @@ struct ChatDetailView: View {
                 .padding(.horizontal, isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 8 : (isCallStatus ? 10 : 13)))
                 .padding(.vertical, isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3))))
                 .frame(width: isGalleryCollection ? 284 : ((isScreenRequest || isScreenStatus) ? nil : (message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8)))), alignment: .leading)
-                .background(isGalleryCollection || isScreenRequest || isScreenStatus ? .clear : (isUserSide ? LumiPalette.userBubble : .white))
+                .background {
+                    if !isGalleryCollection && !isScreenRequest && !isScreenStatus {
+                        chatMessageSurface(base: isUserSide ? RestoredChatColor.color(appearanceBubbleColor) : .white, cornerRadius: 21)
+                    }
+                }
                 .clipShape(RoundedRectangle(cornerRadius: isGalleryCollection ? 0 : 21))
                 if !isUserSide { Spacer(minLength: 48) }
                 if isUserSide {
@@ -601,8 +755,41 @@ struct ChatDetailView: View {
                     else { Color.clear.frame(width: 42, height: 42) }
                 }
             }
+            }
+            if !message.toolCalls.isEmpty {
+                Button { selectedToolMessage = message } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "wrench")
+                            .font(.system(size: 8, weight: .regular))
+                            .frame(width: 9, height: 9)
+                        Text("调用工具")
+                        Text("\(message.toolCalls.filter(\.succeeded).count)/\(message.toolCalls.count)")
+                    }
+                    .font(.system(size: 9, weight: .regular))
+                    .foregroundStyle(Color.gray.opacity(0.60))
+                    .padding(.leading, isUserSide ? 0 : 48)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("调用工具，成功 \(message.toolCalls.filter(\.succeeded).count) 项，共 \(message.toolCalls.count) 项，查看详情")
+            }
         }
         .frame(maxWidth: .infinity, alignment: isUserSide ? .trailing : .leading)
+        .contextMenu {
+            let copyText = copyableMessageText(message)
+            if !copyText.isEmpty {
+                Button {
+                    UIPasteboard.general.string = copyText
+                } label: {
+                    Label("复制", systemImage: "doc.on.doc")
+                }
+            }
+            Button(role: .destructive) {
+                hideMessage(message)
+            } label: {
+                Label("隐藏", systemImage: "eye.slash")
+            }
+        }
     }
 
     @ViewBuilder private func avatar(for role: ChatMessage.Role) -> some View {
@@ -651,6 +838,7 @@ struct ChatDetailView: View {
 
     private func visibleContent(_ content: String) -> String {
         content
+            .replacingOccurrences(of: #"\[表情[:：]\s*[^\]]+\]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?is)<thinking>.*?</thinking>"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)</?thinking>"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\[(?:左耳|右耳|脑后|面前|贴近|退开)\]"#, with: "", options: .regularExpression)
@@ -720,50 +908,78 @@ struct ChatDetailView: View {
         let sourceWidth = CGFloat(image.cgImage?.width ?? Int(image.size.width * image.scale))
         let sourceHeight = CGFloat(image.cgImage?.height ?? Int(image.size.height * image.scale))
         let largestSide = max(sourceWidth, sourceHeight)
-        let maximumBytes = 3_500_000
-        let sideLimits: [CGFloat] = [2048, 1792, 1600, 1400, 1200, 1024, 896, 768, 640, 512, 384]
-        let qualities: [CGFloat] = [0.82, 0.72, 0.62, 0.52, 0.42, 0.32, 0.24]
-
-        for sideLimit in sideLimits {
-            let scale = min(1, sideLimit / max(largestSide, 1))
-            let size = CGSize(
-                width: max(1, (sourceWidth * scale).rounded()),
-                height: max(1, (sourceHeight * scale).rounded())
-            )
-            var format = UIGraphicsImageRendererFormat.default()
-            // size is measured in pixels; the default screen scale could otherwise
-            // multiply a 2048px target by the device's 2x/3x display scale.
-            format.scale = 1
-            format.opaque = true
-            let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-                image.draw(in: CGRect(origin: .zero, size: size))
-            }
-            for quality in qualities {
-                if let data = rendered.jpegData(compressionQuality: quality),
-                   data.count <= maximumBytes {
-                    return data
-                }
-            }
+        let scale = min(1, 2048 / max(largestSide, 1))
+        let size = CGSize(width: (sourceWidth * scale).rounded(), height: (sourceHeight * scale).rounded())
+        let rendered = UIGraphicsImageRenderer(size: size).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
         }
-        return nil
+        return rendered.jpegData(compressionQuality: 0.80)
     }
 
     private func sendDraft(text: String) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !selectedImageData.isEmpty || selectedGalleryItem != nil else { return }
-        model.draft = text
-        let imagesBase64 = selectedImageData.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
+        guard !isPreparingSend, !model.isSending,
+              !text.isEmpty || !selectedImageData.isEmpty || selectedGalleryItem != nil || selectedSticker != nil else { return }
+        isPreparingSend = true
+        defer { isPreparingSend = false }
+        let sticker = selectedSticker
+        var stickerFileName: String?
+        if let sticker {
+            do {
+                let data = try await LumiAPIClient().downloadStickerImage(path: sticker.image)
+                let ext = URL(fileURLWithPath: sticker.image).pathExtension
+                let name = "sticker-\(UUID().uuidString).\(ext.isEmpty ? "png" : ext)"
+                let destination = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(name)
+                try data.write(to: destination, options: .atomic)
+                stickerFileName = name
+            } catch {
+                model.errorMessage = "贴纸准备失败：\(error.localizedDescription)"
+                return
+            }
+        }
+        let outgoingText = [text, sticker.map { "[表情: \($0.name)]" } ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
+        let imageData = selectedImageData
         let asksToSing = text.range(of: #"(唱歌|唱一首|唱首歌|哼唱|唱给我听|用歌声|sing(?:\s+a)?\s+song)"#, options: .caseInsensitive) != nil
         let tts = makeTTSSettings(enabled: ttsEnabled || asksToSing)
-        let catalogData = UserDefaults.standard.string(forKey: "lumi.emojiCatalogJSON")?.data(using: .utf8) ?? Data("[]".utf8)
-        let entries = (try? JSONDecoder().decode([EmojiEntry].self, from: catalogData)) ?? []
-        let catalog = Dictionary(grouping: entries, by: \.mood).mapValues { $0.map(\.face) }
-        let musicContext = await musicModel.chatContext()
-        await model.send(imagesBase64: imagesBase64, imageFileNames: selectedImageNames, galleryImageIDs: selectedGalleryItem.map { [$0.id] } ?? [], tts: tts, emojiCatalog: catalog, context: musicContext)
+        let catalogJSON = UserDefaults.standard.string(forKey: "lumi.emojiCatalogJSON") ?? "[]"
+        // Base64 conversion and catalog decoding can be expensive for photos or
+        // larger custom catalogs. Keep that CPU work off the main actor so the
+        // composer remains responsive as the send task starts.
+        let prepared = await Task.detached(priority: .userInitiated) {
+            let images = imageData.map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
+            let catalogData = catalogJSON.data(using: .utf8) ?? Data("[]".utf8)
+            let entries = (try? JSONDecoder().decode([EmojiEntry].self, from: catalogData)) ?? []
+            let catalog = Dictionary(grouping: entries, by: \.mood).mapValues { $0.map(\.face) }
+            return (images, catalog)
+        }.value
+        let localNames = (stickerFileName.map { [$0] } ?? []) + selectedImageNames
+        let galleryIDs = selectedGalleryItem.map { [$0.id] } ?? []
+        if selectedSticker?.id == sticker?.id { selectedSticker = nil }
         selectedImageData = []
         selectedImageNames = []
         selectedGalleryItem = nil
         photoItems = []
+        model.draft = outgoingText
+        await model.send(imagesBase64: prepared.0, imageFileNames: localNames, galleryImageIDs: galleryIDs, tts: tts, emojiCatalog: prepared.1, contentType: sticker == nil ? nil : "sticker", stickerImageURL: sticker?.image, stickerName: sticker?.name)
+    }
+}
+
+enum LumiChatEntry: String, CaseIterable, Identifiable {
+    case drawer = "抽屉", sleepRadio = "睡前电台", heartTrace = "心情", diary = "日记", gallery = "相册", together = "共看", treasureMap = "藏宝地图", footsteps = "足迹", food = "吃了么", settings = "设置"
+    var id: String { rawValue }
+    var symbol: String {
+        switch self {
+        case .drawer: return "archivebox.fill"
+        case .sleepRadio: return "moon.zzz.fill"
+        case .heartTrace: return "heart"
+        case .diary: return "book.closed.fill"
+        case .gallery: return "photo.on.rectangle.angled"
+        case .together: return "play.rectangle.fill"
+        case .treasureMap: return "map.fill"
+        case .food: return "fork.knife"
+        case .footsteps: return "figure.walk"
+        case .settings: return "gearshape.fill"
+        }
     }
 }
 
@@ -877,13 +1093,64 @@ private struct ComposerInputView: View {
     @Binding var selectedImageData: [Data]
     @Binding var selectedImageNames: [String]
     @Binding var selectedGalleryItem: RemoteGalleryItem?
+    @Binding var selectedSticker: RemoteSticker?
     @Binding var photoItems: [PhotosPickerItem]
+    let menuEntries: [LumiChatEntry]
+    let onOpenEntry: (LumiChatEntry) -> Void
+    let hasDrawerUnread: Bool
+    let isSending: Bool
+    @ObservedObject var keyboardGeometry: ChatKeyboardGeometry
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let onSend: (String) -> Void
     @State private var text = ""
     @FocusState private var focused: Bool
+    @State private var showingStickerPanel = false
+    @State private var stickerLibrary = RemoteStickerLibrary(categories: [], stickers: [])
+    @State private var activeStickerCategory = "全部"
+    @State private var isLoadingStickers = false
+    @State private var stickerError: String?
+    @State private var showingStickerPicker = false
+    @State private var showingStickerAddOptions = false
+    @State private var showingStickerLinkImport = false
+    @State private var selectedUploadItem: PhotosPickerItem?
+    @State private var lastDeletedSticker: RemoteSticker?
+    @AppStorage("lumi.hiddenStickerIDs") private var hiddenStickerIDsJSON = "[]"
+    @State private var pendingStickerData: Data?
+    @State private var pendingStickerMIMEType = ""
+    @State private var showingStickerMetadata = false
+    @State private var previewedSticker: RemoteSticker?
+    @AppStorage("lumi.recentStickerIDs") private var recentStickerIDs = ""
 
     var body: some View {
         VStack(spacing: 8) {
+            if let deleted = lastDeletedSticker {
+                HStack {
+                    Text("已删除 \(deleted.name)").font(.system(size: 12)).lineLimit(1)
+                    Spacer()
+                    Button("撤销") { restoreSticker(deleted) }.font(.system(size: 12, weight: .medium))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+            }
+            if let sticker = selectedSticker {
+                HStack(spacing: 10) {
+                    StickerThumbnail(sticker: sticker).frame(width: 58, height: 58)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(sticker.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                        Text("可以继续配字后发送").font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    Button { selectedSticker = nil } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 19)).foregroundStyle(.secondary.opacity(0.6))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("移除待发送表情包")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 17))
+                .padding(.horizontal, 4)
+            }
             if let item = selectedGalleryItem {
                 HStack(spacing: 8) {
                     Image(systemName: "photo.on.rectangle")
@@ -929,60 +1196,74 @@ private struct ComposerInputView: View {
                 .padding(.horizontal, 4)
                 .scrollIndicators(.hidden)
             }
-            HStack(spacing: 7) {
-                PhotosPicker(selection: $photoItems, maxSelectionCount: 4, matching: .images) {
-                    Image(systemName: "paperclip")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(LumiPalette.iconPink)
-                        .frame(width: 38, height: 38)
-                        .background { LumiLiquidGlass(shape: Circle()) }
-                        .overlay(Circle().stroke(.white.opacity(0.64), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                HStack(spacing: 6) {
-                    TextField("写给沈屿…", text: $text)
-                        .focused($focused)
-                        .foregroundStyle(LumiPalette.textPrimary)
-                        .tint(LumiPalette.iconPink)
-                        .lineLimit(1)
-                        .submitLabel(.send)
-                        .onSubmit {
-                            let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if value.isEmpty && selectedImageData.isEmpty && selectedGalleryItem == nil {
-                                focused = false
-                                return
-                            }
-                            text = ""
-                            onSend(value)
-                            focused = false
-                        }
-                }
-                .padding(.horizontal, 14)
-                .frame(height: 38)
-                .background { LumiLiquidGlass(shape: Capsule()) }
-                .overlay(Capsule().stroke(.white.opacity(0.64), lineWidth: 1))
+            inputBar
+        }
 
-                Button {
-                    let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !value.isEmpty || !selectedImageData.isEmpty || selectedGalleryItem != nil else { return }
-                    text = ""
-                    onSend(value)
-                    focused = false
-                } label: {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(LumiPalette.iconPink)
-                        .frame(width: 38, height: 38)
-                        .background { LumiLiquidGlass(shape: Circle()) }
-                        .overlay(Circle().stroke(.white.opacity(0.64), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("发送")
+        .padding(.horizontal, 12)
+        .padding(.top, 7)
+        .padding(.bottom, 2)
+        .task { await reloadStickerLibrary() }
+        .onChange(of: focused) { _, isFocused in
+            if !isFocused {
+                showingStickerPanel = false
+                keyboardGeometry.dismiss()
             }
         }
-        .frame(height: selectedImageData.isEmpty && selectedGalleryItem == nil ? 42 : 104)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 2)
+        .confirmationDialog("添加表情包", isPresented: $showingStickerAddOptions, titleVisibility: .visible) {
+            Button("从相册添加") { showingStickerPicker = true }
+            Button("批量导入直链") { showingStickerLinkImport = true }
+            Button("取消", role: .cancel) { showingStickerPanel = true; focused = true }
+        }
+        .sheet(isPresented: $showingStickerLinkImport, onDismiss: {
+            showingStickerPanel = true
+            focused = true
+        }) {
+            StickerLinkImportSheet(defaultCategory: stickerLibrary.categories.first ?? "导入表情") { sticker in
+                cacheImportedSticker(sticker)
+            }
+        }
+        .photosPicker(isPresented: $showingStickerPicker, selection: $selectedUploadItem, matching: .images, preferredItemEncoding: .current)
+        .onChange(of: showingStickerPicker) { _, showing in
+            guard !showing else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                guard selectedUploadItem == nil, pendingStickerData == nil, !showingStickerMetadata else { return }
+                showingStickerPanel = true
+                focused = true
+            }
+        }
+        .onChange(of: selectedUploadItem) { _, item in
+            guard let item else { return }
+            Task { await loadStickerForUpload(item) }
+        }
+        .sheet(isPresented: $showingStickerMetadata, onDismiss: {
+            pendingStickerData = nil
+            showingStickerPanel = true
+            focused = true
+        }) {
+            StickerMetadataSheet(defaultCategory: stickerLibrary.categories.first ?? "猫猫") { name, category in
+                guard let data = pendingStickerData else { return }
+                let mimeType = pendingStickerMIMEType
+                pendingStickerData = nil
+                Task { await uploadSticker(name: name, category: category, data: data, mimeType: mimeType) }
+            }
+            .presentationDetents([.height(310)])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $previewedSticker, onDismiss: {
+            showingStickerPanel = true
+            focused = true
+        }) { sticker in
+            StickerPreviewSheet(sticker: sticker) {
+                guard !isSending else { return }
+                previewedSticker = nil
+                recordRecent(sticker)
+                selectedSticker = sticker
+            }
+            .presentationDetents([.medium])
+        }
+        .alert("贴纸库", isPresented: Binding(get: { stickerError != nil }, set: { if !$0 { stickerError = nil } })) {
+            Button("好", role: .cancel) { stickerError = nil }
+        } message: { Text(stickerError ?? "") }
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
             Task {
@@ -1006,6 +1287,236 @@ private struct ComposerInputView: View {
         }
     }
 
+    private var inputBar: some View {
+    HStack(spacing: 7) {
+        Menu {
+            ForEach(menuEntries) { entry in
+                Button {
+                    focused = false
+                    onOpenEntry(entry)
+                } label: {
+                    Label(entry.rawValue, systemImage: entry.symbol)
+                }
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(LumiPalette.iconPink)
+                .frame(width: 42, height: 42)
+                .modifier(ComposerGlassButtonSurface())
+                .contentShape(Rectangle().inset(by: -8))
+        }
+        .menuStyle(.borderlessButton)
+        .accessibilityLabel("展开功能入口")
+        .scaleEffect(hasDrawerUnread && !reduceMotion ? 1.06 : 1)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 2.1).repeatForever(autoreverses: true), value: hasDrawerUnread)
+        PhotosPicker(selection: $photoItems, maxSelectionCount: 4, matching: .images) {
+            Image(systemName: "paperclip")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(LumiPalette.iconPink)
+                .frame(width: 42, height: 42)
+                .modifier(ComposerGlassButtonSurface())
+        }
+        .buttonStyle(.plain)
+        HStack(spacing: 4) {
+            TextField("写给沈屿…", text: $text)
+                .focused($focused)
+                .font(.system(size: 15))
+                .foregroundStyle(LumiPalette.textPrimary)
+                .tint(LumiPalette.iconPink)
+                .lineLimit(1)
+                .submitLabel(.send)
+                .onSubmit {
+                    submitMessage()
+                    focused = false
+                    showingStickerPanel = false
+                    keyboardGeometry.dismiss()
+                }
+                .simultaneousGesture(TapGesture().onEnded {
+                    guard showingStickerPanel else { return }
+                    keyboardGeometry.beginSwitch(toPanel: false)
+                    showingStickerPanel = false
+                })
+                .background {
+                    StickerInputViewBridge(panelActive: showingStickerPanel, shouldFocus: focused,
+                                           keyboardGeometry: keyboardGeometry,
+                                           panel: AnyView(stickerPanel),
+                                           panelRevision: "\(activeStickerCategory)|\(stickerLibrary.stickers.count)|\(recentStickerIDs)|\(selectedSticker?.id ?? "")|\(isLoadingStickers)|\(hiddenStickerIDsJSON)")
+                        .frame(width: 0, height: 0)
+                        .allowsHitTesting(false)
+                }
+                .frame(maxWidth: .infinity)
+            Button {
+                keyboardGeometry.beginSwitch(toPanel: !showingStickerPanel)
+                showingStickerPanel.toggle()
+                focused = true
+            } label: {
+                Image(systemName: showingStickerPanel ? "keyboard" : "face.smiling")
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(Color(red: 0.73, green: 0.66, blue: 0.70))
+                    .frame(width: 34, height: 38)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(showingStickerPanel ? "切换到键盘" : "切换到表情包")
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 5)
+        .frame(height: 42)
+        .background { LumiLiquidGlass(shape: Capsule()).allowsHitTesting(false) }
+        .compositingGroup()
+
+        Button {
+            submitMessage()
+        } label: {
+            Image(systemName: "paperplane.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(LumiPalette.iconPink)
+                .frame(width: 42, height: 42)
+                .modifier(ComposerGlassButtonSurface())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSending)
+        .accessibilityLabel(isSending ? "正在发送" : "发送")
+    }
+    }
+
+    private func submitMessage() {
+        guard !isSending else { return }
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty || !selectedImageData.isEmpty || selectedGalleryItem != nil || selectedSticker != nil else { return }
+        text = ""
+        onSend(value)
+    }
+
+    private var hiddenStickerIDs: Set<String> {
+        Set((try? JSONDecoder().decode([String].self, from: Data(hiddenStickerIDsJSON.utf8))) ?? [])
+    }
+
+    private var stickerPanel: some View {
+        ChatStickerPanel(library: stickerLibrary,
+                         recentIDs: recentStickerIDs.split(separator: ",").map(String.init),
+                         hiddenIDs: hiddenStickerIDs,
+                         selectedID: selectedSticker?.id,
+                         preferredCategory: activeStickerCategory,
+                         isLoading: isLoadingStickers,
+                         onSelect: { sticker in
+                             recordRecent(sticker)
+                             selectedSticker = sticker
+                         },
+                         onAdd: {
+                             focused = false
+                             showingStickerPanel = false
+                             keyboardGeometry.dismiss()
+                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { showingStickerAddOptions = true }
+                         },
+                         onPreview: { sticker in focused = false; previewedSticker = sticker },
+                         onDelete: { sticker in deleteSticker(sticker) })
+    }
+
+    private func deleteSticker(_ sticker: RemoteSticker) {
+        var hidden = hiddenStickerIDs
+        hidden.insert(sticker.id)
+        if let data = try? JSONEncoder().encode(hidden.sorted()), let json = String(data: data, encoding: .utf8) {
+            hiddenStickerIDsJSON = json
+        }
+        if selectedSticker?.id == sticker.id { selectedSticker = nil }
+        lastDeletedSticker = sticker
+    }
+
+    private func restoreSticker(_ sticker: RemoteSticker) {
+        var hidden = hiddenStickerIDs
+        hidden.remove(sticker.id)
+        if let data = try? JSONEncoder().encode(hidden.sorted()), let json = String(data: data, encoding: .utf8) {
+            hiddenStickerIDsJSON = json
+        }
+        lastDeletedSticker = nil
+    }
+
+    private func reloadStickerLibrary() async {
+        if let data = UserDefaults.standard.data(forKey: "lumi.stickerLibraryCache"),
+           let cached = try? JSONDecoder.api.decode(RemoteStickerLibrary.self, from: data) {
+            stickerLibrary = cached
+        }
+        isLoadingStickers = true
+        defer { isLoadingStickers = false }
+        do {
+            var library = try await LumiAPIClient().fetchStickers()
+            let names = UserDefaults.standard.dictionary(forKey: "lumi.stickerNames") as? [String: String] ?? [:]
+            library.stickers = library.stickers.map { sticker in
+                guard let name = names[sticker.id] else { return sticker }
+                return RemoteSticker(id: sticker.id, name: name, category: sticker.category, image: sticker.image, mimeType: sticker.mimeType, createdAt: sticker.createdAt)
+            }
+            stickerLibrary = library
+            if let data = try? JSONEncoder.api.encode(library) { UserDefaults.standard.set(data, forKey: "lumi.stickerLibraryCache") }
+        } catch {
+            if let data = UserDefaults.standard.data(forKey: "lumi.stickerLibraryCache"),
+               let cached = try? JSONDecoder.api.decode(RemoteStickerLibrary.self, from: data) {
+                stickerLibrary = cached
+            } else {
+                stickerError = "无法连接贴纸库：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func recordRecent(_ sticker: RemoteSticker) {
+        var ids = recentStickerIDs.split(separator: ",").map(String.init).filter { $0 != sticker.id }
+        ids.insert(sticker.id, at: 0)
+        recentStickerIDs = ids.prefix(20).joined(separator: ",")
+    }
+
+    private func loadStickerForUpload(_ item: PhotosPickerItem) async {
+        defer { selectedUploadItem = nil }
+        do {
+            guard let picked = try await item.loadTransferable(type: Data.self),
+                  let mimeType = stickerMIMEType(picked) else {
+                stickerError = "这个文件不是支持的贴纸图片。"
+                return
+            }
+            var data = picked
+            var finalMIMEType = mimeType
+            if data.count > 2_500_000 {
+                guard mimeType != "image/gif", let image = UIImage(data: data), let compressed = compactUploadData(from: image), compressed.count <= 2_500_000 else {
+                    stickerError = "贴纸图片需小于 2.5 MB；GIF 暂不自动改码，以免丢失动画。"
+                    return
+                }
+                data = compressed
+                finalMIMEType = "image/jpeg"
+            }
+            pendingStickerData = data
+            pendingStickerMIMEType = finalMIMEType
+            focused = false
+            try? await Task.sleep(for: .milliseconds(350))
+            showingStickerMetadata = true
+        } catch {
+            stickerError = "读取贴纸失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func uploadSticker(name: String, category: String, data: Data, mimeType: String) async {
+        do {
+            let uploaded = try await LumiAPIClient().uploadSticker(name: name, category: category, data: data, mimeType: mimeType)
+            let sticker = RemoteSticker(id: uploaded.id, name: name, category: category, image: uploaded.image, mimeType: uploaded.mimeType, createdAt: uploaded.createdAt)
+            cacheImportedSticker(sticker)
+            pendingStickerData = nil
+            showingStickerPanel = true
+        } catch {
+            stickerError = "保存贴纸失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func cacheImportedSticker(_ sticker: RemoteSticker) {
+        var names = UserDefaults.standard.dictionary(forKey: "lumi.stickerNames") as? [String: String] ?? [:]
+        names[sticker.id] = sticker.name
+        UserDefaults.standard.set(names, forKey: "lumi.stickerNames")
+        if !stickerLibrary.categories.contains(sticker.category) { stickerLibrary.categories.append(sticker.category) }
+        if !stickerLibrary.stickers.contains(where: { $0.id == sticker.id }) { stickerLibrary.stickers.append(sticker) }
+        activeStickerCategory = sticker.category
+        if let cache = try? JSONEncoder.api.encode(stickerLibrary) { UserDefaults.standard.set(cache, forKey: "lumi.stickerLibraryCache") }
+    }
+
+    private func stickerMIMEType(_ data: Data) -> String? { StickerImageFormat.mimeType(data) }
+
     private func compactUploadData(from image: UIImage) -> Data? {
         let sourceWidth = CGFloat(image.cgImage?.width ?? Int(image.size.width * image.scale))
         let sourceHeight = CGFloat(image.cgImage?.height ?? Int(image.size.height * image.scale))
@@ -1013,6 +1524,71 @@ private struct ComposerInputView: View {
         let size = CGSize(width: (sourceWidth * scale).rounded(), height: (sourceHeight * scale).rounded())
         let rendered = UIGraphicsImageRenderer(size: size).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
         return rendered.jpegData(compressionQuality: 0.80)
+    }
+}
+
+private struct DrawnCheckmark: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + rect.width * 0.12, y: rect.minY + rect.height * 0.52))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.40, y: rect.minY + rect.height * 0.82))
+        path.addLine(to: CGPoint(x: rect.minX + rect.width * 0.90, y: rect.minY + rect.height * 0.18))
+        return path
+    }
+}
+
+private struct ToolCallsDetailSheet: View {
+    let toolCalls: [ChatToolCallTrace]
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(toolCalls.enumerated()), id: \.offset) { index, call in
+                        VStack(alignment: .leading, spacing: 9) {
+                            HStack(spacing: 8) {
+                                Text(call.name)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(LumiPalette.textPrimary)
+                                Spacer()
+                                Text(call.succeeded ? "成功" : "失败")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(call.succeeded ? Color(red: 0.23, green: 0.58, blue: 0.43) : LumiPalette.iconPink)
+                            }
+                            toolSection("调用内容", content: call.arguments)
+                            toolSection("执行结果", content: call.result)
+                        }
+                        .padding(14)
+                        .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(.white.opacity(0.88), lineWidth: 0.8))
+                    }
+                }
+                .padding(16)
+            }
+            .background(LumiPalette.chatBackground)
+            .navigationTitle("调用工具 · \(toolCalls.count)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                        .foregroundStyle(LumiPalette.iconPink)
+                }
+            }
+        }
+    }
+
+    private func toolSection(_ title: String, content: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(LumiPalette.textSecondary)
+            Text(content.isEmpty ? "（无内容）" : content)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(LumiPalette.textPrimary.opacity(0.88))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
@@ -1117,7 +1693,7 @@ private struct LocalPhotoStack: View {
     }
 }
 
-private enum LumiPalette {
+enum LumiPalette {
     static let chatBackground = Color(red: 0.984, green: 0.949, blue: 0.957)
     static let userBubble = Color(red: 0.9608, green: 0.9255, blue: 0.9255)
     static let iconPink = Color(red: 0.955, green: 0.745, blue: 0.800)
@@ -1127,17 +1703,25 @@ private enum LumiPalette {
 
 private struct LumiLiquidGlass<S: Shape>: View {
     let shape: S
+    var tint: Color? = nil
 
     @ViewBuilder var body: some View {
         if #available(iOS 26.0, *) {
-            Color.clear
-                .glassEffect(.regular.tint(Color.white.opacity(0.62)), in: shape)
-                .allowsHitTesting(false)
+            if let tint {
+                Color.clear
+                    .glassEffect(.regular.tint(tint).interactive(), in: shape)
+                    .allowsHitTesting(false)
+            } else {
+                Color.clear
+                    .glassEffect(.regular.interactive(), in: shape)
+                    .allowsHitTesting(false)
+            }
         } else {
             shape.fill(Color.white.opacity(0.64)).allowsHitTesting(false)
         }
     }
 }
+
 
 private struct ThinkingDots: View {
     @State private var animate = false
@@ -1240,6 +1824,8 @@ private final class SpatialSpeechPlayback: ObservableObject {
     private var speechClock: [Double] = []
     private var route: [RouteSegment] = []
     private var initialPosition = (azimuth: 270.0, distance: 0.25)
+
+    func setVolume(_ volume: Float) { source.volume = min(1, max(0, volume)) }
 
     func play(url: URL, script: String) {
         guard FileManager.default.fileExists(atPath: url.path), let file = try? AVAudioFile(forReading: url) else { return }
@@ -1548,6 +2134,7 @@ struct SettingsView: View {
     @AppStorage("lumi.proactiveActionMessage") private var proactiveActionMessage = true
     @AppStorage("lumi.proactiveActionPhone") private var proactiveActionPhone = true
     @AppStorage("lumi.proactiveActionScreen") private var proactiveActionScreen = false
+    @AppStorage("lumi.proactiveDND") private var proactiveDND = false
     @State private var settingsLoaded = false
     @State private var syncStatus = "正在连接后端…"
     @State private var settingsSaveTask: Task<Void, Never>?
@@ -1599,7 +2186,7 @@ struct SettingsView: View {
                         .autocorrectionDisabled()
                     Button("保存口令并重试同步") {
                         LumiKeychain.write(pushAPIToken.trimmingCharacters(in: .whitespacesAndNewlines), account: "push-api-token")
-                        Task { await loadProactiveSettings() }
+                        Task { await api.syncRegisteredPushTokens(); await loadProactiveSettings() }
                     }
                     Text("从 Zeabur 的 lumi-server 服务变量复制 LUMI_PUSH_API_TOKEN；口令保存在本机钥匙串，不会写入聊天记录。")
                         .font(.system(size: 12))
@@ -1609,6 +2196,8 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("勿扰模式", isOn: $proactiveDND)
+                        .tint(Color(red: 0.72, green: 0.35, blue: 0.49))
                     Toggle(isOn: $proactiveNudgeEnabled) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("保活")
@@ -1721,6 +2310,7 @@ struct SettingsView: View {
         .onChange(of: proactiveActionMessage) { _, _ in saveProactiveSettings() }
         .onChange(of: proactiveActionPhone) { _, _ in saveProactiveSettings() }
         .onChange(of: proactiveActionScreen) { _, _ in saveProactiveSettings() }
+        .onChange(of: proactiveDND) { _, _ in saveProactiveSettings() }
         .background(Color(red: 0.984, green: 0.949, blue: 0.957))
         .preferredColorScheme(.light)
         .sheet(isPresented: $showingVoiceSettings) {
@@ -1790,6 +2380,7 @@ struct SettingsView: View {
             proactiveActionMessage = settings.actions?.message ?? true
             proactiveActionPhone = settings.actions?.phone ?? true
             proactiveActionScreen = settings.actions?.screen ?? false
+            proactiveDND = settings.dnd ?? false
             syncStatus = "已同步到后端"
             let authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
             if authorization == .authorized || authorization == .provisional || authorization == .ephemeral {
@@ -1831,7 +2422,8 @@ struct SettingsView: View {
                     message: proactiveNudgeMessage,
                     intervalMin: proactiveNudgeInterval,
                     intervalMax: proactiveNudgeInterval,
-                    actions: ProactiveActions(message: proactiveActionMessage, phone: proactiveActionPhone, screen: proactiveActionScreen)
+                    actions: ProactiveActions(message: proactiveActionMessage, phone: proactiveActionPhone, screen: proactiveActionScreen),
+                    dnd: proactiveDND
                 ))
                 syncStatus = "已同步到后端"
             } catch {
@@ -2375,6 +2967,625 @@ private struct GlassComparisonView: View {
 }
 
 @MainActor
+private struct ModelRequestLogSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    private let api = LumiAPIClient()
+    @State private var usage: ModelUsageResponse?
+    @State private var loading = true
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                if let usage {
+                    VStack(alignment: .leading, spacing: 18) {
+                        ModelUsageDashboard(usage: usage)
+                        requestHistory(usage)
+                        if let error {
+                            Label("更新失败：\(error)", systemImage: "arrow.clockwise")
+                                .font(.system(size: 11)).textSelection(.enabled)
+                        }
+                    }
+                    .padding(.horizontal, 18).padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else if loading {
+                    ProgressView("正在读取模型用量")
+                        .frame(maxWidth: .infinity).padding(.top, 100)
+                } else {
+                    ContentUnavailableView("暂时无法读取用量", systemImage: "chart.bar.xaxis", description: Text(error ?? "请下拉或点击右上角重试"))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .refreshable { await refresh() }
+            .background(LumiPalette.chatBackground.ignoresSafeArea())
+            .foregroundStyle(.black)
+            .navigationTitle("使用量")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: { Image(systemName: "chevron.left").frame(width: 30, height: 30) }
+                        .accessibilityLabel("返回聊天")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await refresh() } } label: { Image(systemName: "arrow.clockwise").frame(width: 30, height: 30) }
+                        .disabled(loading).accessibilityLabel("刷新模型用量")
+                }
+            }
+            .tint(.black)
+            .task { await refresh() }
+        }
+        .preferredColorScheme(.light)
+    }
+
+    private func requestHistory(_ usage: ModelUsageResponse) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("请求明细").font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Text("最近 \(usage.requests.count) 条 · 点开看完整详情").font(.system(size: 10))
+            }
+            if usage.requests.isEmpty {
+                Text("还没有模型请求记录").font(.system(size: 12)).padding(.vertical, 16)
+            } else {
+                LazyVStack(spacing: 0) {
+                    ForEach(usage.requests) { request in
+                        NavigationLink(destination: ModelRequestDetailView(request: request)) {
+                            ModelUsageRequestRow(request: request)
+                        }
+                        .buttonStyle(.plain)
+                        if request.id != usage.requests.last?.id { Divider().overlay(LumiPalette.iconPink.opacity(0.2)) }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .background(.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 16))
+            }
+        }
+    }
+
+    private func refresh() async {
+        guard !loading || usage == nil else { return }
+        loading = true
+        defer { loading = false }
+        do { usage = try await api.fetchModelUsage(); error = nil }
+        catch { self.error = error.localizedDescription }
+    }
+}
+
+private enum UsageCalendar {
+    static var calendar: Calendar {
+        var value = Calendar(identifier: .gregorian)
+        value.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        value.firstWeekday = 2
+        return value
+    }
+    static func month(_ date: Date) -> Date { calendar.date(from: calendar.dateComponents([.year, .month], from: date))! }
+    static func key(_ date: Date) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!)
+    }
+    static func date(_ key: String) -> Date? {
+        let parts = key.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return calendar.date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2]))
+    }
+    static func label(_ date: Date, month: Bool = false) -> String {
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        return month ? "\(parts.year!) 年 \(parts.month!) 月" : "\(parts.month!) 月 \(parts.day!) 日"
+    }
+}
+
+private struct ModelUsageDashboard: View {
+    let usage: ModelUsageResponse
+    @State private var selectedMonth = UsageCalendar.month(.now)
+    @State private var selectedDate: String?
+    private var calendar: Calendar { UsageCalendar.calendar }
+    private var monthKey: String { String(UsageCalendar.key(selectedMonth).prefix(7)) }
+    private var rows: [ModelUsageActivityDay] { (usage.activity?.days ?? []).filter { $0.date.hasPrefix(monthKey) } }
+    private var dailyRequests: [String: Int] {
+        if let activity = usage.activity { return Dictionary(activity.days.map { ($0.date, $0.requests) }, uniquingKeysWith: +) }
+        return Dictionary(usage.days.map { ($0.date, $0.requests) }, uniquingKeysWith: +)
+    }
+    private var monthRequests: Int { dailyRequests.filter { $0.key.hasPrefix(monthKey) }.values.reduce(0, +) }
+    private var monthTokens: Int { usage.activity == nil ? usage.days.filter { $0.date.hasPrefix(monthKey) }.reduce(0) { $0 + $1.tokens } : rows.reduce(0) { $0 + $1.tokens } }
+    private var elapsedDays: Int {
+        if selectedMonth == UsageCalendar.month(.now) { return calendar.component(.day, from: .now) }
+        return calendar.range(of: .day, in: .month, for: selectedMonth)!.count
+    }
+    private var activeDays: Int { dailyRequests.filter { $0.key.hasPrefix(monthKey) && $0.value > 0 }.count }
+    private var peak: (key: String, value: Int)? {
+        dailyRequests.filter { $0.key.hasPrefix(monthKey) && $0.value > 0 }.sorted {
+            $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value
+        }.first
+    }
+    private var cacheInput: Int { rows.reduce(0) { $0 + $1.cacheInputTokens } }
+    private var cached: Int { rows.reduce(0) { $0 + $1.cachedTokens } }
+    private var errors: Int { rows.reduce(0) { $0 + $1.errors } }
+    private var duration: Double { rows.reduce(0) { $0 + $1.durationMs } }
+    private var cacheText: String { usage.activity == nil || cacheInput == 0 ? "—" : String(format: "%.1f%%", Double(cached) / Double(cacheInput) * 100) }
+    private var earliestMonth: Date {
+        let first = usage.activity?.firstDate ?? usage.days.first?.date ?? UsageCalendar.key(.now)
+        return UsageCalendar.month(UsageCalendar.date(first) ?? .now)
+    }
+    private var dates: [Date?] {
+        let offset = (calendar.component(.weekday, from: selectedMonth) + 5) % 7
+        let count = calendar.range(of: .day, in: .month, for: selectedMonth)!.count
+        return Array(repeating: nil, count: offset) + (0..<count).map { calendar.date(byAdding: .day, value: $0, to: selectedMonth) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            monthHeader
+            overview
+            heatmap
+            tokenBreakdown
+            weekSummary
+            DisclosureGroup("统计口径与记录范围") {
+                Text(coverageNote).lineSpacing(3).fixedSize(horizontal: false, vertical: true).padding(.top, 6)
+            }
+            .font(.system(size: 10))
+        }
+    }
+
+    private var monthHeader: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(UsageCalendar.label(selectedMonth, month: true)).font(.system(size: 21, weight: .semibold))
+                Text(usage.activity == nil ? "模型请求概览 · UTC" : "模型请求概览 · 北京时间").font(.system(size: 11))
+            }
+            Spacer()
+            Button { changeMonth(-1) } label: { Image(systemName: "chevron.left").frame(width: 30, height: 32) }
+                .disabled(selectedMonth <= earliestMonth).accessibilityLabel("上个月")
+            Button { changeMonth(1) } label: { Image(systemName: "chevron.right").frame(width: 30, height: 32) }
+                .disabled(selectedMonth >= UsageCalendar.month(.now)).accessibilityLabel("下个月")
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var overview: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(monthRequests.formatted()).font(.system(size: 32, weight: .semibold, design: .rounded).monospacedDigit())
+                Text("次请求").font(.system(size: 12))
+                Spacer()
+                Text("\(monthTokens.formatted()) tokens").font(.system(size: 11).monospacedDigit())
+            }
+            Divider()
+            LazyVGrid(columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)], alignment: .leading, spacing: 14) {
+                metric("日均请求", String(format: "%.1f", Double(monthRequests) / Double(max(1, elapsedDays))), suffix: "次 / 日")
+                metric("缓存命中率", cacheText)
+                metric("有聊天的日子", "\(activeDays)", suffix: "/ \(elapsedDays) 天")
+                metric("平均耗时", monthRequests > 0 && usage.activity != nil ? String(format: "%.1f", duration / Double(monthRequests) / 1000) : "—", suffix: "秒")
+            }
+        }
+        .padding(16).background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var heatmap: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("聊天热力图").font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Text("少").font(.system(size: 9))
+                HStack(spacing: 3) {
+                    ForEach(0..<5) { level in RoundedRectangle(cornerRadius: 2).fill(LumiPalette.iconPink.opacity(0.08 + Double(level) * 0.22)).frame(width: 10, height: 10) }
+                }
+                Text("多").font(.system(size: 9))
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 6) {
+                ForEach(Array(["一", "二", "三", "四", "五", "六", "日"].enumerated()), id: \.offset) { _, day in
+                    Text(day).font(.system(size: 10)).frame(maxWidth: .infinity).padding(.bottom, 2)
+                }
+                ForEach(dates.indices, id: \.self) { index in
+                    if let date = dates[index] { dayCell(date) }
+                    else { Color.clear.frame(height: 32).accessibilityHidden(true) }
+                }
+            }
+            selectedDaySummary
+            if let peak, let date = UsageCalendar.date(peak.key) {
+                Label("聊得最多 · \(UsageCalendar.label(date))，\(peak.value.formatted()) 次请求", systemImage: "sparkles")
+                    .font(.system(size: 11))
+            } else {
+                Text("这个月还没有请求记录").font(.system(size: 11))
+            }
+        }
+        .padding(14).background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func dayCell(_ date: Date) -> some View {
+        let key = UsageCalendar.key(date)
+        let count = dailyRequests[key] ?? 0
+        let future = key > UsageCalendar.key(.now)
+        let intensity = count == 0 ? 0.08 : 0.22 + 0.72 * sqrt(Double(count) / Double(max(1, peak?.value ?? 1)))
+        return Button { selectedDate = key } label: {
+            Text("\(calendar.component(.day, from: date))")
+                .font(.system(size: 11, weight: key == selectedDate ? .semibold : .regular).monospacedDigit())
+                .foregroundStyle(.black.opacity(future ? 0.25 : 1))
+                .frame(maxWidth: .infinity).frame(height: 32)
+                .background(LumiPalette.iconPink.opacity(future ? 0.025 : intensity), in: RoundedRectangle(cornerRadius: 7))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 7).strokeBorder(key == selectedDate ? .black : key == UsageCalendar.key(.now) ? LumiPalette.iconPink : .clear, lineWidth: key == selectedDate ? 1 : 1.5)
+                }
+        }
+        .buttonStyle(.plain).disabled(future)
+        .accessibilityLabel("\(UsageCalendar.label(date))，\(count) 次请求")
+        .accessibilityAddTraits(key == selectedDate ? .isSelected : [])
+    }
+
+    private var selectedDaySummary: some View {
+        let key = selectedDate ?? (monthKey == String(UsageCalendar.key(.now).prefix(7)) ? UsageCalendar.key(.now) : peak?.key ?? UsageCalendar.key(selectedMonth))
+        let day = rows.first { $0.date == key }
+        let count = dailyRequests[key] ?? 0
+        return HStack(alignment: .firstTextBaseline) {
+            Text(UsageCalendar.date(key).map { UsageCalendar.label($0) } ?? key).font(.system(size: 11, weight: .medium))
+            Spacer()
+            Text("\(count.formatted()) 次 · \((day?.tokens ?? usage.days.first { $0.date == key }?.tokens ?? 0).formatted()) tokens")
+                .font(.system(size: 11).monospacedDigit())
+        }
+        .padding(.vertical, 8).padding(.horizontal, 10)
+        .background(.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    private var tokenBreakdown: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("本月明细").font(.system(size: 14, weight: .semibold))
+            statLine("输入 Token", usage.activity == nil ? "—" : rows.reduce(0) { $0 + $1.inputTokens }.formatted())
+            statLine("输出 Token", usage.activity == nil ? "—" : rows.reduce(0) { $0 + $1.outputTokens }.formatted())
+            statLine("缓存读取 Token", usage.activity == nil ? "—" : cached.formatted())
+            statLine("成功 / 异常请求", usage.activity == nil ? "—" : "\((monthRequests - errors).formatted()) / \(errors.formatted())")
+        }
+        .padding(14).background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var weekSummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("本周统计").font(.system(size: 14, weight: .semibold))
+            statLine("请求次数", usage.week.requests.formatted())
+            statLine("Token 总量", usage.week.tokens.formatted())
+            statLine("平均缓存率", String(format: "%.1f%%", usage.week.cacheRate * 100))
+        }
+        .padding(14).background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var coverageNote: String {
+        let first = usage.activity?.firstDate ?? usage.days.first?.date ?? "—"
+        let estimated = rows.reduce(0) { $0 + $1.estimatedCacheRequests }
+        var note = "按留存日志统计，最早记录 \(first)。日均包含零请求日；本月算至今天，历史月按整月计算。热力图按模型请求次数统计，并非消息条数。本周沿用原接口的 UTC 周统计。"
+        note += " 缓存命中率按缓存读取 / 输入总量计算；本周平均缓存率按原接口逐请求平均。"
+        if estimated > 0 { note += " 本月 \(estimated) 条历史缓存记录缺少完整口径，缓存率为估算。" }
+        return note
+    }
+    private func metric(_ label: String, _ value: String, suffix: String = "") -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 10))
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(value).font(.system(size: 19, weight: .medium, design: .rounded).monospacedDigit())
+                if !suffix.isEmpty { Text(suffix).font(.system(size: 10)) }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+    private func statLine(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).font(.system(size: 11))
+            Spacer()
+            Text(value).font(.system(size: 12, weight: .medium).monospacedDigit())
+        }
+    }
+    private func changeMonth(_ offset: Int) {
+        selectedMonth = calendar.date(byAdding: .month, value: offset, to: selectedMonth)!
+        selectedDate = nil
+    }
+}
+
+private struct ModelUsageRequestRow: View {
+    let request: ModelRequestLog
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: request.status >= 200 && request.status < 400 ? "checkmark.circle" : "exclamationmark.circle")
+                    .font(.system(size: 10)).foregroundStyle(LumiPalette.iconPink)
+                Text(request.model).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Spacer(minLength: 4)
+                Text(request.createdAt.formatted(.dateTime.month(.defaultDigits).day().hour().minute()))
+                    .font(.system(size: 10).monospacedDigit())
+                Image(systemName: "chevron.right").font(.system(size: 9))
+            }
+            HStack(spacing: 6) {
+                Text(request.provider)
+                Text("· \((request.inputTokens + request.outputTokens).formatted()) tokens")
+                Spacer(minLength: 0)
+                Text("\(request.durationMs.formatted()) ms · \(request.status)")
+            }
+            .font(.system(size: 10).monospacedDigit())
+            Text("输入 \(request.inputTokens.formatted()) · 输出 \(request.outputTokens.formatted()) · 缓存 \(request.cachedTokens.formatted())")
+                .font(.system(size: 10).monospacedDigit())
+        }
+        .foregroundStyle(.black)
+        .padding(.vertical, 11).contentShape(Rectangle())
+    }
+}
+
+private struct ModelRequestDetailSection: Identifiable {
+    let title: String
+    let subtitle: String
+    let content: String
+    var id: String { title }
+}
+
+@MainActor
+private struct ModelRequestDetailView: View {
+    let request: ModelRequestLog
+    @State private var fullRequest: ModelRequestLog?
+    @State private var detailError: String?
+    @State private var loadingDetails = false
+    private var activeRequest: ModelRequestLog { fullRequest ?? request }
+    private var hasLoadedDetails: Bool { fullRequest != nil || request.hasDetails }
+    private let api = LumiAPIClient()
+    @State private var expandedSections: Set<String> = ["当前消息", "模型回复"]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                detailCard("请求概况") {
+                    detailLine("线路", activeRequest.provider)
+                    detailLine("模型", activeRequest.model)
+                    detailLine("时间", activeRequest.createdAt.formatted(date: .long, time: .standard))
+                    detailLine("状态码", "\(activeRequest.status)")
+                    detailLine("耗时", "\(activeRequest.durationMs.formatted()) ms")
+                    detailLine("输入 Token", activeRequest.inputTokens.formatted())
+                    detailLine("输出 Token", activeRequest.outputTokens.formatted())
+                    detailLine("缓存 Token", activeRequest.cachedTokens.formatted())
+                }
+                if hasLoadedDetails {
+                    let sections = detailSections
+                    VStack(spacing: 0) {
+                        ForEach(sections) { section in
+                            sectionCard(section)
+                            if section.id != sections.last?.id { Divider().padding(.horizontal, 12) }
+                        }
+                    }
+                    .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 16))
+                } else if let detailError {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("完整详情加载失败：\(detailError)").font(.system(size: 12))
+                        Button("重新加载详情") { Task { await loadDetails() } }
+                            .font(.system(size: 12, weight: .medium)).disabled(loadingDetails)
+                    }
+                    .padding(14)
+                } else {
+                    ProgressView("正在读取这条请求的完整详情")
+                        .frame(maxWidth: .infinity).padding(.vertical, 24)
+                }
+            }
+            .padding(18)
+        }
+        .background(LumiPalette.chatBackground.ignoresSafeArea())
+        .navigationTitle("请求详情")
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: request.id) { await loadDetails() }
+    }
+
+    private func loadDetails() async {
+        guard !hasLoadedDetails, !loadingDetails else { return }
+        loadingDetails = true
+        detailError = nil
+        defer { loadingDetails = false }
+        do { fullRequest = try await api.fetchModelUsageDetail(id: request.id) }
+        catch { if !Task.isCancelled { detailError = error.localizedDescription } }
+    }
+
+    private var detailSections: [ModelRequestDetailSection] {
+        let body = requestObject
+        let response = responseObject
+        let messages = (body["messages"] as? [[String: Any]]) ?? []
+        let systemText = systemPrompt(from: body, messages: messages)
+        let messageContents = messages.map { readableContent($0["content"] ?? "") }
+        let allPromptText = ([systemText] + messageContents).joined(separator: "\n\n")
+        let retrieved = tagContents(["retrieved_memories"], in: allPromptText)
+        let longTerm = tagContents(["long_term_memory", "long_term_memories", "user_profile", "long_term_profile", "sent_mail_memory"], in: allPromptText)
+        let summary = tagContents(["context_summary"], in: allPromptText)
+        let requestRuntime = tagContents(["system_context"], in: messageContents.last ?? "")
+            .map { stripTags(["retrieved_memories", "context_summary", "long_term_memory", "long_term_memories", "user_profile", "long_term_profile", "sent_mail_memory"], from: $0) }
+        let userIndices = messages.indices.filter { messages[$0]["role"] as? String == "user" }
+        let currentIndex = userIndices.last
+        let history = messages.indices.compactMap { index -> String? in
+            guard index != currentIndex else { return nil }
+            let item = messages[index]
+            let role = item["role"] as? String ?? "message"
+            guard role == "user" || role == "assistant" else { return nil }
+            let text = stripTags(["system_context", "retrieved_memories", "context_summary", "long_term_memory", "long_term_memories", "user_profile", "long_term_profile", "sent_mail_memory", "food_tool", "food_tool_result", "lumi_tool_calls"], from: readableContent(item["content"] ?? ""))
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return "\(role == "user" ? "用户" : "助手")\n\(text)"
+        }
+        let currentText = currentIndex.map { readableContent(messages[$0]["content"] ?? "") } ?? ""
+        let cleanCurrentText = stripTags(["system_context", "retrieved_memories", "context_summary", "long_term_memory", "long_term_memories", "user_profile", "long_term_profile", "sent_mail_memory", "food_tool", "food_tool_result", "lumi_tool_calls"], from: currentText)
+        let tools: String = body["tools"].flatMap { prettyJSON($0) } ?? ""
+        let calls = toolCallContent(response: response, messages: messages, promptText: allPromptText)
+        let output = modelOutput(from: response)
+
+        return [
+            section("系统提示词", "模型的基础指令", systemText),
+            section("对话上下文", "本轮之前的聊天记录", history.joined(separator: "\n\n────────\n\n")),
+            section("上下文摘要", "压缩后保留的历史摘要", summary.joined(separator: "\n\n")),
+            section("长期记忆", "固定画像或长期记忆字段", longTerm.joined(separator: "\n\n")),
+            section("检索记忆", "本轮检索并注入的记忆", retrieved.joined(separator: "\n\n")),
+            section("请求上下文", "时间、功能状态等本轮附加信息", requestRuntime.joined(separator: "\n\n")),
+            section("当前消息", "本轮发送给模型的最新用户内容", cleanCurrentText),
+            section("工具调用", "工具定义、模型发起的调用及工具返回", calls.isEmpty ? tools : [tools, calls].filter { !$0.isEmpty }.joined(separator: "\n\n--- 实际调用与结果 ---\n\n")),
+            section("模型回复", "模型返回的可见文本或错误", output)
+        ]
+    }
+
+    private var requestObject: [String: Any] {
+        jsonObject(activeRequest.requestJSON) as? [String: Any] ?? [:]
+    }
+
+    private var responseObject: [String: Any] {
+        jsonObject(activeRequest.responseJSON) as? [String: Any] ?? [:]
+    }
+
+    private func section(_ title: String, _ subtitle: String, _ raw: String) -> ModelRequestDetailSection {
+        let content = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ModelRequestDetailSection(title: title, subtitle: subtitle, content: content.isEmpty ? "（本次请求未包含此项）" : content)
+    }
+
+    private func sectionCard(_ section: ModelRequestDetailSection) -> some View {
+        let isExpanded = Binding(
+            get: { expandedSections.contains(section.id) },
+            set: { value in
+                if value { expandedSections.insert(section.id) }
+                else { expandedSections.remove(section.id) }
+            }
+        )
+        return DisclosureGroup(isExpanded: isExpanded) {
+            Text(section.content)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(LumiPalette.textPrimary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(LumiPalette.chatBackground.opacity(0.86), in: RoundedRectangle(cornerRadius: 9))
+                .padding(.top, 6)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(section.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(LumiPalette.textPrimary)
+                Text(section.subtitle)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.black)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .tint(LumiPalette.iconPink)
+        .padding(.horizontal, 12).padding(.vertical, 10)
+    }
+
+    private func detailCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(LumiPalette.textPrimary)
+            content()
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white.opacity(0.78), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func detailLine(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(title).foregroundStyle(LumiPalette.textSecondary)
+            Spacer(minLength: 12)
+            Text(value).foregroundStyle(LumiPalette.textPrimary).multilineTextAlignment(.trailing)
+        }
+        .font(.system(size: 12))
+    }
+
+    private func systemPrompt(from body: [String: Any], messages: [[String: Any]]) -> String {
+        if let system = body["system"] { return readableContent(system) }
+        return messages.filter { $0["role"] as? String == "system" }
+            .map { readableContent($0["content"] ?? "") }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+    }
+
+    private func toolCallContent(response: [String: Any], messages: [[String: Any]], promptText: String) -> String {
+        var parts: [String] = []
+        if let tools = requestObject["tools"], let text = prettyJSON(tools), !text.isEmpty {
+            parts.append("可用工具定义\n\(text)")
+        }
+        if let choices = response["choices"] as? [[String: Any]],
+           let message = choices.first?["message"] as? [String: Any],
+           let calls = message["tool_calls"], let text = prettyJSON(calls) {
+            parts.append("模型发起的工具调用\n\(text)")
+        }
+        if let content = response["content"] as? [[String: Any]] {
+            let calls = content.filter { ($0["type"] as? String) == "tool_use" }
+            if !calls.isEmpty, let text = prettyJSON(calls) { parts.append("模型发起的工具调用\n\(text)") }
+        }
+        let toolMessages = messages.filter {
+            let role = $0["role"] as? String
+            return role == "tool" || role == "function"
+        }.map { message in
+            let name = (message["name"] as? String) ?? (message["tool_call_id"] as? String) ?? "工具结果"
+            return "\(name)\n\(readableContent(message["content"] ?? ""))"
+        }
+        if !toolMessages.isEmpty { parts.append("工具返回\n" + toolMessages.joined(separator: "\n\n")) }
+        let foodCalls = tagContents(["food_tool"], in: promptText)
+        if !foodCalls.isEmpty { parts.append("饮食工具调用\n" + foodCalls.joined(separator: "\n\n")) }
+        let foodResults = tagContents(["food_tool_result"], in: promptText)
+        if !foodResults.isEmpty { parts.append("饮食工具返回\n" + foodResults.joined(separator: "\n\n")) }
+        let tracedCalls = tagContents(["lumi_tool_calls"], in: promptText)
+        if !tracedCalls.isEmpty { parts.append("Lumi 工具调用记录\n" + tracedCalls.joined(separator: "\n\n")) }
+        return parts.joined(separator: "\n\n────────\n\n")
+    }
+
+    private func modelOutput(from response: [String: Any]) -> String {
+        if let error = response["error"] as? [String: Any] {
+            return (error["message"] as? String) ?? (prettyJSON(error) ?? "模型返回错误")
+        }
+        if let choices = response["choices"] as? [[String: Any]],
+           let message = choices.first?["message"] as? [String: Any] {
+            return readableContent(message["content"] ?? "")
+        }
+        if let content = response["content"] { return readableContent(content) }
+        return prettyJSON(response) ?? ""
+    }
+
+    private func tagContents(_ tags: [String], in source: String) -> [String] {
+        tags.flatMap { tag -> [String] in
+            let pattern = "(?is)<\\s*\(NSRegularExpression.escapedPattern(for: tag))\\b[^>]*>(.*?)</\\s*\(NSRegularExpression.escapedPattern(for: tag))\\s*>"
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+            let range = NSRange(source.startIndex..<source.endIndex, in: source)
+            return regex.matches(in: source, range: range).compactMap { match in
+                guard let range = Range(match.range(at: 1), in: source) else { return nil }
+                return String(source[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+    }
+
+    private func stripTags(_ tags: [String], from source: String) -> String {
+        tags.reduce(source) { text, tag in
+            let escapedTag = NSRegularExpression.escapedPattern(for: tag)
+            guard let regex = try? NSRegularExpression(pattern: "(?is)<\\s*\(escapedTag)\\b[^>]*>.*?</\\s*\(escapedTag)\\s*>") else { return text }
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+        }
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func readableContent(_ value: Any) -> String {
+        if let text = value as? String { return text }
+        if let parts = value as? [Any] {
+            return parts.map { part -> String in
+                guard let object = part as? [String: Any] else { return String(describing: part) }
+                if let text = object["text"] as? String { return text }
+                if object["type"] as? String == "image" || object["image_url"] != nil { return "[图片]" }
+                if object["type"] as? String == "tool_use" { return "[工具调用] " + (object["name"] as? String ?? "") + "\n" + (prettyJSON(object["input"] ?? [:]) ?? "") }
+                if object["type"] as? String == "tool_result" { return "[工具结果]\n" + readableContent(object["content"] ?? "") }
+                return ""
+            }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
+        if let object = value as? [String: Any], let text = prettyJSON(object) { return text }
+        return String(describing: value)
+    }
+
+    private func jsonObject(_ raw: String) -> Any? {
+        guard let data = raw.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data)
+    }
+
+    private func prettyJSON(_ value: Any) -> String? {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        return text
+    }
+}
+
+@MainActor
 private struct SubscriptionUsageSheet: View {
     @Environment(\.dismiss) private var dismiss
     private let api = LumiAPIClient()
@@ -2480,11 +3691,35 @@ private struct SubscriptionUsageSheet: View {
     }
 }
 
+private final class CallVoiceMetrics: @unchecked Sendable {
+    private let lock = NSLock()
+    private var duration = 0.0
+    private var energy = 0.0
+    private var quietDuration = 0.0
+
+    func add(meanEnergy: Double, duration: Double) {
+        lock.lock(); defer { lock.unlock() }
+        self.duration += duration
+        energy += meanEnergy * duration
+        if meanEnergy < 0.012 { quietDuration += duration }
+    }
+
+    func take() -> (duration: Double, energy: Double, quietRatio: Double) {
+        lock.lock(); defer { lock.unlock() }
+        let result = (duration, duration > 0 ? energy / duration : 0, duration > 0 ? quietDuration / duration : 0)
+        duration = 0; energy = 0; quietDuration = 0
+        return result
+    }
+
+    func reset() { _ = take() }
+}
+
 @MainActor
 private final class CallSpeechRecognition: NSObject, ObservableObject {
     @Published private(set) var transcript = ""
     @Published private(set) var isListening = false
     @Published private(set) var errorMessage: String?
+    private(set) var lastVoiceCue = ""
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
     private let audioEngine = AVAudioEngine()
@@ -2494,6 +3729,7 @@ private final class CallSpeechRecognition: NSObject, ObservableObject {
     private var isStarting = false
     private var tapInstalled = false
     private var silenceTask: Task<Void, Never>?
+    private let voiceMetrics = CallVoiceMetrics()
 
     func start(onFinal: @escaping (String) -> Void) {
         guard !isListening, !isStarting else { return }
@@ -2554,6 +3790,7 @@ private final class CallSpeechRecognition: NSObject, ObservableObject {
         request.shouldReportPartialResults = true
         recognitionRequest = request
         transcript = ""
+        voiceMetrics.reset()
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .duckOthers])
@@ -2565,8 +3802,22 @@ private final class CallSpeechRecognition: NSObject, ObservableObject {
                 errorMessage = "麦克风设备还没准备好，请再试一次"
                 return
             }
+            let voiceMetrics = self.voiceMetrics
             input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
                 self?.recognitionRequest?.append(buffer)
+                guard let channels = buffer.floatChannelData else { return }
+                let frames = Int(buffer.frameLength)
+                let channelCount = Int(buffer.format.channelCount)
+                guard frames > 0, channelCount > 0 else { return }
+                var squareSum = 0.0
+                for frame in 0..<frames {
+                    for channel in 0..<channelCount {
+                        let sample = Double(channels[channel][frame])
+                        squareSum += sample * sample
+                    }
+                }
+                let meanEnergy = sqrt(squareSum / Double(frames * channelCount))
+                voiceMetrics.add(meanEnergy: meanEnergy, duration: Double(frames) / buffer.format.sampleRate)
             }
             tapInstalled = true
             audioEngine.prepare()
@@ -2609,8 +3860,27 @@ private final class CallSpeechRecognition: NSObject, ObservableObject {
     private func finishTranscript() {
         let finalText = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         let handler = onFinal
+        if !finalText.isEmpty { lastVoiceCue = describeVoice(text: finalText) }
         stop()
         if !finalText.isEmpty { handler?(finalText) }
+    }
+
+    private func describeVoice(text: String) -> String {
+        let metrics = voiceMetrics.take()
+        guard metrics.duration > 0 else { return "语音特征不足" }
+        let defaults = UserDefaults.standard
+        let baselineKey = "lumi.callVoiceEnergyBaseline"
+        let baseline = defaults.double(forKey: baselineKey)
+        let normalizedBaseline = baseline > 0.001 ? baseline : max(metrics.energy, 0.02)
+        var cues: [String] = []
+        if metrics.energy < normalizedBaseline * 0.68 { cues.append("声音比平时轻") }
+        else if metrics.energy > normalizedBaseline * 1.38 { cues.append("声音比平时响") }
+        if metrics.quietRatio > 0.42 { cues.append("停顿比平时多") }
+        let rate = Double(text.count) / max(0.5, metrics.duration * (1 - min(metrics.quietRatio, 0.7)))
+        if rate < 2.4 { cues.append("语速偏慢") }
+        else if rate > 6.5 { cues.append("语速偏快") }
+        defaults.set(baseline == 0 ? metrics.energy : baseline * 0.92 + metrics.energy * 0.08, forKey: baselineKey)
+        return cues.isEmpty ? "声音和语速接近平时" : cues.joined(separator: "、")
     }
 }
 
@@ -2826,6 +4096,10 @@ private struct CallDemoView: View {
     @State private var generatingReply = false
     @State private var callAudioFiles: [UUID: URL] = [:]
     @State private var didFinishCall = false
+    @State private var softVoiceEnabled = false
+    @State private var incomingReason = ""
+    @State private var hangupAfterPlayback = false
+    @State private var hangupTask: Task<Void, Never>?
     @StateObject private var player = SpatialSpeechPlayback()
     @StateObject private var speechRecognition = CallSpeechRecognition()
     let incomingCallID: String?
@@ -2849,6 +4123,7 @@ private struct CallDemoView: View {
         .animation(.easeInOut(duration: 0.28), value: phase == .connected)
         .task {
             if incomingCallID != nil {
+                incomingReason = UserDefaults.standard.string(forKey: "lumi.callReason.\(incomingCallID!.lowercased())") ?? ""
                 phase = .connected
                 generatingReply = true
             }
@@ -2859,9 +4134,21 @@ private struct CallDemoView: View {
             else { startListeningIfNeeded() }
         }
         .onChange(of: player.isPlaying) { _, isPlaying in
-            if !isPlaying { startListeningIfNeeded() }
+            if !isPlaying {
+                if hangupAfterPlayback { scheduleGentleHangup() }
+                startListeningIfNeeded()
+            }
+        }
+        .onChange(of: softVoiceEnabled) { _, enabled in player.setVolume(enabled ? 0.52 : 1) }
+        .onChange(of: speechRecognition.transcript) { _, transcript in
+            if !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                hangupTask?.cancel()
+                hangupTask = nil
+                hangupAfterPlayback = false
+            }
         }
         .onDisappear {
+            hangupTask?.cancel()
             speechRecognition.stop()
             Task { await finishCallIfNeeded() }
         }
@@ -2926,6 +4213,12 @@ private struct CallDemoView: View {
                 VStack(spacing: 3) {
                     Text("沈屿")
                         .font(.system(size: 16, weight: .semibold))
+                    if !incomingReason.isEmpty {
+                        Text(incomingReason)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.black.opacity(0.50))
+                            .lineLimit(1)
+                    }
                     TimelineView(.periodic(from: .now, by: 1)) { timeline in
                         Text(callDuration(at: timeline.date))
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
@@ -3002,9 +4295,10 @@ private struct CallDemoView: View {
                         .padding(.horizontal, 25)
                 }
                 HStack(spacing: 10) {
-                    callControl(title: muted ? "已静音" : "静音", icon: muted ? "mic.slash.fill" : "mic.fill", selected: muted) { muted.toggle() }
-                    callAction(title: "挂断", icon: "phone.down.fill", color: Color(red: 0.92, green: 0.25, blue: 0.31)) { Task { await leaveCall() } }
-                    callControl(title: speakerOn ? "扬声器" : "听筒", icon: speakerOn ? "speaker.wave.2.fill" : "speaker.fill", selected: speakerOn) { speakerOn.toggle() }
+                    callControl(title: muted ? "已静音" : "静音", icon: muted ? "mic.slash.fill" : "mic.fill", selected: muted, width: 72) { muted.toggle() }
+                    callControl(title: softVoiceEnabled ? "轻声已开" : "轻声", icon: "moon.zzz.fill", selected: softVoiceEnabled, width: 72) { softVoiceEnabled.toggle() }
+                    callAction(title: "挂断", icon: "phone.down.fill", color: Color(red: 0.92, green: 0.25, blue: 0.31), width: 84) { Task { await leaveCall() } }
+                    callControl(title: speakerOn ? "扬声器" : "听筒", icon: speakerOn ? "speaker.wave.2.fill" : "speaker.fill", selected: speakerOn, width: 72) { speakerOn.toggle() }
                 }
             }
             .padding(.bottom, 44)
@@ -3035,7 +4329,7 @@ private struct CallDemoView: View {
         }
     }
 
-    private func callAction(title: String, icon: String, color: Color, action: @escaping () -> Void) -> some View {
+    private func callAction(title: String, icon: String, color: Color, width: CGFloat = 104, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 10) {
                 Image(systemName: icon)
@@ -3047,10 +4341,10 @@ private struct CallDemoView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.white)
-        .frame(width: 104)
+        .frame(width: width)
     }
 
-    private func callControl(title: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func callControl(title: String, icon: String, selected: Bool, width: CGFloat = 104, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 9) {
                 Image(systemName: icon)
@@ -3059,7 +4353,7 @@ private struct CallDemoView: View {
                     .background(selected ? Color.black.opacity(0.10) : .white.opacity(0.64), in: Circle())
                 Text(title).font(.system(size: 13, weight: .medium))
             }
-            .frame(width: 104)
+            .frame(width: width)
         }
         .buttonStyle(.plain)
     }
@@ -3075,12 +4369,13 @@ private struct CallDemoView: View {
         do {
             let response: CallStartResponse
             if let incomingCallID {
-                response = try await LumiAPIClient().answerIncomingCall(incomingCallID, action: "accept", to: "default", tts: tts)
+                response = try await LumiAPIClient().answerIncomingCall(incomingCallID, action: "accept", to: "default", tts: tts, softVoice: softVoiceEnabled)
             } else {
-                response = try await LumiAPIClient().startCall(to: "default", tts: tts)
+                response = try await LumiAPIClient().startCall(to: "default", tts: tts, softVoice: softVoiceEnabled)
             }
             guard response.status == "accepted" else {
                 if let message = response.assistantMessage { onRejected(message, response.callStatusMessage) }
+                else { onEnded(nil) }
                 dismiss()
                 return
             }
@@ -3107,9 +4402,16 @@ private struct CallDemoView: View {
         }
     }
 
-    private func sendTypedTurn(_ submittedText: String? = nil) async {
+    private func sendTypedTurn(_ submittedText: String? = nil, voiceContext suppliedVoiceContext: String? = nil) async {
         let text = (submittedText ?? callDraft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let callID, !sendingTurn else { return }
+        hangupTask?.cancel()
+        hangupTask = nil
+        hangupAfterPlayback = false
+        let voiceContext = submittedText == nil ? (suppliedVoiceContext ?? speechRecognition.lastVoiceCue) : (suppliedVoiceContext ?? "")
+        if voiceContext.contains("声音比平时轻") || ["晚安", "睡了", "先睡", "去睡", "明天见"].contains(where: text.contains) {
+            softVoiceEnabled = true
+        }
         callDraft = ""
         speechRecognition.stop()
         sendingTurn = true
@@ -3123,7 +4425,7 @@ private struct CallDemoView: View {
         let tts = makeTTSSettings(enabled: true)
         if tts == nil { requestError = "请先在语音设置中填写所选服务的 API Key 和 Voice ID" }
         do {
-            let response = try await LumiAPIClient().sendCallTurn(text, callID: callID, to: "default", tts: tts)
+            let response = try await LumiAPIClient().sendCallTurn(text, callID: callID, to: "default", tts: tts, voiceContext: voiceContext, softVoice: softVoiceEnabled)
             if let index = turns.firstIndex(where: { $0.id == provisionalTurn.id }) {
                 turns[index] = response.userTurn
             } else {
@@ -3131,14 +4433,17 @@ private struct CallDemoView: View {
             }
             let assistantBubbles = splitAssistantTurn(response.assistantTurn)
             turns.append(contentsOf: assistantBubbles)
+            hangupAfterPlayback = response.hangupAfterPlayback == true
             if let encoded = response.speechAudioBase64, let data = Data(base64Encoded: encoded) {
                 let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("call-turn-\(response.assistantTurn.id.uuidString).mp3")
                 try? data.write(to: url, options: .atomic)
                 CallAudioStore.save(callID: callID, fileName: url.lastPathComponent, script: response.speechScript ?? response.assistantTurn.content, duration: response.speechDuration)
                 for bubble in assistantBubbles { callAudioFiles[bubble.id] = url }
+                player.setVolume(softVoiceEnabled ? 0.52 : 1)
                 player.play(url: url, script: response.speechScript ?? response.assistantTurn.content)
             } else if let speechError = response.speechError {
                 requestError = "这次回复没有语音：\(speechError)"
+                if hangupAfterPlayback { scheduleGentleHangup() }
             }
         } catch { requestError = error.localizedDescription }
     }
@@ -3146,7 +4451,19 @@ private struct CallDemoView: View {
     private func startListeningIfNeeded() {
         guard phase == .connected, !muted, !player.isPlaying, !sendingTurn else { return }
         speechRecognition.start { text in
-            Task { await sendTypedTurn(text) }
+            let cue = speechRecognition.lastVoiceCue
+            Task { await sendTypedTurn(text, voiceContext: cue) }
+        }
+    }
+
+    private func scheduleGentleHangup() {
+        guard hangupAfterPlayback else { return }
+        hangupTask?.cancel()
+        hangupTask = Task {
+            try? await Task.sleep(for: .seconds(18))
+            guard !Task.isCancelled, hangupAfterPlayback,
+                  speechRecognition.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            await leaveCall()
         }
     }
 
@@ -3163,6 +4480,7 @@ private struct CallDemoView: View {
     private func finishCallIfNeeded() async {
         guard !didFinishCall, let callID else { return }
         didFinishCall = true
+        UserDefaults.standard.removeObject(forKey: "lumi.callReason.\(incomingCallID?.lowercased() ?? "")")
         do {
             let response = try await LumiAPIClient().endCall(callID, to: "default")
             onEnded(response.recordMessage)
@@ -3770,5 +5088,741 @@ private struct LumiWorldBookPageStyle: ViewModifier {
             .toolbarBackground(LumiPalette.chatBackground, for: .navigationBar, .bottomBar)
             .toolbarBackground(.visible, for: .navigationBar, .bottomBar)
             .preferredColorScheme(.light)
+    }
+}
+
+private struct ChatEntryButtonAnchorKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>?
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) { value = nextValue() ?? value }
+}
+private struct ChatBottomScrollEdgeEffectModifier: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) { content.scrollEdgeEffectHidden(true, for: .bottom) }
+        else { content }
+    }
+}
+private struct ComposerGlassButtonSurface: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) { content.glassEffect(.regular.interactive(), in: Circle()) }
+        else { content.background(Color.white.opacity(0.64), in: Circle()) }
+    }
+}
+private enum RestoredChatColor {
+    static func color(_ hex: String) -> Color {
+        let raw = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        guard raw.count == 6, let rgb = UInt32(raw, radix: 16) else { return LumiPalette.textPrimary }
+        return Color(red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
+    }
+}
+
+private struct StickerThumbnail: View {
+    let sticker: RemoteSticker
+    var body: some View { StickerRemoteImage(path: sticker.image) }
+}
+
+private struct StickerRemoteImage: View {
+    let path: String
+    @State private var data: Data?
+    @State private var loadedPath: String?
+
+    var body: some View {
+        Group {
+            if let data {
+                StickerAnimatedImage(data: data)
+            } else {
+                ProgressView().tint(LumiPalette.iconPink)
+            }
+        }
+        .task(id: path) {
+            guard loadedPath != path else { return }
+            loadedPath = path
+            data = nil
+            let imageData = try? await LumiAPIClient().downloadStickerImage(path: path)
+            guard !Task.isCancelled else { return }
+            data = imageData
+        }
+    }
+}
+
+private struct StickerAnimatedImage: UIViewRepresentable {
+    let data: Data
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UIImageView {
+        let view = UIImageView()
+        view.contentMode = .scaleAspectFit
+        view.clipsToBounds = true
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .vertical)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        update(view, coordinator: context.coordinator)
+        return view
+    }
+
+    func updateUIView(_ view: UIImageView, context: Context) {
+        guard context.coordinator.data != data else { return }
+        update(view, coordinator: context.coordinator)
+    }
+
+    private func update(_ view: UIImageView, coordinator: Coordinator) {
+        coordinator.data = data
+        coordinator.decodeTask?.cancel()
+        view.stopAnimating()
+        view.image = UIImage(data: data)
+        let bytes = data
+        coordinator.decodeTask = Task { @MainActor [weak view] in
+            let image = await Task.detached(priority: .utility) { Self.image(from: bytes) }.value
+            guard !Task.isCancelled, let view else { return }
+            view.image = image
+            if image?.images != nil { view.startAnimating() }
+        }
+    }
+
+    static func dismantleUIView(_ view: UIImageView, coordinator: Coordinator) {
+        coordinator.decodeTask?.cancel()
+        view.stopAnimating()
+    }
+
+    nonisolated private static func image(from data: Data) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return UIImage(data: data) }
+        let count = CGImageSourceGetCount(source)
+        guard count > 1 else { return UIImage(data: data) }
+        let strideSize = max(1, Int(ceil(Double(count) / 90)))
+        var frames: [UIImage] = []
+        var duration: TimeInterval = 0
+        var index = 0
+        while index < count {
+            guard let cgImage = CGImageSourceCreateImageAtIndex(source, index, nil) else { index += strideSize; continue }
+            var frameDuration = 0.0
+            let end = min(count, index + strideSize)
+            for frameIndex in index..<end {
+                let properties = CGImageSourceCopyPropertiesAtIndex(source, frameIndex, nil) as? [CFString: Any]
+                let gif = properties?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+                let unclamped = (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? NSNumber)?.doubleValue ?? 0
+                let clamped = (gif?[kCGImagePropertyGIFDelayTime] as? NSNumber)?.doubleValue ?? 0
+                frameDuration += max(max(unclamped, clamped), 0.1)
+            }
+            duration += frameDuration
+            let repeats = max(1, min(12, Int((frameDuration / 0.1).rounded())))
+            let frame = UIImage(cgImage: cgImage)
+            frames.append(contentsOf: repeatElement(frame, count: repeats))
+            index = end
+        }
+        return UIImage.animatedImage(with: frames, duration: max(duration, 0.1)) ?? UIImage(data: data)
+    }
+
+    final class Coordinator {
+        var data: Data?
+        var decodeTask: Task<Void, Never>?
+    }
+}
+
+private struct StickerMetadataSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var category: String
+    let onSave: (String, String) -> Void
+
+    init(defaultCategory: String, onSave: @escaping (String, String) -> Void) {
+        _category = State(initialValue: defaultCategory)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("给这张贴纸起个名字", text: $name)
+                TextField("贴纸包", text: $category)
+            }
+            .scrollContentBackground(.hidden)
+            .background(LumiPalette.chatBackground)
+            .navigationTitle("添加贴纸")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("保存") {
+                        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let cleanCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !cleanName.isEmpty, !cleanCategory.isEmpty else { return }
+                        onSave(cleanName, cleanCategory)
+                        dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .preferredColorScheme(.light)
+    }
+}
+
+private struct StickerPreviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let sticker: RemoteSticker
+    let onSelect: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            StickerThumbnail(sticker: sticker)
+                .frame(width: 190, height: 190)
+            Text(sticker.name)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(LumiPalette.textPrimary)
+            Button("选用") { dismiss(); onSelect() }
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 26)
+                .padding(.vertical, 11)
+                .background(LumiPalette.iconPink, in: Capsule())
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(22)
+    }
+}
+
+
+private struct ChatStickerMessageImage: View {
+    static let maximumSide: CGFloat = 120
+    let localFileName: String?
+    let remotePath: String?
+    @State private var data: Data?
+    @State private var displaySize = CGSize(width: Self.maximumSide, height: Self.maximumSide)
+    var body: some View {
+        Group {
+            if let data {
+                StickerAnimatedImage(data: data)
+                    .frame(width: displaySize.width, height: displaySize.height)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                ProgressView().tint(LumiPalette.iconPink)
+            }
+        }
+        .task(id: "\(localFileName ?? "")|\(remotePath ?? "")") {
+            var loaded: Data?
+            if let localFileName {
+                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(localFileName)
+                loaded = await Task.detached(priority: .utility) { try? Data(contentsOf: url) }.value
+            }
+            if loaded == nil, let remotePath {
+                loaded = try? await LumiAPIClient().downloadStickerImage(path: remotePath)
+            }
+            guard !Task.isCancelled, let loaded else { return }
+            if let image = UIImage(data: loaded), image.size.width > 0, image.size.height > 0 {
+                let scale = Self.maximumSide / max(image.size.width, image.size.height)
+                displaySize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            }
+            data = loaded
+        }
+    }
+}
+
+// Keep the composer at one height while UIKit restores the prediction bar.
+@MainActor
+private final class ChatKeyboardGeometry: ObservableObject {
+    @Published private(set) var coveredHeight: CGFloat = 0
+    private var state = ChatKeyboardTransitionState()
+    var isSwitching: Bool { state.isSwitching }
+    private(set) var lastReportedHeight: CGFloat = 0
+    private(set) var nativeKeyboardHeight: CGFloat = 336
+    weak var window: UIWindow?
+    private var settlingTask: Task<Void, Never>?
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        for name in [UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardWillHideNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
+                MainActor.assumeIsolated { self?.receive(notification) }
+            })
+        }
+    }
+    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+
+    func beginSwitch(toPanel: Bool) {
+        settlingTask?.cancel()
+        let bottom = window?.safeAreaInsets.bottom ?? 0
+        if toPanel, coveredHeight > 150 { nativeKeyboardHeight = coveredHeight + bottom }
+        let wasClosed = coveredHeight == 0
+        state.begin(panel: toPanel, fallbackHeight: nativeKeyboardHeight - bottom)
+        if wasClosed {
+            withAnimation(.easeOut(duration: 0.25)) { coveredHeight = state.visibleHeight }
+        }
+        settlingTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+            self?.finishSwitch()
+        }
+    }
+    func finishSwitch() {
+        state.finish()
+        if coveredHeight != state.visibleHeight { coveredHeight = state.visibleHeight }
+    }
+    func dismiss() {
+        settlingTask?.cancel()
+        state.dismiss()
+        withAnimation(.easeOut(duration: 0.25)) { coveredHeight = 0 }
+    }
+    private func receive(_ notification: Notification) {
+        guard let window else { return }
+        let height: CGFloat
+        if notification.name == UIResponder.keyboardWillHideNotification { height = 0 }
+        else {
+            guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            let overlap = window.bounds.intersection(window.convert(frame, from: nil))
+            height = overlap.isNull ? 0 : max(0, overlap.height - window.safeAreaInsets.bottom)
+        }
+        lastReportedHeight = height
+        if !state.showingPanel, !state.isSwitching, height > 150 {
+            nativeKeyboardHeight = height + window.safeAreaInsets.bottom
+        }
+        state.receive(height: height)
+        guard coveredHeight != state.visibleHeight else { return }
+        let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+        withAnimation(.easeOut(duration: duration)) { coveredHeight = state.visibleHeight }
+    }
+}
+
+private final class StickerKeyboardBox: UIView {
+    static let panelColor = UIColor(red: 231 / 255, green: 229 / 255, blue: 233 / 255, alpha: 1)
+    var panelHeight: CGFloat = 336 {
+        didSet {
+            guard oldValue != panelHeight else { return }
+            frame.size.height = panelHeight
+            invalidateIntrinsicContentSize()
+        }
+    }
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: panelHeight)
+    }
+    init() {
+        super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 336))
+        backgroundColor = Self.panelColor
+        overrideUserInterfaceStyle = .light
+        autoresizingMask = [.flexibleWidth]
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
+private struct StickerInputViewBridge: UIViewRepresentable {
+    let panelActive: Bool
+    let shouldFocus: Bool
+    let keyboardGeometry: ChatKeyboardGeometry
+    let panel: AnyView
+    let panelRevision: String
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> Probe {
+        let probe = Probe()
+        probe.isUserInteractionEnabled = false
+        probe.coordinator = context.coordinator
+        return probe
+    }
+    func updateUIView(_ probe: Probe, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.scheduleUpdate(from: probe)
+    }
+    static func dismantleUIView(_ probe: Probe, coordinator: Coordinator) {
+        coordinator.retry?.cancel()
+        coordinator.restoreWork?.cancel()
+        if let input = coordinator.input, input.inputView === coordinator.box {
+            input.inputView = nil
+            if input.isFirstResponder { input.reloadInputViews() }
+        }
+        probe.coordinator = nil
+    }
+    final class Probe: UIView {
+        weak var coordinator: Coordinator?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil { coordinator?.scheduleUpdate(from: self) }
+        }
+    }
+    @MainActor
+    final class Coordinator {
+        var parent: StickerInputViewBridge
+        weak var input: UITextField?
+        private weak var probe: Probe?
+        let box = StickerKeyboardBox()
+        let host = UIHostingController(rootView: AnyView(Color.clear))
+        var retry: Task<Void, Never>?
+        var restoreWork: DispatchWorkItem?
+        private var scheduled = false
+        private var active: Bool?
+        private var revision = ""
+        private var expectedHeight: CGFloat = 336
+        private var transitionGeneration = 0
+        init(_ parent: StickerInputViewBridge) {
+            self.parent = parent
+            host.overrideUserInterfaceStyle = .light
+            host.view.backgroundColor = .clear
+            host.view.frame = box.bounds
+            host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            box.addSubview(host.view)
+        }
+        func scheduleUpdate(from probe: Probe) {
+            self.probe = probe
+            guard !scheduled else { return }
+            scheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.scheduled = false
+                guard let probe = self.probe, probe.window != nil else { return }
+                if self.input?.window == nil { self.locateTextInput(from: probe) }
+                self.updatePanel()
+                self.apply(active: self.parent.panelActive)
+            }
+        }
+        private func locateTextInput(from probe: UIView) {
+            var node = probe.superview
+            for _ in 0..<10 {
+                guard let current = node else { break }
+                if let found = findTextInput(in: current) {
+                    input = found
+                    parent.keyboardGeometry.window = found.window
+                    found.keyboardAppearance = .light
+                    return
+                }
+                node = current.superview
+            }
+        }
+        private func findTextInput(in view: UIView) -> UITextField? {
+            if let input = view as? UITextField, !input.isHidden { return input }
+            return view.subviews.compactMap { findTextInput(in: $0) }
+                .max { $0.bounds.width < $1.bounds.width }
+        }
+        private func updatePanel() {
+            guard revision != parent.panelRevision else { return }
+            revision = parent.panelRevision
+            host.rootView = parent.panel
+        }
+        private func apply(active newValue: Bool) {
+            guard let input else { return }
+            if !parent.shouldFocus, active != nil, input.isFirstResponder { input.resignFirstResponder() }
+            guard active != newValue else { return }
+            let initialSystemKeyboard = active == nil && !newValue
+            active = newValue
+            retry?.cancel()
+            restoreWork?.cancel()
+            transitionGeneration += 1
+            let generation = transitionGeneration
+            box.layer.removeAllAnimations()
+            if initialSystemKeyboard { return }
+            if newValue {
+                expectedHeight = parent.keyboardGeometry.nativeKeyboardHeight
+                box.panelHeight = expectedHeight
+                box.alpha = 0
+                box.transform = UIAccessibility.isReduceMotionEnabled ? .identity : CGAffineTransform(translationX: 0, y: 12)
+                input.inputView = box
+                if input.isFirstResponder { input.reloadInputViews() }
+                else if parent.shouldFocus { input.becomeFirstResponder() }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.active == true, self.transitionGeneration == generation else { return }
+                    UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                        self.box.alpha = 1
+                        self.box.transform = .identity
+                    }
+                }
+            } else {
+                let swap = { [weak self, weak input] in
+                    guard let self, let input, self.active == false, self.transitionGeneration == generation else { return }
+                    input.inputView = nil
+                    self.box.alpha = 1
+                    self.box.transform = .identity
+                    if input.isFirstResponder { input.reloadInputViews() }
+                    else if self.parent.shouldFocus { input.becomeFirstResponder() }
+                    if self.parent.shouldFocus { self.restorePredictionsNextTurn(input, remaining: 3) }
+                }
+                if input.isFirstResponder, input.inputView === box, parent.shouldFocus {
+                    UIView.animate(withDuration: 0.12, animations: {
+                        self.box.alpha = 0
+                        if !UIAccessibility.isReduceMotionEnabled { self.box.transform = CGAffineTransform(translationX: 0, y: 8) }
+                    }, completion: { _ in swap() })
+                } else { swap() }
+            }
+        }
+        private func restorePredictionsNextTurn(_ input: UITextField, remaining: Int) {
+            let work = DispatchWorkItem { [weak self, weak input] in
+                guard let self, let input, input.isFirstResponder, self.active == false else { return }
+                input.inputDelegate?.selectionWillChange(input)
+                input.inputDelegate?.selectionDidChange(input)
+                input.inputDelegate?.textWillChange(input)
+                input.inputDelegate?.textDidChange(input)
+                self.retry = Task { @MainActor [weak self, weak input] in
+                    do { try await Task.sleep(for: .milliseconds(130)) } catch { return }
+                    guard let self, let input, input.isFirstResponder,
+                          self.active == false, remaining > 0 else { return }
+                    let fullHeight = self.parent.keyboardGeometry.lastReportedHeight + (input.window?.safeAreaInsets.bottom ?? 0)
+                    guard fullHeight < self.expectedHeight - 2 else { return }
+                    input.reloadInputViews()
+                    self.restorePredictionsNextTurn(input, remaining: remaining - 1)
+                }
+            }
+            restoreWork = work
+            DispatchQueue.main.async(execute: work)
+        }
+    }
+}
+
+private struct ChatStickerPanel: View {
+    let library: RemoteStickerLibrary
+    let recentIDs: [String]
+    let hiddenIDs: Set<String>
+    let selectedID: String?
+    let preferredCategory: String
+    let isLoading: Bool
+    let onSelect: (RemoteSticker) -> Void
+    let onAdd: () -> Void
+    let onPreview: (RemoteSticker) -> Void
+    let onDelete: (RemoteSticker) -> Void
+    private let ink = Color(white: 0.30)
+    private var stickers: [RemoteSticker] { library.stickers.filter { !hiddenIDs.contains($0.id) } }
+    var body: some View {
+        page
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 5)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(Color(uiColor: StickerKeyboardBox.panelColor))
+            .clipShape(.rect(topLeadingRadius: 24, topTrailingRadius: 24))
+    }
+    @ViewBuilder private var page: some View {
+        if isLoading && stickers.isEmpty {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 12) {
+                    ForEach(stickers) { sticker in
+                        Button { onSelect(sticker) } label: {
+                            StickerThumbnail(sticker: sticker)
+                                .frame(height: 72)
+                                .frame(maxWidth: .infinity)
+                                .overlay(alignment: .bottomTrailing) {
+                                    if selectedID == sticker.id {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 16))
+                                            .foregroundStyle(Color(white: 0.42), .white)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(sticker.name)
+                        .contextMenu {
+                            Button { onPreview(sticker) } label: { Label("预览", systemImage: "eye") }
+                            Button(role: .destructive) { onDelete(sticker) } label: { Label("删除", systemImage: "trash") }
+                        }
+                    }
+                    Button(action: onAdd) {
+                        Image(systemName: "plus").font(.system(size: 18, weight: .light))
+                            .foregroundStyle(ink.opacity(0.75))
+                            .frame(height: 72).frame(maxWidth: .infinity)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("添加表情包到网格")
+                }
+                .padding(.horizontal, 3)
+                .padding(.top, 5)
+                .padding(.bottom, 8)
+            }
+            .scrollIndicators(.hidden)
+        }
+    }
+}
+
+@MainActor
+private struct StickerLinkImportSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("lumi.stickerLinkImportDraft") private var source = ""
+    @State private var replacementHost = ""
+    @FocusState private var focusedField: ImportField?
+    private enum ImportField: Hashable { case source, category, domain }
+    @State private var category: String
+    @State private var entries: [StickerLinkImportEntry] = []
+    @State private var images: [UUID: Data] = [:]
+    @State private var failures: [UUID: String] = [:]
+    @State private var imported = Set<UUID>()
+    @State private var validationErrors: [String] = []
+    @State private var isBusy = false
+    @State private var status = ""
+    @State private var workTask: Task<Void, Never>?
+    let onImported: (RemoteSticker) -> Void
+
+    init(defaultCategory: String, onImported: @escaping (RemoteSticker) -> Void) {
+        _category = State(initialValue: defaultCategory)
+        self.onImported = onImported
+    }
+    private var remaining: [StickerLinkImportEntry] {
+        entries.filter { images[$0.id] != nil && !imported.contains($0.id) }
+    }
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("贴纸包名称", text: $category)
+                        .focused($focusedField, equals: .category)
+                        .disabled(isBusy || !imported.isEmpty)
+                    TextEditor(text: $source)
+                        .focused($focusedField, equals: .source)
+                        .frame(minHeight: 130)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .disabled(isBusy || !imported.isEmpty)
+                        .onChange(of: source) { _, _ in
+                            entries = []; images = [:]; failures = [:]; validationErrors = []; status = ""
+                        }
+                } header: { Text("名称与图片直链") } footer: {
+                    Text("每行一张，例如：\n抱抱 https://example.com/hug.gif\n开心 https://example.com/happy.png\n也支持 [{\"name\":\"抱抱\",\"url\":\"https://…\"}]。一次最多 100 张，单张不超过 2.5 MB。")
+                }
+                Section {
+                    DisclosureGroup("批量更换图床域名") {
+                        TextField("新的图床域名，例如 img.example.com", text: $replacementHost)
+                            .focused($focusedField, equals: .domain)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        Text("仅在图片提供者确认新旧域名使用相同路径时使用。名称、图片路径和参数会保留。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Button("替换域名，保留名称与路径") {
+                            focusedField = nil
+                            do { source = try StickerLinkImportList.replacingHost(in: source, with: replacementHost) }
+                            catch { validationErrors = [error.localizedDescription] }
+                        }
+                        .disabled(isBusy || !imported.isEmpty || replacementHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+                Section {
+                    Button(entries.isEmpty ? "读取图片，核对名称" : "重新读取预览") {
+                        workTask = Task { await prepare() }
+                    }
+                    .disabled(isBusy || source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !imported.isEmpty)
+                    ForEach(Array(validationErrors.enumerated()), id: \.offset) { _, error in
+                        Text(error).font(.footnote).foregroundStyle(.red)
+                    }
+                    if !status.isEmpty {
+                        HStack {
+                            if isBusy { ProgressView() }
+                            Text(status).font(.footnote)
+                        }
+                    }
+                }
+                if !entries.isEmpty {
+                    Section("逐项核对 · 已导入 \(imported.count)/\(entries.count)") {
+                        ForEach(entries) { entry in
+                            HStack(spacing: 12) {
+                                if let data = images[entry.id], let image = UIImage(data: data) {
+                                    Image(uiImage: image).resizable().scaledToFit()
+                                        .frame(width: 48, height: 48)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                                } else {
+                                    Image(systemName: "photo").foregroundStyle(.secondary).frame(width: 48, height: 48)
+                                }
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(entry.name).font(.body)
+                                    Text(entry.url.host ?? "").font(.caption).foregroundStyle(.secondary)
+                                    if let error = failures[entry.id] { Text(error).font(.caption).foregroundStyle(.red) }
+                                }
+                                Spacer(minLength: 0)
+                                if imported.contains(entry.id) { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+                            }
+                        }
+                    }
+                    Section {
+                        Button("导入 \(remaining.count) 张已核对图片") {
+                            workTask = Task { await importImages() }
+                        }
+                        .disabled(isBusy || remaining.isEmpty || category.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+            .navigationTitle("批量导入直链")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(isBusy ? "停止" : "完成") {
+                        if isBusy { workTask?.cancel() } else { dismiss() }
+                    }
+                }
+            }
+            .interactiveDismissDisabled(isBusy)
+        }
+        .preferredColorScheme(.light)
+        .onDisappear { workTask?.cancel() }
+    }
+    private func prepare() async {
+        focusedField = nil
+        let parsed = StickerLinkImportList.parse(source)
+        validationErrors = parsed.errors
+        guard parsed.errors.isEmpty else { return }
+        entries = parsed.entries
+        images = [:]; failures = [:]
+        isBusy = true
+        defer { isBusy = false }
+        var totalBytes = 0
+        var failedDomains: [String: String] = [:]
+        for (index, entry) in entries.enumerated() {
+            if Task.isCancelled { break }
+            status = "读取 \(index + 1)/\(entries.count)：\(entry.name)"
+            if let host = entry.url.host?.lowercased(), let message = failedDomains[host] {
+                failures[entry.id] = message
+                continue
+            }
+            do {
+                let data = try await StickerLinkImageLoader.load(entry.url)
+                guard UIImage(data: data) != nil else { throw LumiAPIError.server("图片无法解码，请换一个直链。") }
+                guard totalBytes + data.count <= 40_000_000 else { throw LumiAPIError.server("本批预览已达 40 MB，请分批导入。") }
+                images[entry.id] = data
+                totalBytes += data.count
+            } catch {
+                if Task.isCancelled { break }
+                let message = StickerLinkImageLoader.failureMessage(error, url: entry.url)
+                failures[entry.id] = message
+                if StickerLinkImageLoader.domainFailure(error), let host = entry.url.host?.lowercased() { failedDomains[host] = message }
+            }
+        }
+        status = images.isEmpty
+            ? "未读取到图片，请查看下方原因。清单已自动保存，可以修正链接后重试。"
+            : "已读取 \(images.count)/\(entries.count) 张，请核对图片旁的名称后导入。"
+    }
+    private func importImages() async {
+        focusedField = nil
+        let cleanCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanCategory.isEmpty, cleanCategory.count <= 40 else {
+            validationErrors = ["贴纸包名称需为 1–40 字。"]
+            return
+        }
+        isBusy = true
+        defer { isBusy = false }
+        let pending = remaining
+        for (index, entry) in pending.enumerated() {
+            if Task.isCancelled { break }
+            guard let data = images[entry.id], let mimeType = StickerImageFormat.mimeType(data) else { continue }
+            status = "导入 \(index + 1)/\(pending.count)：\(entry.name)"
+            do {
+                let uploaded = try await LumiAPIClient().uploadSticker(name: entry.name, category: cleanCategory, data: data, mimeType: mimeType)
+                let sticker = RemoteSticker(id: uploaded.id, name: entry.name, category: cleanCategory, image: uploaded.image, mimeType: uploaded.mimeType, createdAt: uploaded.createdAt)
+                imported.insert(entry.id)
+                failures.removeValue(forKey: entry.id)
+                onImported(sticker)
+            } catch {
+                if Task.isCancelled { break }
+                failures[entry.id] = "导入失败：\(error.localizedDescription)"
+            }
+        }
+        status = "已导入 \(imported.count)/\(entries.count) 张。\(remaining.isEmpty ? "" : "未成功的图片可以继续重试，已成功的不会重复导入。")"
+    }
+}
+
+/// Animate only the newly revealed row; the history stack keeps its existing layout.
+private struct ChatReplyArrival: ViewModifier {
+    let isNewReply: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var appeared = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isNewReply && !appeared ? 0 : 1)
+            .offset(y: isNewReply && !appeared && !reduceMotion ? 8 : 0)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: appeared)
+            .onAppear { appeared = true }
     }
 }

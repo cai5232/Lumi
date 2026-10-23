@@ -11,16 +11,33 @@ private struct MessageMediaRecord: Codable {
 }
 
 @MainActor
+final class ChatStreamState: ObservableObject {
+    @Published var text = ""
+}
+
+@MainActor
 final class ChatViewModel: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var draft = ""
     @Published var isSending = false
+    @Published private(set) var isAwaitingReply = false
+    @Published private(set) var pendingReplyMessageIDs: Set<UUID> = []
+    @Published private(set) var arrivingReplyMessageID: UUID?
+    let stream = ChatStreamState()
+    private(set) var streamingText: String {
+        get { stream.text }
+        set { stream.text = newValue }
+    }
+    @Published private(set) var pendingOptionPick: ChatOptionPick?
     @Published var errorMessage: String?
     @Published var memoryNotice: String?
     @Published private(set) var isLoadingOlderHistory = false
+    @Published private(set) var contextUsagePercentage: Int?
+    @Published private(set) var assistantRemark = ""
+    @Published private(set) var aiRemark = ""
 
     var instantCommandThreadID: String? { shouldLoadFromServer ? chatID : nil }
-    private let chatID: String
+    let chatID: String
     private let api: LumiAPIClient
     private let shouldLoadFromServer: Bool
     private var localConversationURL: URL {
@@ -31,6 +48,12 @@ final class ChatViewModel: ObservableObject {
     }
     private var nextHistoryBefore: Date?
     private var historyFullyLoaded = false
+    private let conversationWriteQueue = DispatchQueue(label: "lumi.conversation.persistence", qos: .utility)
+    private static var cachedMediaRecords: [String: MessageMediaRecord]?
+    private var isLoadingRemoteHistory = false
+    private var takeoutPollingTask: Task<Void, Never>?
+    private var pendingStreamText = ""
+    private var streamFlushTask: Task<Void, Never>?
 
     static func currentModelRoute(defaults: UserDefaults = .standard) throws -> (provider: String, model: String, customProvider: LumiCustomAPIRequestConfig?) {
         var activeCustomID = defaults.string(forKey: "lumi.activeAPIProviderID") ?? ""
@@ -64,7 +87,12 @@ final class ChatViewModel: ObservableObject {
     }
 
     func load(waitForRemote: Bool = true) async {
-        let localMessages = loadLocalConversation().map(restoreMedia)
+        guard !isLoadingRemoteHistory, !isSending else { return }
+        isLoadingRemoteHistory = true
+        defer { isLoadingRemoteHistory = false }
+        Task { await refreshContextUsage() }
+        Task { await loadRemarks() }
+        let localMessages = (await loadLocalConversation()).map(restoreMedia)
         if messages.isEmpty, !localMessages.isEmpty {
             messages = Self.deduplicateMessages(localMessages)
         }
@@ -78,7 +106,12 @@ final class ChatViewModel: ObservableObject {
         }
         do {
             let thread = try await api.fetchThread(id: chatID, limit: 100)
-            let loaded = thread.messages.map(restoreMedia)
+            let identities = Dictionary(messages.map { ($0.id, $0.renderIdentity) }, uniquingKeysWith: { first, _ in first })
+            let loaded = thread.messages.map { message in
+                var restored = restoreMedia(for: message)
+                restored.renderID = identities[message.id]
+                return restored
+            }
             let remoteMessages = Self.deduplicateHTMLCards(loaded.flatMap { message in
                 let restored = message
                 return restored.role == .assistant && restored.contentType != "call_record" && restored.contentType != "call_status" ? assistantBubbles(from: restored) : [restored]
@@ -143,38 +176,91 @@ final class ChatViewModel: ObservableObject {
         }
     }
 
-    func send(imageBase64: String? = nil, imageFileName: String? = nil, imagesBase64: [String] = [], imageFileNames: [String] = [], galleryImageIDs: [String] = [], tts: TTSRequestSettings? = nil, emojiCatalog: [String: [String]] = [:], contentType: String? = nil, context: String? = nil) async {
+    private func receiveStreamText(_ fragment: String) {
+        guard !fragment.isEmpty else { return }
+        pendingStreamText += fragment
+        guard streamFlushTask == nil else { return }
+        streamFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled else { return }
+            self?.flushStreamText()
+        }
+    }
+
+    private func flushStreamText() {
+        streamFlushTask?.cancel()
+        streamFlushTask = nil
+        guard !pendingStreamText.isEmpty else { return }
+        streamingText += pendingStreamText
+        pendingStreamText = ""
+    }
+
+    func send(imageBase64: String? = nil, imageFileName: String? = nil, imagesBase64: [String] = [], imageFileNames: [String] = [], galleryImageIDs: [String] = [], tts: TTSRequestSettings? = nil, emojiCatalog: [String: [String]] = [:], contentType: String? = nil, stickerImageURL: String? = nil, stickerName: String? = nil) async {
         let typedContent = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let encodedImages = imagesBase64.isEmpty ? imageBase64.map { [$0] } ?? [] : imagesBase64
         let localImages = imageFileNames.isEmpty ? imageFileName.map { [$0] } ?? [] : imageFileNames
-        guard (!typedContent.isEmpty || !encodedImages.isEmpty || !galleryImageIDs.isEmpty), !isSending else { return }
-        let content = typedContent.isEmpty ? (encodedImages.isEmpty ? "想和你聊聊这张照片。" : (encodedImages.count > 1 ? "看看这些照片。" : "请描述这张图片。")) : typedContent
+        let hasSticker = contentType == "sticker" && stickerImageURL != nil
+        guard (!typedContent.isEmpty || !encodedImages.isEmpty || !galleryImageIDs.isEmpty || hasSticker), !isSending else { return }
+        let content = typedContent.isEmpty && hasSticker ? "[表情: \(stickerName ?? "表情包")]" : typedContent.isEmpty ? (encodedImages.isEmpty ? "想和你聊聊这张照片。" : (encodedImages.count > 1 ? "看看这些照片。" : "请描述这张图片。")) : typedContent
+        let selectedPick = pendingOptionPick.flatMap { $0.text == content ? $0 : nil }
+        pendingOptionPick = nil
         draft = ""
+        streamFlushTask?.cancel()
+        streamFlushTask = nil
+        pendingStreamText = ""
+        streamingText = ""
         let optimisticID = UUID()
-        messages.append(ChatMessage(id: optimisticID, role: .user, content: content, createdAt: .now, localImageFileName: localImages.first, localImageFileNames: localImages, contentType: contentType))
+        let pickAttachments = selectedPick.map { [ChatMessageAttachment(type: "pick", of: $0.msgID, idx: $0.idx, text: $0.text)] } ?? []
+        messages.append(ChatMessage(id: optimisticID, role: .user, content: content, createdAt: .now, localImageFileName: localImages.first, localImageFileNames: localImages, contentType: contentType, stickerImageURL: stickerImageURL, attachments: pickAttachments))
         if let first = localImages.first { saveMedia(for: optimisticID, record: MessageMediaRecord(audio: nil, image: first, images: localImages, duration: nil, speechScript: nil)) }
         saveLocalConversation()
         isSending = true
+        isAwaitingReply = true
+        // Let SwiftUI render the optimistic user bubble and sending indicator
+        // before request construction and network work begin on the main actor.
+        await Task.yield()
         let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Lumi response generation")
         defer {
             isSending = false
+            isAwaitingReply = false
+            takeoutPollingTask?.cancel()
             if backgroundTask != .invalid {
                 UIApplication.shared.endBackgroundTask(backgroundTask)
             }
         }
         do {
+            takeoutPollingTask = Task { [api] in
+                while !Task.isCancelled {
+                    try? await api.pollTakeoutBridge()
+                    try? await Task.sleep(for: .seconds(1.5))
+                }
+            }
             let route = try Self.currentModelRoute(defaults: .standard)
-            let response = try await api.sendMessage(content, to: chatID, images: encodedImages, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: route.provider, model: route.model, customProvider: route.customProvider, contentType: contentType, context: context)
+            let response = try await api.sendMessage(content, to: chatID, images: encodedImages, galleryImageIDs: galleryImageIDs, emojiCatalog: emojiCatalog, tts: tts, provider: route.provider, model: route.model, customProvider: route.customProvider, contentType: contentType, stickerImageURL: stickerImageURL, stickerName: stickerName, context: stickerName.map { "用户这次发送的表情包名称是：\($0)。这是用户为表情包填写的文字名称，请结合名称和配文理解；名称不等于图片视觉识别。" }, pick: selectedPick, onTextDelta: { [weak self] fragment in
+                self?.receiveStreamText(fragment)
+            })
+            flushStreamText()
+            isAwaitingReply = false
             var confirmedUserMessage = response.userMessage
             confirmedUserMessage.localImageFileName = localImages.first
             confirmedUserMessage.localImageFileNames = localImages
+            if let stickerImageURL { confirmedUserMessage.stickerImageURL = stickerImageURL }
             if let optimisticIndex = messages.firstIndex(where: { $0.id == optimisticID }) {
+                confirmedUserMessage.renderID = messages[optimisticIndex].renderIdentity
                 messages[optimisticIndex] = confirmedUserMessage
             } else if !messages.contains(where: { $0.id == confirmedUserMessage.id }) {
                 messages.append(confirmedUserMessage)
             }
             if let first = localImages.first { saveMedia(for: confirmedUserMessage.id, record: MessageMediaRecord(audio: nil, image: first, images: localImages, duration: nil, speechScript: nil)) }
             saveLocalConversation()
+            if let updatedOptionMessage = response.updatedOptionMessage {
+                if let optionIndex = messages.lastIndex(where: { $0.attachments.contains(where: { $0.type == "options" }) }) {
+                    messages[optionIndex].attachments = updatedOptionMessage.attachments
+                } else if let index = messages.firstIndex(where: { $0.id == updatedOptionMessage.id }) {
+                    messages[index].attachments = updatedOptionMessage.attachments
+                }
+                saveLocalConversation()
+            }
             if response.memorySaved == true {
                 memoryNotice = "-------沈屿记下了这一刻-------"
                 Task {
@@ -199,12 +285,12 @@ final class ChatViewModel: ObservableObject {
             if let speechError = response.speechError {
                 errorMessage = "AI 回复了，但语音没有生成：\(speechError)"
             }
-            let bubbles = assistantBubbles(from: assistantMessage)
-            for (index, bubble) in bubbles.enumerated() {
-                if index > 0 { try? await Task.sleep(for: .milliseconds(260)) }
-                messages.append(bubble)
-                saveLocalConversation()
+            if assistantMessage.contentType == "sticker" || !assistantMessage.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || assistantMessage.audioFileName != nil || !assistantMessage.attachments.isEmpty || !assistantMessage.toolCalls.isEmpty {
+                let bubbles = assistantBubbles(from: assistantMessage)
+                await revealReply(bubbles)
             }
+            streamingText = ""
+            await refreshContextUsage()
             // New servers persist these cards with the conversation, so they
             // survive a restart and appear in every client. Keep the fallback
             // for an older server during rollout.
@@ -225,7 +311,77 @@ final class ChatViewModel: ObservableObject {
                     saveLocalConversation()
                 }
             }
-        } catch { errorMessage = friendlyError(error); saveLocalConversation() }
+            if let aiRemark = response.aiRemark {
+                self.aiRemark = aiRemark
+            } else {
+                await loadRemarks()
+            }
+        } catch {
+            flushStreamText()
+            let partial = streamingText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !partial.isEmpty {
+                messages.append(ChatMessage(id: UUID(), role: .assistant, content: partial, createdAt: .now))
+                saveLocalConversation()
+            }
+            streamingText = ""
+            errorMessage = friendlyError(error)
+            saveLocalConversation()
+        }
+    }
+
+    private func revealReply(_ bubbles: [ChatMessage]) async {
+        guard !bubbles.isEmpty else { return }
+        pendingReplyMessageIDs = Set(bubbles.map(\.id))
+        // Save the complete turn before presentation starts, so leaving the app
+        // during the animation cannot discard the bubbles still waiting to appear.
+        messages.append(contentsOf: bubbles)
+        saveLocalConversation()
+        defer { pendingReplyMessageIDs.removeAll() }
+        for (index, bubble) in bubbles.enumerated() {
+            if index > 0 {
+                do { try await Task.sleep(for: .milliseconds(500)) }
+                catch { break }
+            }
+            arrivingReplyMessageID = bubble.id
+            pendingReplyMessageIDs.remove(bubble.id)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(250))
+                if self?.arrivingReplyMessageID == bubble.id {
+                    self?.arrivingReplyMessageID = nil
+                }
+            }
+        }
+    }
+
+    func refreshContextUsage() async {
+        guard let usage = try? await api.fetchContextUsage() else { return }
+        contextUsagePercentage = usage.percentage
+    }
+
+    func loadRemarks() async {
+        guard let state = try? await api.fetchChatRemarks(for: chatID) else { return }
+        assistantRemark = state.assistantRemark
+        aiRemark = state.aiRemark
+    }
+
+    func saveAssistantRemark(_ remark: String) async throws {
+        let state = try await api.saveChatRemark(remark, for: chatID)
+        assistantRemark = state.assistantRemark
+        aiRemark = state.aiRemark
+    }
+
+    func sendOptionPick(messageID: UUID, index: Int, text: String) {
+        guard !isSending else { return }
+        pendingOptionPick = ChatOptionPick(msgID: messageID.uuidString, idx: index, text: text)
+        draft = text
+        Task { await send() }
+    }
+
+    func sendOptionReply(_ text: String) {
+        guard !isSending else { return }
+        pendingOptionPick = nil
+        draft = text
+        Task { await send() }
     }
 
     func sendWatchMessage(_ text: String, imageBase64: String) async -> String? {
@@ -266,30 +422,41 @@ final class ChatViewModel: ObservableObject {
         try? await api.updateScreenShareDecision("rejected")
     }
 
-    private func loadLocalConversation() -> [ChatMessage] {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let data = try? Data(contentsOf: localConversationURL),
-              let saved = try? decoder.decode([ChatMessage].self, from: data) else { return [] }
-        return saved
+    private func loadLocalConversation() async -> [ChatMessage] {
+        let source = localConversationURL
+        return await Task.detached(priority: .userInitiated) {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            guard let data = try? Data(contentsOf: source),
+                  let saved = try? decoder.decode([ChatMessage].self, from: data) else { return [] }
+            return saved
+        }.value
     }
 
     private func saveLocalConversation() {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(messages) else { return }
-        try? data.write(to: localConversationURL, options: .atomic)
+        let snapshot = messages
+        let destination = localConversationURL
+        // One serial queue preserves write order without encoding the entire history on the UI thread.
+        conversationWriteQueue.async {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            guard let data = try? encoder.encode(snapshot) else { return }
+            try? data.write(to: destination, options: .atomic)
+        }
     }
 
     private func mediaRecords() -> [String: MessageMediaRecord] {
-        guard let data = UserDefaults.standard.data(forKey: "lumi.messageMedia"),
-              let records = try? JSONDecoder().decode([String: MessageMediaRecord].self, from: data) else { return [:] }
+        if let cachedMediaRecords = Self.cachedMediaRecords { return cachedMediaRecords }
+        let records = UserDefaults.standard.data(forKey: "lumi.messageMedia")
+            .flatMap { try? JSONDecoder().decode([String: MessageMediaRecord].self, from: $0) } ?? [:]
+        Self.cachedMediaRecords = records
         return records
     }
 
     private func saveMedia(for id: UUID, record: MessageMediaRecord) {
         var records = mediaRecords()
         records[id.uuidString] = record
+        Self.cachedMediaRecords = records
         if let data = try? JSONEncoder().encode(records) { UserDefaults.standard.set(data, forKey: "lumi.messageMedia") }
     }
 
@@ -309,7 +476,7 @@ final class ChatViewModel: ObservableObject {
         // in the same model thread for memory, while the co-watch screen renders
         // its own local conversation transcript.
         if message.contentType == "together_watch" || message.contentType == "together_music" { return [message] }
-        if message.contentType == "call_record" { return [message] }
+        if message.contentType == "call_record" || message.contentType == "sticker" { return [message] }
         if message.contentType == "screen_request" || message.contentType == "screen_status" { return [message] }
         // Gallery collection cards are server-persisted messages. Never run
         // their JSON payload through the ordinary text-bubble splitter, or a
@@ -341,8 +508,8 @@ final class ChatViewModel: ObservableObject {
         let storedThinking = message.thinking?.trimmingCharacters(in: .whitespacesAndNewlines)
         let thinking = storedThinking?.isEmpty == false ? storedThinking : extractThinking(from: message.content)
         let visible = message.content
-            .replacingOccurrences(of: #"(?is)<thinking>.*?</thinking>"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)</?thinking>"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?is)<(thinking|think|analysis|reasoning)\b[^>]*>.*?</\1>"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?i)</?(thinking|think|analysis|reasoning)\b[^>]*>"#, with: "", options: .regularExpression)
         let hasStoredHTML = message.htmlContent != nil
         let htmlContent = message.htmlContent ?? ((message.contentType == "html" || Self.isHTML(visible)) ? visible : nil)
         let textContent = hasStoredHTML ? visible : (htmlContent == nil ? visible : "")
@@ -355,20 +522,32 @@ final class ChatViewModel: ObservableObject {
         let groupedCode = Self.looksLikeCode(textContent)
         var bubbles: [ChatMessage]
         if groupedCode {
-            bubbles = [ChatMessage(id: message.id, role: .assistant, content: textContent, createdAt: message.createdAt, thinking: thinking)]
+            bubbles = [ChatMessage(id: message.id, role: .assistant, content: textContent, createdAt: message.createdAt, thinking: thinking, toolCalls: message.toolCalls)]
         } else {
             bubbles = lines.enumerated().map { index, line in
-                ChatMessage(id: index == 0 && message.audioFileName == nil ? message.id : UUID(), role: .assistant, content: line, createdAt: message.createdAt, thinking: index == 0 ? thinking : nil)
+                ChatMessage(id: index == 0 && message.audioFileName == nil ? message.id : Self.bubbleID(for: message.id, index: index + 1), role: .assistant, content: line, createdAt: message.createdAt, thinking: index == 0 ? thinking : nil, attachments: index == 0 && message.audioFileName == nil ? message.attachments : [])
             }
         }
         if let htmlContent {
             bubbles.append(ChatMessage(id: Self.cardID(for: message.id), role: .assistant, content: "", createdAt: message.createdAt.addingTimeInterval(0.001), contentType: "html", htmlContent: htmlContent, htmlTitle: message.htmlTitle ?? "HTML 页面"))
         }
         if let audioFileName = message.audioFileName {
-            bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt.addingTimeInterval(0.002), audioFileName: audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript))
+            let audioBubbleID = bubbles.contains(where: { $0.id == message.id })
+                ? Self.bubbleID(for: message.id, index: bubbles.count + 1)
+                : message.id
+            bubbles.append(ChatMessage(id: audioBubbleID, role: .assistant, content: "", createdAt: message.createdAt.addingTimeInterval(0.002), audioFileName: audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript, attachments: message.attachments))
         }
         if bubbles.isEmpty, message.audioFileName != nil {
-            bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, thinking: thinking, audioFileName: message.audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript))
+            bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, thinking: thinking, audioFileName: message.audioFileName, speechDuration: message.speechDuration, speechScript: message.speechScript, attachments: message.attachments))
+        }
+        if bubbles.isEmpty, !message.toolCalls.isEmpty {
+            bubbles.append(ChatMessage(id: message.id, role: .assistant, content: "", createdAt: message.createdAt, toolCalls: message.toolCalls))
+        }
+        if let thinking, !bubbles.isEmpty, bubbles[0].thinking == nil {
+            bubbles[0].thinking = thinking
+        }
+        if !message.toolCalls.isEmpty, let lastIndex = bubbles.indices.last {
+            bubbles[lastIndex].toolCalls = message.toolCalls
         }
         // A reply that only contained the private dial marker (for example
         // `⟪拨号:…⟫`) must not leave an empty white chat bubble behind. The call
@@ -403,6 +582,16 @@ final class ChatViewModel: ObservableObject {
         let closingTag = #"(?i)</(?:"# + tags + #")\s*>"#
         return source.range(of: openingTag, options: .regularExpression) != nil
             && source.range(of: closingTag, options: .regularExpression) != nil
+    }
+
+    private static func bubbleID(for messageID: UUID, index: Int) -> UUID {
+        var bytes = messageID.uuid
+        withUnsafeMutableBytes(of: &bytes) { buffer in
+            buffer[0] ^= 0xB7
+            let value = UInt64(index)
+            for offset in 0..<8 { buffer[8 + offset] ^= UInt8(truncatingIfNeeded: value >> (offset * 8)) }
+        }
+        return UUID(uuid: bytes)
     }
 
     private static func cardID(for messageID: UUID) -> UUID {
@@ -457,9 +646,9 @@ final class ChatViewModel: ObservableObject {
     }
 
     private func extractThinking(from content: String) -> String? {
-        guard let range = content.range(of: #"(?is)<thinking>(.*?)</thinking>"#, options: .regularExpression) else { return nil }
+        guard let range = content.range(of: #"(?is)<(thinking|think|analysis|reasoning)\b[^>]*>(.*?)</\1>"#, options: .regularExpression) else { return nil }
         return String(content[range])
-            .replacingOccurrences(of: #"(?is)^<thinking>|</thinking>$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"(?is)^<(thinking|think|analysis|reasoning)\b[^>]*>|</(thinking|think|analysis|reasoning)>$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

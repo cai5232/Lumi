@@ -30,7 +30,6 @@ struct LumiApp: App {
 @MainActor
 private struct LumiRootView: View {
     @StateObject private var model: ChatViewModel
-    @State private var showingChat = false
     @State private var showingSettings = false
     @State private var showingFood = false
     @State private var showingGallery = false
@@ -39,8 +38,10 @@ private struct LumiRootView: View {
     @State private var showingTogetherWatch = false
     @State private var showingTogetherListen = false
     @State private var showingRadio = false
+    @State private var showingSleepRadio = false
     @State private var showingLettersMap = false
     @State private var showingCalendar = false
+    @State private var showingDrawer = false
 
     init() {
         _model = StateObject(wrappedValue: ChatViewModel(
@@ -54,63 +55,64 @@ private struct LumiRootView: View {
     }
 
     var body: some View {
-        LumiHomeView(openChat: { showingChat = true }, openSettings: { showingSettings = true }, openFood: { showingFood = true }, openGallery: { showingGallery = true }, openDiary: { showingDiary = true }, openHeartTrace: { showingHeartTrace = true }, openTogetherWatch: { showingTogetherWatch = true }, openTogetherListen: { showingTogetherListen = true }, openRadio: { showingRadio = true }, openLettersMap: { showingLettersMap = true }, openCalendar: { showingCalendar = true })
-            .fullScreenCover(isPresented: $showingChat) {
-                ZStack {
-                    ChatDetailView(model: model, onClose: { showingChat = false })
-                    DraggableClawdPet(assetName: model.isSending ? "clawd-working-thinking" : "clawd-idle-follow")
-                }
-            }
-            .fullScreenCover(isPresented: $showingSettings) {
-                SettingsView()
-            }
-            .fullScreenCover(isPresented: $showingFood) {
-                FoodNotebookView()
-            }
-            .fullScreenCover(isPresented: $showingGallery) {
-                TogetherView()
-            }
-            .fullScreenCover(isPresented: $showingDiary) {
-                TogetherView(startOnDiary: true)
-            }
-            .fullScreenCover(isPresented: $showingHeartTrace) {
-                HeartTraceView(onClose: { showingHeartTrace = false })
-            }
-            .fullScreenCover(isPresented: $showingTogetherWatch) {
-                TogetherWatchView(onAskAboutVideo: { _, text, imageBase64 in
-                    if model.messages.isEmpty { await model.load() }
-                    return await model.sendWatchMessage(text, imageBase64: imageBase64)
+        NavigationStack {
+            ZStack {
+                ChatDetailView(model: model, onOpenEntry: { entry in
+                    switch entry {
+                    case .drawer: showingDrawer = true
+                    case .sleepRadio: showingSleepRadio = true
+                    case .heartTrace: showingHeartTrace = true
+                    case .diary: showingDiary = true
+                    case .gallery: showingGallery = true
+                    case .together: showingTogetherWatch = true
+                    case .treasureMap, .footsteps: showingLettersMap = true
+                    case .food: showingFood = true
+                    case .settings: showingSettings = true
+                    }
                 })
+                DraggableClawdPet(assetName: model.isSending ? "clawd-working-thinking" : "clawd-idle-follow")
             }
-            .fullScreenCover(isPresented: $showingTogetherListen) {
-                TogetherListenView(onOpenChat: {
-                    showingTogetherListen = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showingChat = true }
-                })
-            }
-            .fullScreenCover(isPresented: $showingRadio) {
-                RadioView()
-            }
-            .fullScreenCover(isPresented: $showingLettersMap) {
-                LettersMapView()
-            }
-            .fullScreenCover(isPresented: $showingCalendar) {
-                SharedCalendarView()
-            }
-            .onOpenURL { url in
-                guard url.scheme == "ourcalendar", url.host == "day",
-                      let dayKey = url.pathComponents.dropFirst().first else { return }
-                showingCalendar = true
-                SharedCalendarDayRouter.shared.open(dayKey: dayKey)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenSharedCalendarDay"))) { notification in
-                guard let dayKey = notification.object as? String else { return }
-                showingCalendar = true
-                SharedCalendarDayRouter.shared.open(dayKey: dayKey)
-            }
-            .overlay {
-                TogetherListenMiniPlayer { showingTogetherListen = true }
-            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarBackground(.hidden, for: .bottomBar)
+        }
+        .fullScreenCover(isPresented: $showingSettings) { SettingsView() }
+        .fullScreenCover(isPresented: $showingDrawer) {
+            LumiDrawerView(chatID: "default", onClose: { showingDrawer = false })
+        }
+        .fullScreenCover(isPresented: $showingFood) { FoodNotebookView() }
+        .fullScreenCover(isPresented: $showingGallery) { TogetherView() }
+        .fullScreenCover(isPresented: $showingDiary) { TogetherView(startOnDiary: true) }
+        .fullScreenCover(isPresented: $showingHeartTrace) {
+            HeartTraceView(onClose: { showingHeartTrace = false })
+        }
+        .fullScreenCover(isPresented: $showingTogetherWatch) {
+            TogetherWatchView(onAskAboutVideo: { _, text, imageBase64 in
+                if model.messages.isEmpty { await model.load() }
+                return await model.sendWatchMessage(text, imageBase64: imageBase64)
+            })
+        }
+        .fullScreenCover(isPresented: $showingTogetherListen) { TogetherListenView() }
+        .fullScreenCover(isPresented: $showingRadio) { RadioView() }
+        .fullScreenCover(isPresented: $showingSleepRadio) { SleepRadioView(chatModel: model) }
+        .fullScreenCover(isPresented: $showingLettersMap) { LettersMapView() }
+        .fullScreenCover(isPresented: $showingCalendar) { SharedCalendarView() }
+        .onOpenURL { url in
+            guard url.scheme == "ourcalendar", url.host == "day",
+                  let dayKey = url.pathComponents.dropFirst().first else { return }
+            showingCalendar = true
+            SharedCalendarDayRouter.shared.open(dayKey: dayKey)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenSharedCalendarDay"))) { notification in
+            guard let dayKey = notification.object as? String else { return }
+            showingCalendar = true
+            SharedCalendarDayRouter.shared.open(dayKey: dayKey)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name("OpenSleepRadio"))) { _ in
+            showingSleepRadio = true
+        }
+        .overlay {
+            TogetherListenMiniPlayer { showingTogetherListen = true }
+        }
     }
 }
 
@@ -347,6 +349,8 @@ final class LumiAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
         #else
         let environment = "production"
         #endif
+        UserDefaults.standard.set(token, forKey: "lumi.apnsToken")
+        UserDefaults.standard.set(environment, forKey: "lumi.apnsEnvironment")
         Task {
             do { try await LumiAPIClient().registerPushToken(token, environment: environment) }
             catch { print("Push token registration failed: \(error.localizedDescription)") }
@@ -376,6 +380,9 @@ final class LumiAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
         if response.notification.request.content.userInfo["kind"] as? String == "screen_request" {
             UserDefaults.standard.set(true, forKey: "lumi.screenRequestPending")
             NotificationCenter.default.post(name: Notification.Name("LumiScreenRequest"), object: nil)
+        }
+        if response.notification.request.content.userInfo["kind"] as? String == "sleep_radio_ready" {
+            NotificationCenter.default.post(name: Notification.Name("OpenSleepRadio"), object: nil)
         }
     }
 }
@@ -416,6 +423,8 @@ final class LumiNativeCalls: NSObject, PKPushRegistryDelegate, CXProviderDelegat
         #else
         let environment = "production"
         #endif
+        UserDefaults.standard.set(token, forKey: "lumi.voipToken")
+        UserDefaults.standard.set(environment, forKey: "lumi.voipEnvironment")
         Task {
             do { try await LumiAPIClient().registerVoIPToken(token, environment: environment) }
             catch { print("VoIP token registration failed: \(error.localizedDescription)") }
@@ -433,6 +442,8 @@ final class LumiNativeCalls: NSObject, PKPushRegistryDelegate, CXProviderDelegat
             completion()
             return
         }
+        UserDefaults.standard.set(payload.dictionaryPayload["reason"] as? String ?? "", forKey: "lumi.callReason.\(callID.lowercased())")
+        UserDefaults.standard.set(payload.dictionaryPayload["expiresAt"] as? String ?? "", forKey: "lumi.callExpiresAt.\(callID.lowercased())")
         reportIncomingCall(callID: callID, callerName: payload.dictionaryPayload["callerName"] as? String ?? "沈屿", completion: completion)
     }
 
@@ -442,8 +453,13 @@ final class LumiNativeCalls: NSObject, PKPushRegistryDelegate, CXProviderDelegat
         reportIncomingCall(callID: callID, callerName: "沈屿")
     }
 
-    func reportServerIncomingCall(_ callID: String, callerName: String = "沈屿") {
+    func reportServerIncomingCall(_ callID: String, callerName: String = "沈屿", reason: String = "") {
+        if !reason.isEmpty { UserDefaults.standard.set(reason, forKey: "lumi.callReason.\(callID.lowercased())") }
         reportIncomingCall(callID: callID, callerName: callerName)
+    }
+
+    func setExpiry(_ expiresAt: String, for callID: String) {
+        UserDefaults.standard.set(expiresAt, forKey: "lumi.callExpiresAt.\(callID.lowercased())")
     }
 
     func isLocallyInitiatedCall(_ callID: String) -> Bool {
@@ -473,7 +489,9 @@ final class LumiNativeCalls: NSObject, PKPushRegistryDelegate, CXProviderDelegat
             }
             completion?()
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+        let expiryText = UserDefaults.standard.string(forKey: "lumi.callExpiresAt.\(normalizedCallID)") ?? ""
+        let expiry = ISO8601DateFormatter().date(from: expiryText) ?? Date().addingTimeInterval(60)
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, expiry.timeIntervalSinceNow)) { [weak self] in
             guard let self, self.ringingCallID?.lowercased() == normalizedCallID else { return }
             self.ringingCallID = nil
             self.locallyInitiatedCallIDs.remove(callID.lowercased())
@@ -509,6 +527,8 @@ final class LumiNativeCalls: NSObject, PKPushRegistryDelegate, CXProviderDelegat
         } else if !wasLocallyInitiated {
             Task { _ = try? await LumiAPIClient().answerIncomingCall(callID, action: "decline", to: "default") }
         }
+        UserDefaults.standard.removeObject(forKey: "lumi.callReason.\(callID)")
+        UserDefaults.standard.removeObject(forKey: "lumi.callExpiresAt.\(callID)")
         action.fulfill()
     }
 
