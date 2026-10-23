@@ -9,7 +9,7 @@ struct WakeEntry: TimelineEntry {
 }
 
 struct WakeProvider: TimelineProvider {
-    private let endpoint = URL(string: "https://lumi-tokyo-api.zeabur.app/v1/chats/default/activity")!
+    private let endpoint = URL(string: "https://lumi-api.yanvn.top/v1/chats/default/activity")!
 
     func placeholder(in context: Context) -> WakeEntry { WakeEntry(date: .now, lastWakeAt: nil, nextWakeAt: nil, enabled: true) }
     func getSnapshot(in context: Context, completion: @escaping (WakeEntry) -> Void) {
@@ -30,7 +30,7 @@ struct WakeProvider: TimelineProvider {
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
             let value = try JSONDecoder().decode(ActivityPayload.self, from: data)
             let settingsData: Data?
-            if let settingsResult = try? await URLSession.shared.data(from: URL(string: "https://lumi-tokyo-api.zeabur.app/v1/settings/proactive")!) {
+            if let settingsResult = try? await URLSession.shared.data(from: URL(string: "https://lumi-api.yanvn.top/v1/settings/proactive")!) {
                 settingsData = settingsResult.0
             } else {
                 settingsData = nil

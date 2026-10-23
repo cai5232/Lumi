@@ -17,7 +17,7 @@ import SwiftUI
 // ============================================================
 
 enum WidgetCalendarToken {
-    static let baseURL = "https://lumi-tokyo-api.zeabur.app/v1/calendar"
+    static let baseURL = "https://lumi-api.yanvn.top/v1/calendar"
     static var value: String {
         guard let token = Bundle.main.object(forInfoDictionaryKey: "LUMI_PUSH_API_TOKEN") as? String,
               !token.isEmpty, !token.hasPrefix("$(") else { return "" }
