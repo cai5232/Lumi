@@ -69,9 +69,14 @@ struct LumiInstantCommandCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var overdue: Bool { command.deadline.map { date >= $0 } ?? false }
+    private var commandPink: Color { Color(red: 0.88, green: 0.39, blue: 0.54) }
     private var accent: Color {
-        overdue ? Color(red: 0.69, green: 0.38, blue: 0.29)
-            : Color(red: 0.57, green: 0.45, blue: 0.49)
+        overdue ? Color(red: 0.76, green: 0.31, blue: 0.44) : commandPink
+    }
+    private var ink: Color { colorScheme == .dark ? .primary : LumiPalette.textPrimary }
+    private var secondaryInk: Color { colorScheme == .dark ? .secondary : LumiPalette.textSecondary.opacity(0.78) }
+    private var accentInk: Color {
+        colorScheme == .dark ? LumiPalette.iconPink : Color(red: 0.65, green: 0.36, blue: 0.45)
     }
     private var remaining: Double {
         guard let deadline = command.deadline, let duration = command.countdown_seconds else { return 1 }
@@ -82,13 +87,13 @@ struct LumiInstantCommandCard: View {
         Group {
             if expanded { expandedCard } else { edgePill }
         }
-        .foregroundStyle(Color.primary.opacity(0.86))
+        .foregroundStyle(ink)
         .background {
             RoundedRectangle(cornerRadius: expanded ? 26 : 20, style: .continuous)
                 .fill(.regularMaterial)
                 .overlay {
                     RoundedRectangle(cornerRadius: expanded ? 26 : 20, style: .continuous)
-                        .fill(accent.opacity(colorScheme == .dark ? 0.07 : 0.025))
+                        .fill(LumiPalette.chatBackground.opacity(colorScheme == .dark ? 0.07 : 0.92))
                 }
         }
         .overlay {
@@ -102,7 +107,7 @@ struct LumiInstantCommandCard: View {
                 .animation(.linear(duration: pressing ? 0.62 : 0.12), value: pressing)
                 .allowsHitTesting(false)
         }
-        .shadow(color: .black.opacity(colorScheme == .dark ? 0.22 : 0.07), radius: expanded ? 22 : 10, x: -2, y: expanded ? 10 : 4)
+        .shadow(color: colorScheme == .dark ? .black.opacity(0.22) : LumiPalette.iconPink.opacity(0.10), radius: expanded ? 22 : 10, x: -2, y: expanded ? 10 : 4)
         .scaleEffect(pressing ? 0.98 : 1, anchor: .trailing)
         .animation(.easeOut(duration: 0.18), value: pressing)
         .disabled(busy)
@@ -112,17 +117,17 @@ struct LumiInstantCommandCard: View {
         Button(action: onToggle) {
             VStack(spacing: 8) {
                 ZStack {
-                    Circle().stroke(accent.opacity(0.13), lineWidth: 1.6)
+                    Circle().stroke(ink.opacity(0.08), lineWidth: 1.6)
                     Circle().trim(from: 0, to: remaining)
-                        .stroke(accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                        .stroke(overdue ? accent : commandPink, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                     if busy { ProgressView().controlSize(.mini) }
-                    else { Circle().fill(accent).frame(width: 4, height: 4) }
+                    else { Circle().fill(overdue ? accent : commandPink).frame(width: 4, height: 4) }
                 }.frame(width: 20, height: 20)
                 Text(command.clock(at: date))
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(overdue ? accent : Color.primary.opacity(0.78))
+                    .foregroundStyle(overdue ? accent : ink.opacity(0.86))
             }
             .frame(width: 58, height: 76)
             .padding(.trailing, 5)
@@ -139,12 +144,12 @@ struct LumiInstantCommandCard: View {
                 Text(overdue ? "再给自己一点时间" : "即时指令")
                     .font(.system(size: 11, weight: .medium))
                     .tracking(1)
-                    .foregroundStyle(accent)
+                    .foregroundStyle(accentInk)
                 Spacer(minLength: 8)
                 Button(action: onToggle) {
                     Image(systemName: "minus")
                         .font(.system(size: 14, weight: .regular))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(secondaryInk)
                         .frame(width: 30, height: 30)
                         .contentShape(Rectangle())
                 }
@@ -166,18 +171,18 @@ struct LumiInstantCommandCard: View {
                     .font(.system(size: 38, weight: .light, design: .rounded))
                     .monospacedDigit()
                     .tracking(-1.2)
-                    .foregroundStyle(overdue ? accent : Color.primary.opacity(0.86))
+                    .foregroundStyle(overdue ? accentInk : ink)
                 Text(command.deadline == nil ? "已用时" : (overdue ? "已超时" : "剩余"))
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondaryInk)
             }
             .padding(.top, 20)
             .contentTransition(.numericText())
 
             GeometryReader { geometry in
-                Capsule().fill(accent.opacity(0.10))
+                Capsule().fill(commandPink.opacity(0.16))
                     .overlay(alignment: .leading) {
-                        Capsule().fill(accent.opacity(0.62))
+                        Capsule().fill(overdue ? accent : commandPink)
                             .frame(width: geometry.size.width * remaining)
                     }
             }
@@ -188,7 +193,7 @@ struct LumiInstantCommandCard: View {
                 Button(action: onCancel) {
                     Text("取消")
                         .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(secondaryInk)
                         .frame(minWidth: 38, minHeight: 36)
                 }.buttonStyle(.plain)
                 Spacer(minLength: 0)
@@ -199,7 +204,7 @@ struct LumiInstantCommandCard: View {
                             Image(systemName: "chevron.right").font(.system(size: 9, weight: .medium))
                         }
                         .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(secondaryInk)
                         .frame(minHeight: 36)
                     }.buttonStyle(.plain).accessibilityLabel("下一条指令，共 \(count) 条")
                 }
@@ -209,10 +214,10 @@ struct LumiInstantCommandCard: View {
                         else { Image(systemName: "checkmark").font(.system(size: 11, weight: .medium)) }
                         Text("完成了").font(.system(size: 12, weight: .medium))
                     }
-                    .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.9) : Color.white)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .frame(height: 36)
-                    .background(accent, in: Capsule())
+                    .background(overdue ? accent : commandPink, in: Capsule())
                 }.buttonStyle(.plain)
             }
             .padding(.top, 19)
