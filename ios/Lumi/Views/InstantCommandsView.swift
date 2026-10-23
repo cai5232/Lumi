@@ -69,9 +69,9 @@ struct LumiInstantCommandCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var overdue: Bool { command.deadline.map { date >= $0 } ?? false }
-    private var commandPink: Color { Color(red: 0.88, green: 0.39, blue: 0.54) }
+    private var commandPink: Color { Color(red: 0.76, green: 0.46, blue: 0.56) }
     private var accent: Color {
-        overdue ? Color(red: 0.76, green: 0.31, blue: 0.44) : commandPink
+        overdue ? Color(red: 0.65, green: 0.34, blue: 0.43) : commandPink
     }
     private var ink: Color { colorScheme == .dark ? .primary : LumiPalette.textPrimary }
     private var secondaryInk: Color { colorScheme == .dark ? .secondary : LumiPalette.textSecondary.opacity(0.78) }
