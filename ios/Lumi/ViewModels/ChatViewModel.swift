@@ -19,6 +19,7 @@ final class ChatViewModel: ObservableObject {
     @Published var memoryNotice: String?
     @Published private(set) var isLoadingOlderHistory = false
 
+    var instantCommandThreadID: String? { shouldLoadFromServer ? chatID : nil }
     private let chatID: String
     private let api: LumiAPIClient
     private let shouldLoadFromServer: Bool
