@@ -54,6 +54,174 @@ final class LumiInstantCommandsModel: ObservableObject {
     }
 }
 
+// Presentation is separate from polling so the exact shipped card can be previewed.
+struct LumiInstantCommandCard: View {
+    let command: LumiInstantCommand
+    let date: Date
+    let expanded: Bool
+    let busy: Bool
+    var count = 1
+    var pressing = false
+    let onToggle: () -> Void
+    let onComplete: () -> Void
+    let onCancel: () -> Void
+    let onNext: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var overdue: Bool { command.deadline.map { date >= $0 } ?? false }
+    private var accent: Color {
+        overdue ? Color(red: 0.69, green: 0.38, blue: 0.29)
+            : Color(red: 0.57, green: 0.45, blue: 0.49)
+    }
+    private var remaining: Double {
+        guard let deadline = command.deadline, let duration = command.countdown_seconds else { return 1 }
+        return min(1, max(0, deadline.timeIntervalSince(date) / Double(duration)))
+    }
+
+    var body: some View {
+        Group {
+            if expanded { expandedCard } else { edgePill }
+        }
+        .foregroundStyle(Color.primary.opacity(0.86))
+        .background {
+            RoundedRectangle(cornerRadius: expanded ? 26 : 20, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: expanded ? 26 : 20, style: .continuous)
+                        .fill(accent.opacity(colorScheme == .dark ? 0.07 : 0.025))
+                }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: expanded ? 26 : 20, style: .continuous)
+                .strokeBorder(colorScheme == .dark ? .white.opacity(0.12) : .white.opacity(0.85), lineWidth: 0.6)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: expanded ? 26 : 20, style: .continuous)
+                .trim(from: 0, to: pressing ? 1 : 0)
+                .stroke(accent.opacity(0.65), lineWidth: 1.5)
+                .animation(.linear(duration: pressing ? 0.62 : 0.12), value: pressing)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: .black.opacity(colorScheme == .dark ? 0.22 : 0.07), radius: expanded ? 22 : 10, x: -2, y: expanded ? 10 : 4)
+        .scaleEffect(pressing ? 0.98 : 1, anchor: .trailing)
+        .animation(.easeOut(duration: 0.18), value: pressing)
+        .disabled(busy)
+    }
+
+    private var edgePill: some View {
+        Button(action: onToggle) {
+            VStack(spacing: 8) {
+                ZStack {
+                    Circle().stroke(accent.opacity(0.13), lineWidth: 1.6)
+                    Circle().trim(from: 0, to: remaining)
+                        .stroke(accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                    if busy { ProgressView().controlSize(.mini) }
+                    else { Circle().fill(accent).frame(width: 4, height: 4) }
+                }.frame(width: 20, height: 20)
+                Text(command.clock(at: date))
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(overdue ? accent : Color.primary.opacity(0.78))
+            }
+            .frame(width: 58, height: 76)
+            .padding(.trailing, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(command.title)，\(command.clock(at: date))，展开指令")
+    }
+
+    private var expandedCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                Circle().fill(accent).frame(width: 5, height: 5)
+                Text(overdue ? "再给自己一点时间" : "即时指令")
+                    .font(.system(size: 11, weight: .medium))
+                    .tracking(1)
+                    .foregroundStyle(accent)
+                Spacer(minLength: 8)
+                Button(action: onToggle) {
+                    Image(systemName: "minus")
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("收起指令")
+            }
+            .padding(.top, -5)
+            .padding(.trailing, -6)
+
+            Text(command.title)
+                .font(.system(size: 17, weight: .medium))
+                .lineSpacing(5)
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 12)
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(command.clock(at: date))
+                    .font(.system(size: 38, weight: .light, design: .rounded))
+                    .monospacedDigit()
+                    .tracking(-1.2)
+                    .foregroundStyle(overdue ? accent : Color.primary.opacity(0.86))
+                Text(command.deadline == nil ? "已用时" : (overdue ? "已超时" : "剩余"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 20)
+            .contentTransition(.numericText())
+
+            GeometryReader { geometry in
+                Capsule().fill(accent.opacity(0.10))
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(accent.opacity(0.62))
+                            .frame(width: geometry.size.width * remaining)
+                    }
+            }
+            .frame(height: 3)
+            .padding(.top, 13)
+
+            HStack(spacing: 10) {
+                Button(action: onCancel) {
+                    Text("取消")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 38, minHeight: 36)
+                }.buttonStyle(.plain)
+                Spacer(minLength: 0)
+                if count > 1 {
+                    Button(action: onNext) {
+                        HStack(spacing: 4) {
+                            Text("\(count) 条")
+                            Image(systemName: "chevron.right").font(.system(size: 9, weight: .medium))
+                        }
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(minHeight: 36)
+                    }.buttonStyle(.plain).accessibilityLabel("下一条指令，共 \(count) 条")
+                }
+                Button(action: onComplete) {
+                    HStack(spacing: 6) {
+                        if busy { ProgressView().controlSize(.mini) }
+                        else { Image(systemName: "checkmark").font(.system(size: 11, weight: .medium)) }
+                        Text("完成了").font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.9) : Color.white)
+                    .padding(.horizontal, 16)
+                    .frame(height: 36)
+                    .background(accent, in: Capsule())
+                }.buttonStyle(.plain)
+            }
+            .padding(.top, 19)
+        }
+        .padding(20)
+        .frame(width: 278, alignment: .leading)
+    }
+}
+
 struct LumiInstantCommandsView: View {
     let threadID: String
     let refreshToken: UUID?
@@ -73,44 +241,18 @@ struct LumiInstantCommandsView: View {
         GeometryReader { geometry in
             if let command = selected {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    let overdue = command.deadline.map { context.date >= $0 } ?? false
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 8) {
-                            Image(systemName: overdue ? "timer" : "hourglass")
-                            Text(command.clock(at: context.date)).monospacedDigit()
-                            if !expanded { Text(command.title).lineLimit(1) }
-                            if model.busy { ProgressView().controlSize(.small) }
+                    LumiInstantCommandCard(
+                        command: command, date: context.date, expanded: expanded, busy: model.busy,
+                        count: model.commands.count, pressing: pressing,
+                        onToggle: { withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) { expanded.toggle() } },
+                        onComplete: { finish(command, cancel: false) },
+                        onCancel: { finish(command, cancel: true) },
+                        onNext: {
+                            guard !model.commands.isEmpty else { return }
+                            let index = model.commands.firstIndex(of: command) ?? 0
+                            selectedID = model.commands[(index + 1) % model.commands.count].id
                         }
-                        .font(.system(size: 14, weight: .semibold))
-                        if expanded {
-                            Text(command.title).font(.body).fixedSize(horizontal: false, vertical: true)
-                            Text(overdue ? "已超时，完成后仍会记录用时" : "左滑完成 · 长按取消 · 上下拖动")
-                                .font(.caption).foregroundStyle(.secondary)
-                            HStack {
-                                Button("完成") { finish(command, cancel: false) }
-                                    .buttonStyle(.borderedProminent)
-                                Button("取消", role: .cancel) { finish(command, cancel: true) }
-                                    .buttonStyle(.bordered)
-                                if model.commands.count > 1 {
-                                    Button("下一条 (\(model.commands.count))") {
-                                        let index = model.commands.firstIndex(of: command) ?? 0
-                                        selectedID = model.commands[(index + 1) % model.commands.count].id
-                                    }
-                                }
-                            }.font(.caption)
-                        }
-                    }
-                    .padding(14)
-                    .frame(width: expanded ? min(310, geometry.size.width - 24) : min(235, geometry.size.width - 24), alignment: .leading)
-                    .foregroundStyle(overdue ? Color(red: 0.65, green: 0.27, blue: 0.19) : Color(red: 0.20, green: 0.17, blue: 0.19))
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: expanded ? 22 : 28))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: expanded ? 22 : 28)
-                            .stroke(pressing ? Color.orange : (overdue ? Color.orange.opacity(0.6) : Color.pink.opacity(0.25)), lineWidth: pressing ? 3 : 1)
-                    }
-                    .shadow(color: .black.opacity(0.09), radius: 10, y: 4)
-                    .contentShape(Rectangle())
-                    .onTapGesture { withAnimation { expanded.toggle() } }
+                    )
                     .onLongPressGesture(minimumDuration: 0.62, pressing: { pressing = $0 }) { finish(command, cancel: true) }
                     .simultaneousGesture(DragGesture(minimumDistance: 12)
                         .onChanged { translation = $0.translation }
@@ -118,17 +260,14 @@ struct LumiInstantCommandsView: View {
                             if value.translation.width < -64 && abs(value.translation.width) > abs(value.translation.height) {
                                 finish(command, cancel: false)
                             } else if abs(value.translation.height) > abs(value.translation.width) {
-                                position = min(1, max(0, position + value.translation.height / max(1, geometry.size.height - 280)))
+                                position = min(1, max(0, position + value.translation.height / max(1, geometry.size.height - 360)))
                             }
-                            translation = .zero
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { translation = .zero }
                         })
                     .offset(x: min(0, translation.width))
                     .frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.trailing, 8)
-                    .offset(y: 160 + max(0, geometry.size.height - 360) * position + translation.height)
-                    .disabled(model.busy)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel("即时指令，\(command.title)，\(command.clock(at: context.date))")
+                    .padding(.trailing, expanded ? 14 : -8)
+                    .offset(y: min(max(100, 120 + max(0, geometry.size.height - 420) * position + translation.height), max(100, geometry.size.height - (expanded ? 320 : 110))))
                     .accessibilityAction(named: "完成") { finish(command, cancel: false) }
                     .accessibilityAction(named: "取消") { finish(command, cancel: true) }
                 }
