@@ -69,8 +69,9 @@ struct LumiInstantCommandCard: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var overdue: Bool { command.deadline.map { date >= $0 } ?? false }
+    private var commandPink: Color { Color(red: 0.88, green: 0.39, blue: 0.54) }
     private var accent: Color {
-        overdue ? Color(red: 0.80, green: 0.40, blue: 0.50) : LumiPalette.iconPink
+        overdue ? Color(red: 0.76, green: 0.31, blue: 0.44) : commandPink
     }
     private var ink: Color { colorScheme == .dark ? .primary : LumiPalette.textPrimary }
     private var secondaryInk: Color { colorScheme == .dark ? .secondary : LumiPalette.textSecondary.opacity(0.78) }
@@ -106,7 +107,7 @@ struct LumiInstantCommandCard: View {
                 .animation(.linear(duration: pressing ? 0.62 : 0.12), value: pressing)
                 .allowsHitTesting(false)
         }
-        .shadow(color: colorScheme == .dark ? .black.opacity(0.22) : LumiPalette.iconPink.opacity(0.24), radius: expanded ? 22 : 10, x: -2, y: expanded ? 10 : 4)
+        .shadow(color: colorScheme == .dark ? .black.opacity(0.22) : LumiPalette.iconPink.opacity(0.10), radius: expanded ? 22 : 10, x: -2, y: expanded ? 10 : 4)
         .scaleEffect(pressing ? 0.98 : 1, anchor: .trailing)
         .animation(.easeOut(duration: 0.18), value: pressing)
         .disabled(busy)
@@ -116,17 +117,17 @@ struct LumiInstantCommandCard: View {
         Button(action: onToggle) {
             VStack(spacing: 8) {
                 ZStack {
-                    Circle().stroke(accent.opacity(0.13), lineWidth: 1.6)
+                    Circle().stroke(ink.opacity(0.08), lineWidth: 1.6)
                     Circle().trim(from: 0, to: remaining)
-                        .stroke(accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                        .stroke(overdue ? accent : commandPink, style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                     if busy { ProgressView().controlSize(.mini) }
-                    else { Circle().fill(accent).frame(width: 4, height: 4) }
+                    else { Circle().fill(overdue ? accent : commandPink).frame(width: 4, height: 4) }
                 }.frame(width: 20, height: 20)
                 Text(command.clock(at: date))
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(overdue ? accentInk : ink.opacity(0.86))
+                    .foregroundStyle(overdue ? accent : ink.opacity(0.86))
             }
             .frame(width: 58, height: 76)
             .padding(.trailing, 5)
@@ -179,9 +180,9 @@ struct LumiInstantCommandCard: View {
             .contentTransition(.numericText())
 
             GeometryReader { geometry in
-                Capsule().fill(accent.opacity(0.18))
+                Capsule().fill(commandPink.opacity(0.16))
                     .overlay(alignment: .leading) {
-                        Capsule().fill(accent.opacity(0.90))
+                        Capsule().fill(overdue ? accent : commandPink)
                             .frame(width: geometry.size.width * remaining)
                     }
             }
@@ -213,10 +214,10 @@ struct LumiInstantCommandCard: View {
                         else { Image(systemName: "checkmark").font(.system(size: 11, weight: .medium)) }
                         Text("完成了").font(.system(size: 12, weight: .medium))
                     }
-                    .foregroundStyle(colorScheme == .dark ? LumiPalette.chatBackground : LumiPalette.textPrimary)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 16)
                     .frame(height: 36)
-                    .background(accent.opacity(colorScheme == .dark ? 0.32 : 0.58), in: Capsule())
+                    .background(overdue ? accent : commandPink, in: Capsule())
                 }.buttonStyle(.plain)
             }
             .padding(.top, 19)
