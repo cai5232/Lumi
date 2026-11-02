@@ -11,6 +11,12 @@ Lumi 是 iOS 原生 SwiftUI 客户端。后端已拆分到独立仓库 [`cai5232
 
 最低版本建议 iOS 17。MiniMax TTS Key 保存于 iOS 钥匙串，合成音频保存在应用 Documents 目录，因此清理后台或强制结束应用不会删除语音文件。
 
+## 檐廊图片卡片
+
+檐廊带回的图片直接显示在聊天流中，白色区域保留 AI 写的中文说明，下方以小号暖灰色衬线字显示作者署名，隐藏冗长的英文标题。点图片看全屏大图，点图片角落的小箭头访问原页面。已经收到的旧版 HTML 图片消息会根据保存的工具回执转换为原生卡片；普通 HTML 消息保留原有预览方式。
+
+用 Xcode 打开 `ios/Lumi.xcodeproj`，选择 `Lumi` scheme 和已连接的 iPhone，按 ⌘R 更新现有 App 即可，无需修改 Coolify 后端。可运行 `python3 tests/check_engawa_photos.py` 检查旧卡片转换、历史重新加载和图文数据解析。
+
 耳机空间播放借鉴 [binaural-voice](https://github.com/Saekisui/binaural-voice) 的位置标签思路，并用 iOS 的耳机空间音频播放；未复制其 KU100 HRIR 数据文件。
 
 客户端通过 `LumiAPIClient.baseURL` 调用 VPS 上的后端。后续可以继续接入模型流式输出、图片选择器、语音输入和上下文检索。

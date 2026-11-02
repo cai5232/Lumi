@@ -25,6 +25,7 @@ struct ChatDetailView: View {
     @State private var htmlMessage: ChatMessage?
     @State private var selectedToolMessage: ChatMessage?
     @State private var fullScreenHTMLMessage: ChatMessage?
+    @State private var selectedEngawaPhoto: EngawaSharedPhoto?
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var selectedImageData: [Data] = []
     @State private var selectedImageNames: [String] = []
@@ -276,6 +277,9 @@ struct ChatDetailView: View {
         }
         .fullScreenCover(item: $fullScreenHTMLMessage) { message in
             HTMLMessageFullScreen(message: message)
+        }
+        .fullScreenCover(item: $selectedEngawaPhoto) { photo in
+            EngawaPhotoFullScreenView(photo: photo)
         }
         .fullScreenCover(item: $selectedCallRecord) { record in
             CallRecordView(record: record)
@@ -583,6 +587,8 @@ struct ChatDetailView: View {
     }
 
     @ViewBuilder private func messageBubble(_ message: ChatMessage, showAvatar: Bool) -> some View {
+        let sharedPhotos = message.contentType == "engawa_photos" ? message.engawaSharedPhotos : []
+        let isEngawaPhotos = !sharedPhotos.isEmpty
         let isHTMLCard = message.htmlContent != nil || message.contentType == "html" || isHTML(message.content)
         let isCallRecord = message.contentType == "call_record"
         let isCallStatus = message.contentType == "call_status"
@@ -694,6 +700,10 @@ struct ChatDetailView: View {
                     .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 10)
+                } else if isEngawaPhotos {
+                    ForEach(sharedPhotos) { photo in
+                        EngawaPhotoMessageCard(photo: photo) { selectedEngawaPhoto = photo }
+                    }
                 } else if isHTMLCard {
                     Button { htmlMessage = message } label: {
                         HStack(spacing: 11) {
@@ -740,15 +750,16 @@ struct ChatDetailView: View {
                 }
                 }
                 .foregroundStyle(LumiPalette.textPrimary)
-                .padding(.horizontal, isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 8 : (isCallStatus ? 10 : 13)))
-                .padding(.vertical, isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3))))
+                .padding(.horizontal, isEngawaPhotos || isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 8 : (isCallStatus ? 10 : 13)))
+                .padding(.vertical, isEngawaPhotos || isGalleryCollection || isScreenRequest || isScreenStatus ? 0 : (isHTMLCard ? 5 : ((isCallStatus || isCallRecord) ? 0 : (message.audioFileName == nil ? 10 : 3))))
                 .frame(width: isGalleryCollection ? 284 : ((isScreenRequest || isScreenStatus) ? nil : (message.audioFileName == nil ? nil : min(300, max(180, 150 + CGFloat(message.speechDuration ?? 2) * 8)))), alignment: .leading)
+                .frame(maxWidth: isEngawaPhotos ? 284 : nil, alignment: .leading)
                 .background {
-                    if !isGalleryCollection && !isScreenRequest && !isScreenStatus {
+                    if !isEngawaPhotos && !isGalleryCollection && !isScreenRequest && !isScreenStatus {
                         chatMessageSurface(base: isUserSide ? RestoredChatColor.color(appearanceBubbleColor) : .white, cornerRadius: 21)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: isGalleryCollection ? 0 : 21))
+                .clipShape(RoundedRectangle(cornerRadius: isEngawaPhotos || isGalleryCollection ? 0 : 21))
                 if !isUserSide { Spacer(minLength: 48) }
                 if isUserSide {
                     if showAvatar { avatar(for: .user) }
@@ -2009,6 +2020,125 @@ private final class SpatialSpeechPlayback: ObservableObject {
     private func apply(azimuth: Double, distance: Double) {
         let radians = azimuth * .pi / 180
         source.position = AVAudio3DPoint(x: Float(sin(radians) * distance), y: 0, z: Float(-cos(radians) * distance))
+    }
+}
+
+private struct EngawaPhotoMessageCard: View {
+    let photo: EngawaSharedPhoto
+    let onOpen: () -> Void
+    @State private var retryID = UUID()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            AsyncImage(url: photo.imageLink) { phase in
+                switch phase {
+                case .success(let image):
+                    Button(action: onOpen) {
+                        image.resizable().scaledToFit().frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("查看图片大图")
+                case .failure:
+                    VStack(spacing: 10) {
+                        Image(systemName: "photo.badge.exclamationmark").font(.title2)
+                        Text("图片暂时加载不出来").font(.system(size: 13))
+                        Button("重试") { retryID = UUID() }
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).frame(height: 180)
+                default:
+                    ProgressView().tint(LumiPalette.iconPink)
+                        .frame(maxWidth: .infinity).frame(height: 180)
+                }
+            }
+            .id(retryID)
+            .background(Color(red: 0.96, green: 0.94, blue: 0.91))
+            .overlay(alignment: .topTrailing) {
+                if let source = photo.sourceLink {
+                    Link(destination: source) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color(red: 0.35, green: 0.29, blue: 0.23))
+                            .frame(width: 30, height: 30)
+                            .background(.white.opacity(0.92), in: Circle())
+                    }
+                    .accessibilityLabel("查看图片来源")
+                    .padding(9)
+                }
+            }
+
+            let caption = photo.caption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let credit = photo.credit?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !caption.isEmpty || !credit.isEmpty {
+                VStack(alignment: .leading, spacing: 9) {
+                    if !caption.isEmpty {
+                        Text(caption).font(.system(size: 14)).lineSpacing(3)
+                            .foregroundStyle(Color(red: 0.21, green: 0.20, blue: 0.18))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                    }
+                    if !credit.isEmpty {
+                        Text(credit)
+                            .font(.system(size: 10, weight: .regular, design: .serif))
+                            .tracking(0.12)
+                            .lineSpacing(2)
+                            .foregroundStyle(Color(red: 0.53, green: 0.50, blue: 0.46))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+            }
+        }
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color(red: 0.89, green: 0.86, blue: 0.81), lineWidth: 1))
+    }
+}
+
+private struct EngawaPhotoFullScreenView: View {
+    let photo: EngawaSharedPhoto
+    @Environment(\.dismiss) private var dismiss
+    @State private var retryID = UUID()
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 12) {
+                Text("叼给你看").font(.system(size: 15, weight: .medium))
+                Spacer(minLength: 0)
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 28))
+                }
+                .accessibilityLabel("关闭大图")
+            }
+            .padding(.horizontal, 20).padding(.top, 12)
+            Spacer(minLength: 0)
+            AsyncImage(url: photo.imageLink) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFit().accessibilityLabel("檐廊带回的图片")
+                case .failure:
+                    VStack(spacing: 16) {
+                        Text("图片暂时加载不出来")
+                        Button("重试") { retryID = UUID() }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                default:
+                    ProgressView().tint(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .id(retryID)
+            Spacer(minLength: 0)
+            if let source = photo.sourceLink {
+                Link("查看来源 ↗", destination: source).font(.system(size: 14))
+                    .padding(.bottom, 16)
+            }
+        }
+        .foregroundStyle(.white)
+        .tint(.white)
+        .background(Color.black.ignoresSafeArea())
     }
 }
 

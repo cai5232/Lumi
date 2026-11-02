@@ -482,6 +482,22 @@ final class ChatViewModel: ObservableObject {
         // their JSON payload through the ordinary text-bubble splitter, or a
         // restart would turn the card into plain text and make it disappear.
         if message.contentType == "gallery_collected" { return [message] }
+        if message.contentType == "engawa_photos" { return [message] }
+        if !message.engawaSharedPhotos.isEmpty {
+            var textMessage = message
+            textMessage.htmlContent = nil
+            textMessage.htmlTitle = nil
+            textMessage.contentType = "text"
+            textMessage.toolCalls = []
+            var bubbles = assistantBubbles(from: textMessage)
+            bubbles.append(ChatMessage(
+                id: Self.cardID(for: message.id), role: .assistant, content: "",
+                createdAt: message.createdAt.addingTimeInterval(0.001),
+                thinking: bubbles.isEmpty ? message.thinking : nil,
+                contentType: "engawa_photos", toolCalls: message.toolCalls
+            ))
+            return bubbles
+        }
         if message.contentType == "call_status" {
             let text = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return [message] }

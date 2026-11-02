@@ -93,6 +93,44 @@ struct ChatToolCallTrace: Codable, Equatable, Identifiable, Sendable {
     let succeeded: Bool
 }
 
+struct EngawaSharedPhoto: Decodable, Equatable, Identifiable, Sendable {
+    let imageURL: String
+    let title: String
+    let sourceURL: String?
+    let credit: String?
+    let caption: String?
+
+    var id: String { imageURL }
+    var imageLink: URL? { Self.publicLink(imageURL) }
+    var sourceLink: URL? { Self.publicLink(sourceURL ?? "") }
+
+    private static func publicLink(_ value: String) -> URL? {
+        guard let url = URL(string: value), url.scheme?.lowercased() == "https",
+              url.user == nil, url.password == nil,
+              let host = url.host?.lowercased(), host.contains("."),
+              !host.hasSuffix(".local"), !host.hasSuffix(".internal"),
+              host != "localhost" else { return nil }
+        return url
+    }
+}
+
+extension ChatMessage {
+    // Existing photo messages already persist this server execution receipt.
+    // Decode it so older HTML photo cards can use the native chat view too.
+    var engawaSharedPhotos: [EngawaSharedPhoto] {
+        guard role == .assistant else { return [] }
+        struct Receipt: Decodable { let ok: Bool; let photo: EngawaSharedPhoto }
+        var seen = Set<String>()
+        return Array(toolCalls.compactMap { call -> EngawaSharedPhoto? in
+            guard call.name == "lumi_engawa_share_photo", call.succeeded,
+                  let receipt = try? JSONDecoder().decode(Receipt.self, from: Data(call.result.utf8)),
+                  receipt.ok, receipt.photo.imageLink != nil,
+                  seen.insert(receipt.photo.id).inserted else { return nil }
+            return receipt.photo
+        }.prefix(4))
+    }
+}
+
 struct ChatMessageAttachment: Codable, Equatable, Sendable {
     var type: String
     var items: [String]?
